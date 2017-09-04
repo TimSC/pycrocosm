@@ -50,3 +50,15 @@ def capabilities(request):
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def permissions(request):
+	root = ET.Element('osm')
+	doc = ET.ElementTree(root)
+	root.attrib["version"] = str(settings.API_VERSION)
+	root.attrib["generator"] = settings.GENERATOR
+
+	permissions = ET.SubElement(root, "permissions")
+
+	sio = cStringIO.StringIO()
+	doc.write(sio, "utf8")
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
