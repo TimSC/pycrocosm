@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import xml.etree.ElementTree as ET
-import io
 import cStringIO
 
 from django.shortcuts import render
@@ -9,9 +8,6 @@ from django.http import HttpResponse
 from django.conf import settings
 
 # Create your views here.
-
-def index(request):
-	return HttpResponse("Hello, world. You're at the api index.")
 
 def capabilities(request):
 
@@ -53,7 +49,4 @@ def capabilities(request):
 	sio = cStringIO.StringIO()
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-
-def api06(requests):
-	return HttpResponse("Hello, world. You're at the api 0.6 index.")
 

@@ -55,7 +55,7 @@ ROOT_URLCONF = 'pycrocosm.urls'
 TEMPLATES = [
 	{
 		'BACKEND': 'django.template.backends.django.DjangoTemplates',
-		'DIRS': [],
+		'DIRS': ['./templates'],
 		'APP_DIRS': True,
 		'OPTIONS': {
 			'context_processors': [
@@ -126,3 +126,35 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
+
+STATICFILES_DIRS = [
+    os.path.join(BASE_DIR, "static"),
+]
+
+# Redirect to home URL after login (Default redirects to /accounts/profile/)
+# https://developer.mozilla.org/en-US/docs/Learn/Server-side/Django/Authentication
+LOGIN_REDIRECT_URL = '/'
+
+#Stop django adding slashes to URLs that are missing
+APPEND_SLASH = False
+
+# Map server settings
+
+API_VERSION = 0.6
+GENERATOR = "pycrocosm server"
+COPYRIGHT = ""
+ATTRIBUTION = ""
+LICENSE = ""
+
+AREA_MAXIMUM = 0.25
+NOTE_AREA_MAXIMUM = 25
+TRACEPOINTS_PER_PAGE = 5000
+WAYNODES_MAXIMUM = 2000
+CHANGESETS_MAXIMUM_ELEMENTS = 10000
+TIMEOUT_SECONDS = 300
+STATUS_DATABASE = "online"
+STATUS_API = "online"
+STATUS_GPX = "online"
+POLICY_IMAGERY_BLACKLIST = [".*\.google(apis)?\..*/(vt|kh)[\?/].*([xyz]=.*){3}.*", 
+	"http://xdworld\.vworld\.kr:8080/.*", ".*\.here\.com[/:].*"]
+
