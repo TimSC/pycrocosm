@@ -20,7 +20,7 @@ def index(request):
 	
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio)
-	p.MapQuery(bbox, 50000, enc)
+	p.MapQuery(bbox, 0, enc)
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

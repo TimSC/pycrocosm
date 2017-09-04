@@ -54,3 +54,6 @@ def capabilities(request):
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def api06(requests):
+	return HttpResponse("Hello, world. You're at the api 0.6 index.")
+
