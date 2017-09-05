@@ -11,6 +11,6 @@ urlpatterns = [
     url(r'^/([0-9]+)/comment$', views.comment, name='comment'),
     url(r'^/([0-9]+)/subscribe$', views.subscribe, name='subscribe'),
     url(r'^/([0-9]+)/unsubscribe$', views.unsubscribe, name='unsubscribe'),
-    url(r'^/([0-9]+)$', views.get, name='get'),
+    url(r'^/([0-9]+)$', views.changeset, name='changeset'),
     url(r'^s$', views.list, name='list'),
 ]

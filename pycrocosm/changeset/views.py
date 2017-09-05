@@ -6,19 +6,24 @@ from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-from rest_framework.decorators import api_view
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from rest_framework.decorators import api_view, permission_classes
 
 import xml.etree.ElementTree as ET
 import cStringIO
 
 # Create your views here.
 
-@login_required
+@csrf_exempt
+@api_view(['PUT'])
+@permission_classes((IsAuthenticated, ))
 def create(request):
-
 	return HttpResponse("1", content_type='text/plain')
 
-def get(request, changesetId):
+@csrf_exempt
+@api_view(['GET', 'PUT'])
+@permission_classes((IsAuthenticatedOrReadOnly, ))
+def changeset(request, changesetId):
 
 	root = ET.Element('osm')
 	doc = ET.ElementTree(root)
@@ -54,39 +59,50 @@ def get(request, changesetId):
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
-@login_required
+@csrf_exempt
+@api_view(['PUT'])
+@permission_classes((IsAuthenticated, ))
 def close(request, changesetId):
-
 	return HttpResponse("", content_type='text/plain')
 
+@api_view(['GET'])
+@permission_classes((IsAuthenticatedOrReadOnly, ))
 def download(request, changesetId):
 	return get(request, changesetId)
 
-@api_view(['POST'])
 @csrf_exempt
-@login_required
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
 def expand_bbox(request, changesetId):
 		
 	return get(request, changesetId)
 
+@api_view(['GET'])
+@permission_classes((IsAuthenticatedOrReadOnly, ))
 def list(request):
 	return HttpResponse("", content_type='text/xml')
 
-@api_view(['POST'])
 @csrf_exempt
-@login_required
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
 def upload(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 
-@login_required
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
 def comment(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 
-@login_required
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
 def subscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 
-@login_required
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
 def unsubscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 

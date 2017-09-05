@@ -28,7 +28,7 @@ def details(request):
 
 	user = ET.SubElement(root, "user")
 	user.attrib["display_name"] = userRecord.username
-	user.attrib["account_created"] = str(userRecord.date_joined)
+	user.attrib["account_created"] = str(userRecord.date_joined.isoformat())
 	user.attrib["id"] = str(userRecord.userdata.mapid)
 
 	cts = ET.SubElement(user, "contributor-terms")
@@ -72,6 +72,7 @@ def details(request):
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+@csrf_exempt
 @api_view(['GET', 'PUT'])
 @permission_classes((IsAuthenticated, ))
 def preferences(request):
@@ -99,6 +100,7 @@ def preferences(request):
 	if request.method == 'PUT':
 		return HttpResponse("", content_type='text/plain')
 
+@csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def preferences_put(request, key):
