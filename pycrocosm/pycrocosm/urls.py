@@ -20,6 +20,7 @@ from django.contrib.auth import views as auth_views
 urlpatterns = [
 	url(r'api/0.6/map', include('querymap.urls')),
 	url(r'api/0.6/user/', include('users.urls')),
+	url(r'api/0.6/changeset', include('changeset.urls')),
 	url(r'api/', include('api.urls')),
 	url(r'admin/', admin.site.urls),
 	url(r'accounts/', include('django.contrib.auth.urls')),
