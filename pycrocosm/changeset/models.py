@@ -15,5 +15,6 @@ class Changeset(models.Model):
 	max_lon = models.FloatField(default=0.0)
 	tags = JSONField(default={})
 	open_datetime = models.DateTimeField(auto_now=True)
-	close_datetime = models.DateTimeField()
+	close_datetime = models.DateTimeField(auto_now=True)
+	is_open = models.BooleanField(default=True)
 

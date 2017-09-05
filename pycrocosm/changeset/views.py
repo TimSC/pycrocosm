@@ -11,6 +11,7 @@ from rest_framework.decorators import api_view, permission_classes
 
 import xml.etree.ElementTree as ET
 import cStringIO
+from .models import Changeset
 
 # Create your views here.
 
@@ -18,7 +19,11 @@ import cStringIO
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def create(request):
-	return HttpResponse("1", content_type='text/plain')
+
+	userRecord = request.user
+	changeset = Changeset.objects.create(user=userRecord)
+
+	return HttpResponse(changeset.id, content_type='text/plain')
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])
