@@ -5,14 +5,21 @@ from django.shortcuts import render
 from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from .models import UserData, UserPreferences
 
 import xml.etree.ElementTree as ET
 import cStringIO
 
 # Create your views here.
 
-@login_required
+@api_view(['GET'])
+@permission_classes((IsAuthenticated, ))
 def details(request):
+
+	userRecord = request.user
 
 	root = ET.Element('osm')
 	doc = ET.ElementTree(root)
@@ -20,9 +27,9 @@ def details(request):
 	root.attrib["generator"] = settings.GENERATOR
 
 	user = ET.SubElement(root, "user")
-	user.attrib["display_name"] = "Max Muster"
-	user.attrib["account_created"] = "2006-07-21T19:28:26Z"
-	user.attrib["id"] = "1234"
+	user.attrib["display_name"] = userRecord.username
+	user.attrib["account_created"] = str(userRecord.date_joined)
+	user.attrib["id"] = str(userRecord.userdata.mapid)
 
 	cts = ET.SubElement(user, "contributor-terms")
 	cts.attrib["agreed"] = "false"
@@ -41,13 +48,14 @@ def details(request):
 	received.attrib["count"] = "0"
 	received.attrib["active"] = "0"
 
-	home = ET.SubElement(user, "home")
-	home.attrib["lat"] = "0.0"
-	home.attrib["lon"] = "0.0"
-	home.attrib["zoom"] = "3"
+	if userRecord.userdata.home_zoom >= 0:
+		home = ET.SubElement(user, "home")
+		home.attrib["lat"] = str(userRecord.userdata.home_lat)
+		home.attrib["lon"] = str(userRecord.userdata.home_lon)
+		home.attrib["zoom"] = str(userRecord.userdata.home_zoom)
 
 	description = ET.SubElement(user, "description")
-	description.text = "The description of your profile"
+	description.text = userRecord.userdata.description
 
 	languages = ET.SubElement(user, "languages")
 	lang = ET.SubElement(languages, "lang")
@@ -64,21 +72,35 @@ def details(request):
 	doc.write(sio, "utf8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
-@login_required
+@api_view(['GET', 'PUT'])
+@permission_classes((IsAuthenticated, ))
 def preferences(request):
 
-	root = ET.Element('osm')
-	doc = ET.ElementTree(root)
-	root.attrib["version"] = str(settings.API_VERSION)
-	root.attrib["generator"] = settings.GENERATOR
+	userRecord = request.user
+	prefs = UserPreferences.objects.filter(user=userRecord)
 
-	preferences = ET.SubElement(root, "preferences")
+	if request.method == 'GET':
+		root = ET.Element('osm')
+		doc = ET.ElementTree(root)
+		root.attrib["version"] = str(settings.API_VERSION)
+		root.attrib["generator"] = settings.GENERATOR
 
-	preference = ET.SubElement(preferences, "preference")
-	preference.attrib["k"] = "some-key"
-	preference.attrib["v"] = "some-value"
+		preferences = ET.SubElement(root, "preferences")
 
-	sio = cStringIO.StringIO()
-	doc.write(sio, "utf8")
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+		for pref in prefs:
+			preference = ET.SubElement(preferences, "preference")
+			preference.attrib["k"] = pref.key
+			preference.attrib["v"] = pref.value
+
+		sio = cStringIO.StringIO()
+		doc.write(sio, "utf8")
+		return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+	if request.method == 'PUT':
+		return HttpResponse("", content_type='text/plain')
+
+@api_view(['PUT'])
+@permission_classes((IsAuthenticated, ))
+def preferences_put(request, key):
+	return HttpResponse("", content_type='text/plain')
 

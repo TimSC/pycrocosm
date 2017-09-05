@@ -32,12 +32,16 @@ ALLOWED_HOSTS = []
 
 INSTALLED_APPS = [
 	'api.apps.ApiConfig',
+	'changeset.apps.ChangesetConfig',
+	'users.apps.UsersConfig',
+	'querymap.apps.QuerymapConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
 	'django.contrib.sessions',
 	'django.contrib.messages',
 	'django.contrib.staticfiles',
+	'rest_framework',
 ]
 
 MIDDLEWARE = [
@@ -87,7 +91,6 @@ DATABASES = {
 		'PREFIX': "portsmouth_",
 	}
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/1.11/ref/settings/#auth-password-validators
@@ -144,7 +147,7 @@ API_VERSION = 0.6
 GENERATOR = "pycrocosm server"
 COPYRIGHT = ""
 ATTRIBUTION = ""
-LICENSE = ""
+LICENSE = "https://creativecommons.org/licenses/by-sa/2.0/"
 
 AREA_MAXIMUM = 0.25
 NOTE_AREA_MAXIMUM = 25
