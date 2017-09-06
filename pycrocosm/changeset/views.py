@@ -31,6 +31,46 @@ def CheckTags(tags):
 			return False
 	return True
 
+def SerializeChangeset(changesetData, include_discussion=False):
+	root = ET.Element('osm')
+	doc = ET.ElementTree(root)
+	root.attrib["version"] = str(settings.API_VERSION)
+	root.attrib["generator"] = settings.GENERATOR
+
+	changeset = ET.SubElement(root, "changeset")
+	changeset.attrib["id"] = str(changesetData.id)
+	changeset.attrib["user"] = str(changesetData.user.username)
+	changeset.attrib["uid"] = str(changesetData.user.id)
+	changeset.attrib["created_at"] = str(changesetData.open_datetime.isoformat())
+	if not changesetData.is_open:
+		changeset.attrib["closed_at"] = str(changesetData.close_datetime.isoformat())
+	changeset.attrib["open"] = str(changesetData.is_open).lower()
+	changeset.attrib["min_lon"] = str(changesetData.min_lon)
+	changeset.attrib["min_lat"] = str(changesetData.min_lat)
+	changeset.attrib["max_lon"] = str(changesetData.max_lon)
+	changeset.attrib["max_lat"] = str(changesetData.max_lat)
+
+	for tagKey in changesetData.tags:
+		tag = ET.SubElement(changeset, "tag")
+		tag.attrib["k"] = tagKey
+		tag.attrib["v"] = changesetData.tags[tagKey]
+
+	if include_discussion:
+
+		discussion = ET.SubElement(changeset, "discussion")
+
+		comment = ET.SubElement(discussion, "comment")
+		comment.attrib["data"] = "2015-01-01T18:56:48Z"
+		comment.attrib["uid"] = "1841"
+		comment.attrib["user"] = "metaodi"
+
+		text = ET.SubElement(comment, "text")
+		text.text = "Did you verify those street names?"
+
+	sio = cStringIO.StringIO()
+	doc.write(sio, "utf-8")
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
@@ -62,44 +102,21 @@ def changeset(request, changesetId):
 		return HttpResponseNotFound()
 
 	if request.method == 'GET':
-		root = ET.Element('osm')
-		doc = ET.ElementTree(root)
-		root.attrib["version"] = str(settings.API_VERSION)
-		root.attrib["generator"] = settings.GENERATOR
+		return SerializeChangeset(changesetData, include_discussion)
 
-		changeset = ET.SubElement(root, "changeset")
-		changeset.attrib["id"] = str(changesetData.id)
-		changeset.attrib["user"] = str(changesetData.user.username)
-		changeset.attrib["uid"] = str(changesetData.user.id)
-		changeset.attrib["created_at"] = str(changesetData.open_datetime.isoformat())
-		if not changesetData.is_open:
-			changeset.attrib["closed_at"] = str(changesetData.close_datetime.isoformat())
-		changeset.attrib["open"] = str(changesetData.is_open).lower()
-		changeset.attrib["min_lon"] = str(changesetData.min_lon)
-		changeset.attrib["min_lat"] = str(changesetData.min_lat)
-		changeset.attrib["max_lon"] = str(changesetData.max_lon)
-		changeset.attrib["max_lat"] = str(changesetData.max_lat)
+	if request.method == 'PUT':
+		
+		csIn = request.data.find("changeset")
+		tags = {}
+		for tag in csIn.findall("tag"):
+			tags[tag.attrib["k"]] = tag.attrib["v"]
+		if not CheckTags(tags):
+			return HttpResponseBadRequest()
 
-		for tagKey in changesetData.tags:
-			tag = ET.SubElement(changeset, "tag")
-			tag.attrib["k"] = tagKey
-			tag.attrib["v"] = changesetData.tags[tagKey]
+		changesetData.tags = tags
+		changesetData.save()
 
-		if include_discussion:
-
-			discussion = ET.SubElement(changeset, "discussion")
-
-			comment = ET.SubElement(discussion, "comment")
-			comment.attrib["data"] = "2015-01-01T18:56:48Z"
-			comment.attrib["uid"] = "1841"
-			comment.attrib["user"] = "metaodi"
-
-			text = ET.SubElement(comment, "text")
-			text.text = "Did you verify those street names?"
-
-		sio = cStringIO.StringIO()
-		doc.write(sio, "utf-8")
-		return HttpResponse(sio.getvalue(), content_type='text/xml')
+		return SerializeChangeset(changesetData)
 
 @csrf_exempt
 @api_view(['PUT'])

@@ -125,6 +125,30 @@ class ChangesetTestCase(TestCase):
 		response = anonClient.get(reverse('changeset', args=(0,)))
 		self.assertEqual(response.status_code, 404)
 
+	def test_put_changeset(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar", "man": "child"})
+
+		response = self.client.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='application/xml')
+		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+
+		self.assertEqual(len(csout.findall("tag")), 2)
+		for tag in csout.findall("tag"):
+			if tag.attrib["k"] == "comment":
+				self.assertEqual(tag.attrib["v"], "Just adding some streetnames")
+			if tag.attrib["k"] == "created_by":
+				self.assertEqual(tag.attrib["v"], "JOSM 1.61")
+
+	def test_put_changeset_anon(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar", "man": "child"})
+
+		anonClient = Client()
+		response = anonClient.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='application/xml')
+		self.assertEqual(response.status_code, 403)
+
 	def test_close_changeset(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
 
