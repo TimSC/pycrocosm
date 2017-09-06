@@ -70,7 +70,7 @@ def details(request):
 	msgSent.attrib["count"] = "1"
 
 	sio = cStringIO.StringIO()
-	doc.write(sio, "utf8")
+	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt
@@ -95,7 +95,7 @@ def preferences(request):
 			preference.attrib["v"] = pref.value
 
 		sio = cStringIO.StringIO()
-		doc.write(sio, "utf8")
+		doc.write(sio, "UTF-8")
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 	if request.method == 'PUT':
