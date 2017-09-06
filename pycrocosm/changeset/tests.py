@@ -6,6 +6,8 @@ from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
 
+from .models import Changeset
+
 # Create your tests here.
 # alter user microcosm with createdb;
 # python manage.py test changeset --keep
@@ -20,12 +22,24 @@ class ChangesetTestCase(TestCase):
 	def test_create_changeset(self):
 		client = Client()
 		client.login(username=self.username, password=self.password)
-		response = client.put(reverse('create'))
+
+		xml = """<osm>
+		  <changeset>
+			<tag k="created_by" v="JOSM 1.61"/>
+			<tag k="comment" v="Just adding some streetnames"/>
+		  </changeset>
+		</osm>"""
+		response = client.put(reverse('create'), xml, content_type='application/xml')
+
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
 		
+		cs = Changeset.objects.get(id = cid)
+		self.assertEqual("created_by" in cs.tags, True)
+		self.assertEqual("comment" in cs.tags, True)
+		self.assertEqual(cs.tags["created_by"] == "JOSM 1.61", True)
+		self.assertEqual(cs.tags["comment"] == "Just adding some streetnames", True)
+
 	def tearDown(self):
-		#self.up1.delete()
-		#self.u1.delete()
 		u = User.objects.get(username = self.username)
 		u.delete()

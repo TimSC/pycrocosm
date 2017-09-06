@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import UserData, UserPreferences
 
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import parse
 import cStringIO
 
 # Create your views here.

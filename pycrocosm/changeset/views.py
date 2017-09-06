@@ -2,32 +2,56 @@
 from __future__ import unicode_literals
 
 from django.shortcuts import render
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseBadRequest
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 
 import xml.etree.ElementTree as ET
+from defusedxml.ElementTree import parse
+from rest_framework.parsers import BaseParser
 import cStringIO
 from .models import Changeset
 
 # Create your views here.
 
+class DefusedXmlParser(BaseParser):
+	media_type = 'application/xml'
+	def parse(self, stream, media_type, parser_context):
+		return parse(stream)
+
+def CheckTags(tags):
+	for k in tags:
+		if len(k) > 255:
+			return False
+		if len(tags[k]) > 255:
+			return False
+	return True
+
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
+@parser_classes((DefusedXmlParser,))
 def create(request):
 
 	userRecord = request.user
-	changeset = Changeset.objects.create(user=userRecord)
+	csIn = request.data.find("changeset")
+	tags = {}
+	for tag in csIn.findall("tag"):
+		tags[tag.attrib["k"]] = tag.attrib["v"]
+	if not CheckTags(tags):
+		return HttpResponseBadRequest()
+
+	changeset = Changeset.objects.create(user=userRecord, tags=tags)
 
 	return HttpResponse(changeset.id, content_type='text/plain')
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
+@parser_classes((DefusedXmlParser,))
 def changeset(request, changesetId):
 
 	root = ET.Element('osm')
