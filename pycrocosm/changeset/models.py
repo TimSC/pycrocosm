@@ -9,6 +9,7 @@ from django.contrib.postgres.fields import JSONField
 
 class Changeset(models.Model):
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
+	bbox_set = models.BooleanField(default=False)
 	min_lat = models.FloatField(default=0.0)
 	max_lat = models.FloatField(default=0.0)
 	min_lon = models.FloatField(default=0.0)

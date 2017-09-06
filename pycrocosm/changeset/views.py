@@ -147,9 +147,35 @@ def download(request, changesetId):
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes((IsAuthenticated, ))
+@parser_classes((DefusedXmlParser,))
 def expand_bbox(request, changesetId):
-		
-	return get(request, changesetId)
+	try:
+		changesetData = Changeset.objects.get(id=changesetId)
+	except Changeset.DoesNotExist:
+		return HttpResponseNotFound()
+
+	if not changesetData.is_open:
+		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		response = HttpResponse(err, content_type="text/plain")
+		response.status_code = 409
+		return response
+
+	for node in request.data.findall("node"):
+		if not changesetData.bbox_set:
+			changesetData.min_lat = node.attrib["lat"]
+			changesetData.max_lat = node.attrib["lat"]
+			changesetData.min_lon = node.attrib["lon"]
+			changesetData.max_lon = node.attrib["lon"]
+			changesetData.bbox_set = True
+		else:
+			if node.attrib["lat"] < changesetData.min_lat: changesetData.min_lat = node.attrib["lat"]
+			if node.attrib["lat"] > changesetData.max_lat: changesetData.max_lat = node.attrib["lat"]
+			if node.attrib["lon"] < changesetData.min_lon: changesetData.min_lon = node.attrib["lon"]
+			if node.attrib["lon"] > changesetData.max_lon: changesetData.max_lon = node.attrib["lon"]
+
+	changesetData.save()
+
+	return SerializeChangeset(changesetData)
 
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))

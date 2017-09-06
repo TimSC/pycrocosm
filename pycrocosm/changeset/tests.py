@@ -53,6 +53,22 @@ class ChangesetTestCase(TestCase):
 		  </changeset>
 		</osm>""".format(escape(self.overlongString))
 
+		self.expandBboxXml = """<?xml version='1.0' encoding='UTF-8'?>
+			<osm version='0.6' upload='true' generator='JOSM'>
+			  <node id='-2190' action='modify' visible='true' lat='51.79852581343' lon='-3.38662147656' />
+			  <node id='-2193' action='modify' visible='true' lat='50.71917284205' lon='-5.24880409375' />
+			  <node id='-2197' action='modify' visible='true' lat='50.29646268337' lon='-4.07326698438' />
+			  <node id='-2199' action='modify' visible='true' lat='50.70178040373' lon='-3.08999061719' />
+			  <node id='-2201' action='modify' visible='true' lat='51.08292478386' lon='-3.28225135938' />
+			  <way id='-2194' action='modify' visible='true'>
+				<nd ref='-2190' />
+				<nd ref='-2193' />
+				<nd ref='-2197' />
+				<nd ref='-2199' />
+				<nd ref='-2201' />
+			  </way>
+			</osm>"""
+
 	def test_create_changeset(self):
 
 		response = self.client.put(reverse('create'), self.createXml, content_type='application/xml')
@@ -170,6 +186,8 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('close', args=(cs.id,)))
 		self.assertEqual(response.status_code, 409)
 
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.id, cs2.close_datetime.isoformat()))
+
 	def test_close_changeset_anon(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
 
@@ -179,6 +197,46 @@ class ChangesetTestCase(TestCase):
 
 		cs2 = Changeset.objects.get(id=cs.id)
 		self.assertEqual(cs2.is_open, True)
+
+	def test_expand_bbox(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
+
+		response = self.client.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
+			content_type='application/xml')
+		self.assertEqual(response.status_code, 200)
+
+		cs2 = Changeset.objects.get(id=cs.id)
+		self.assertEqual(cs2.bbox_set, True)
+		self.assertEqual(abs(cs2.min_lat - 50.2964626834) < 1e-6, True) 
+		self.assertEqual(abs(cs2.max_lat - 51.7985258134) < 1e-6, True) 
+		self.assertEqual(abs(cs2.min_lon + 3.08999061719) < 1e-6, True) 
+		self.assertEqual(abs(cs2.max_lon + 5.24880409375) < 1e-6, True)
+
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+		self.assertEqual(int(csout.attrib["id"]) == cs.id, True)
+		self.assertEqual(abs(float(csout.attrib["min_lat"]) - 50.2964626834) < 1e-6, True)
+		self.assertEqual(abs(float(csout.attrib["max_lat"]) - 51.7985258134) < 1e-6, True)
+		self.assertEqual(abs(float(csout.attrib["min_lon"]) + 3.08999061719) < 1e-6, True)
+		self.assertEqual(abs(float(csout.attrib["max_lon"]) + 5.24880409375) < 1e-6, True)
+
+	def test_expand_bbox_anon(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
+
+		anonClient = Client()
+		response = anonClient.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
+			content_type='application/xml')
+		self.assertEqual(response.status_code, 403)
+
+	def test_expand_bbox_closed(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"}, is_open=False)
+
+		response = self.client.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
+			content_type='application/xml')
+		self.assertEqual(response.status_code, 409)
+
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.id, cs.close_datetime.isoformat()))
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
