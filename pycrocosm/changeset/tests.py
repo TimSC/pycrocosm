@@ -123,7 +123,16 @@ class ChangesetTestCase(TestCase):
 		anonClient = Client()
 		response = anonClient.get(reverse('changeset', args=(0,)))
 		self.assertEqual(response.status_code, 404)
-		
+
+	def test_close_changeset(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
+
+		response = self.client.put(reverse('close', args=(cs.id,)))
+		self.assertEqual(response.status_code, 200)
+
+		cs2 = Changeset.objects.get(id=cs.id)
+		self.assertEqual(cs2.is_open, False)
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()

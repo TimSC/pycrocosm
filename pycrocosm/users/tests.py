@@ -98,6 +98,11 @@ class UsersTestCase(TestCase):
 			if pref.key == "foo":
 				self.assertEqual(pref.value, "bar")
 
+	def test_put_preference_single_anon(self):
+		anonClient = Client()
+		response = anonClient.put(reverse('preferences_put', args=["agree"]), "details", content_type='text/plain')
+		self.assertEqual(response.status_code, 403)
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()

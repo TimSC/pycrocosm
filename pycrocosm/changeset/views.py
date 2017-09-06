@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
 from rest_framework.parsers import BaseParser
 import cStringIO
+import datetime
 from .models import Changeset
 
 # Create your views here.
@@ -70,6 +71,8 @@ def changeset(request, changesetId):
 		changeset.attrib["user"] = str(changesetData.user.username)
 		changeset.attrib["uid"] = str(changesetData.user.id)
 		changeset.attrib["created_at"] = str(changesetData.open_datetime.isoformat())
+		if not changesetData.is_open:
+			changeset.attrib["closed_at"] = str(changesetData.close_datetime.isoformat())
 		changeset.attrib["open"] = str(changesetData.is_open).lower()
 		changeset.attrib["min_lon"] = str(changesetData.min_lon)
 		changeset.attrib["min_lat"] = str(changesetData.min_lat)
@@ -99,6 +102,21 @@ def changeset(request, changesetId):
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def close(request, changesetId):
+	try:
+		changesetData = Changeset.objects.get(id=changesetId)
+	except Changeset.DoesNotExist:
+		return HttpResponseNotFound()
+
+	if not changesetData.is_open:
+		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		response = HttpResponse(err, content_type="text/plain")
+		response.code = 409
+		return response
+
+	changesetData.is_open = False
+	changesetData.close_datetime = datetime.datetime.now()
+	changesetData.save()
+
 	return HttpResponse("", content_type='text/plain')
 
 @api_view(['GET'])
