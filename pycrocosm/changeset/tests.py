@@ -94,8 +94,6 @@ class ChangesetTestCase(TestCase):
 		response = anonClient.get(reverse('changeset', args=(cs.id,)))
 		self.assertEqual(response.status_code, 200)
 	
-		xmltest = fromstring(self.createXmlUnicodeTags.encode("utf-8"))
-
 		xml = fromstring(response.content)
 		self.assertEqual(xml.tag, "osm")
 		csout = xml.find("changeset")

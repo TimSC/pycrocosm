@@ -6,13 +6,24 @@ from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.permissions import IsAuthenticated
-from .models import UserData, UserPreferences
+from .models import UserData, UserPreference
 
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
+from rest_framework.parsers import BaseParser
 import cStringIO
+
+class DefusedXmlParser(BaseParser):
+	media_type = 'application/xml'
+	def parse(self, stream, media_type, parser_context):
+		return parse(stream)
+
+class PlainTextParser(BaseParser):
+	media_type = 'text/plain'
+	def parse(self, stream, media_type, parser_context):
+		return stream.read()
 
 # Create your views here.
 
@@ -30,7 +41,7 @@ def details(request):
 	user = ET.SubElement(root, "user")
 	user.attrib["display_name"] = userRecord.username
 	user.attrib["account_created"] = str(userRecord.date_joined.isoformat())
-	user.attrib["id"] = str(userRecord.userdata.mapid)
+	user.attrib["id"] = str(userRecord.id)
 
 	cts = ET.SubElement(user, "contributor-terms")
 	cts.attrib["agreed"] = "false"
@@ -76,10 +87,11 @@ def details(request):
 @csrf_exempt
 @api_view(['GET', 'PUT'])
 @permission_classes((IsAuthenticated, ))
+@parser_classes((DefusedXmlParser,))
 def preferences(request):
 
 	userRecord = request.user
-	prefs = UserPreferences.objects.filter(user=userRecord)
+	prefs = UserPreference.objects.filter(user=userRecord)
 
 	if request.method == 'GET':
 		root = ET.Element('osm')
@@ -99,11 +111,34 @@ def preferences(request):
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 	if request.method == 'PUT':
+		#Clear existing records
+		prefs.delete()
+
+		prefsNode = request.data.find("preferences")
+		dataMap = {}
+		for pref in prefsNode:
+			dataMap[pref.attrib["k"]] = pref.attrib["v"]
+		for pref in dataMap:
+			UserPreference.objects.create(user=request.user, key=pref, value=dataMap[pref])
+
 		return HttpResponse("", content_type='text/plain')
 
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
+@parser_classes((PlainTextParser,))
 def preferences_put(request, key):
+	if(len(key) > 255):
+		return HttpResponseBadRequest()
+	if(len(request.data) > 255):
+		return HttpResponseBadRequest()
+
+	try:
+		existing = UserPreference.objects.get(user=request.user, key=key)
+		existing.value = request.data
+		existing.save()
+	except UserPreference.DoesNotExist:
+		UserPreference.objects.create(user=request.user, key=key, value=request.data)
+
 	return HttpResponse("", content_type='text/plain')
 

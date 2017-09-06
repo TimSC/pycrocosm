@@ -13,7 +13,6 @@ class UserData(models.Model):
 	home_lat = models.FloatField(default=0.0)
 	home_lon = models.FloatField(default=0.0)
 	home_zoom = models.IntegerField(default=-1)
-	mapid = models.IntegerField(default=-1)
 	description = models.TextField(default="")
 	languages = models.TextField(default="")
 
@@ -22,7 +21,7 @@ def user_post_save(sender, instance, signal, *args, **kwargs):
     # Creates user profile
     profile, new = UserData.objects.get_or_create(user=instance)
 
-class UserPreferences(models.Model):
+class UserPreference(models.Model):
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
 	key = models.CharField(max_length=255)
 	value = models.CharField(max_length=255)
