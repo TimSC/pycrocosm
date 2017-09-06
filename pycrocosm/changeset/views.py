@@ -130,7 +130,7 @@ def close(request, changesetId):
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
 		response = HttpResponse(err, content_type="text/plain")
-		response.code = 409
+		response.status_code = 409
 		return response
 
 	changesetData.is_open = False

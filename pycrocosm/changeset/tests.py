@@ -158,6 +158,18 @@ class ChangesetTestCase(TestCase):
 		cs2 = Changeset.objects.get(id=cs.id)
 		self.assertEqual(cs2.is_open, False)
 
+	def test_close_changeset_double_close(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
+
+		response = self.client.put(reverse('close', args=(cs.id,)))
+		self.assertEqual(response.status_code, 200)
+
+		cs2 = Changeset.objects.get(id=cs.id)
+		self.assertEqual(cs2.is_open, False)
+
+		response = self.client.put(reverse('close', args=(cs.id,)))
+		self.assertEqual(response.status_code, 409)
+
 	def test_close_changeset_anon(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
 
