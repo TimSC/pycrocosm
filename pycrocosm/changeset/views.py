@@ -54,6 +54,7 @@ def create(request):
 @permission_classes((IsAuthenticatedOrReadOnly, ))
 @parser_classes((DefusedXmlParser,))
 def changeset(request, changesetId):
+	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
@@ -84,15 +85,17 @@ def changeset(request, changesetId):
 			tag.attrib["k"] = tagKey
 			tag.attrib["v"] = changesetData.tags[tagKey]
 
-		discussion = ET.SubElement(changeset, "discussion")
+		if include_discussion:
 
-		comment = ET.SubElement(discussion, "comment")
-		comment.attrib["data"] = "2015-01-01T18:56:48Z"
-		comment.attrib["uid"] = "1841"
-		comment.attrib["user"] = "metaodi"
+			discussion = ET.SubElement(changeset, "discussion")
 
-		text = ET.SubElement(comment, "text")
-		text.text = "Did you verify those street names?"
+			comment = ET.SubElement(discussion, "comment")
+			comment.attrib["data"] = "2015-01-01T18:56:48Z"
+			comment.attrib["uid"] = "1841"
+			comment.attrib["user"] = "metaodi"
+
+			text = ET.SubElement(comment, "text")
+			text.text = "Did you verify those street names?"
 
 		sio = cStringIO.StringIO()
 		doc.write(sio, "utf-8")

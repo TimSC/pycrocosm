@@ -118,7 +118,8 @@ class ChangesetTestCase(TestCase):
 				foundSecond = True
 		self.assertEqual(foundFirst, True)
 		self.assertEqual(foundSecond, True)
-
+		self.assertEqual(csout.find("discussion"), None)
+		
 	def test_get_changeset_missing(self):
 		anonClient = Client()
 		response = anonClient.get(reverse('changeset', args=(0,)))
