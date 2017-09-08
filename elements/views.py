@@ -39,4 +39,3 @@ def element(request, objType, objId):
 		osmData.StreamTo(enc)
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
-
