@@ -24,4 +24,5 @@ urlpatterns = [
 	url(r'api/', include('api.urls')),
 	url(r'admin/', admin.site.urls),
 	url(r'accounts/', include('django.contrib.auth.urls')),
+	url(r'api/0.6/(node|way|relation)/', include('elements.urls')),
 ]
