@@ -178,9 +178,19 @@ def expand_bbox(request, changesetId):
 	return SerializeChangeset(changesetData)
 
 @api_view(['GET'])
-@permission_classes((IsAuthenticatedOrReadOnly, ))
 def list(request):
-	return HttpResponse("", content_type='text/xml')
+
+	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
+	user = request.GET.get('user', None)
+	display_name = request.GET.get('display_name', None)
+	timearg = request.GET.get('time', None)
+	openarg = request.GET.get('open', None)
+	close = request.GET.get('closed', None)
+	changesets = request.GET.get('changesets', None)
+
+	cs = Changeset.objects.all()[:100]
+
+	return HttpResponse("xxx"+str(len(cs)), content_type='text/plain')
 
 @csrf_exempt
 @api_view(['POST'])
