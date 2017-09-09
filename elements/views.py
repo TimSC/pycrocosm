@@ -39,3 +39,12 @@ def element(request, objType, objId):
 		osmData.StreamTo(enc)
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+	if request.method == 'PUT':
+		osmData = pgmap.OsmData()
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		p.StoreObjects(osmData, createdNodeIds, createdWayIds, createdRelationIds)
+
+		return HttpResponse("", content_type='text/plain')
+

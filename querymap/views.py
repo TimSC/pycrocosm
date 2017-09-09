@@ -10,7 +10,7 @@ import io
 defaultDb = settings.DATABASES['default']
 p = pgmap.PgMap(b"dbname={} user={} password='{}' hostaddr={} port={}".format(defaultDb["NAME"], 
 	defaultDb["USER"], defaultDb["PASSWORD"], defaultDb["HOST"], defaultDb["PORT"]), 
-	str(defaultDb["PREFIX"]))
+	str(defaultDb["PREFIX"]), str(defaultDb["PREFIX_TEST"]))
 
 # Create your views here.
 

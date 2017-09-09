@@ -91,6 +91,7 @@ DATABASES = {
 		'HOST': '127.0.0.1',
 		'PORT': '5432',
 		'PREFIX': "portsmouth_",
+		'PREFIX_TEST': "portsmouth_test_",
 	}
 }
 
