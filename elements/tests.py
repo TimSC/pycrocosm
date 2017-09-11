@@ -19,11 +19,22 @@ class ElementsTestCase(TestCase):
 		self.client = Client()
 		self.client.login(username=self.username, password=self.password)
 
-	def test_put_node(self):
+	#def test_put_node(self):
 
-		response = self.client.put(reverse('element', args=['node', '5']), "", content_type='application/xml')
+	#	response = self.client.put(reverse('element', args=['node', '5']), "", content_type='application/xml')
+
+	#	self.assertEqual(response.status_code, 200)
+
+	def test_create_node(self):
+		createXml = """<osm>
+			 <node changeset="12" lat="51.0" lon="2.2">
+			   <tag k="note" v="Just a node"/>
+			 </node>
+			</osm>"""
+		response = self.client.put(reverse('create', args=['node']), createXml, content_type='application/xml')
 
 		self.assertEqual(response.status_code, 200)
+
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
