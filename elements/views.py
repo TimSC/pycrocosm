@@ -21,6 +21,16 @@ class DefusedXmlParser(BaseParser):
 	def parse(self, stream, media_type, parser_context):
 		return parse(stream)
 
+class OsmDataXmlParser(BaseParser):
+	media_type = 'application/xml'
+	def parse(self, stream, media_type, parser_context):
+		data = pgmap.OsmData()
+		dec = pgmap.OsmXmlDecodeString()
+		dec.output = data
+		inputXml = stream.read()
+		dec.DecodeSubString(inputXml, len(inputXml), True)
+		return data
+
 # Create your views here.
 
 @csrf_exempt
@@ -53,31 +63,14 @@ def element(request, objType, objId):
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
-@parser_classes((DefusedXmlParser,))
+@parser_classes((OsmDataXmlParser,))
 def create(request, objType):
-
-	osmData = pgmap.OsmData()
-
-	if objType == "node":
-		nodeEl = request.data.find("node")
-		nodeObj = pgmap.OsmNode()
-		nodeObj.objId = 0
-		nodeObj.metaData.timestamp = int(time.time())
-		nodeObj.metaData.changeset = int(nodeEl.attrib["changeset"])
-		nodeObj.metaData.uid = request.user.id
-		nodeObj.metaData.username = request.user.username.encode("UTF-8")
-		nodeObj.metaData.visible = True
-		for tagEl in nodeEl.findall("tag"):
-			nodeObj.tags[tagEl.attrib["k"]] = tagEl.attrib["v"]
-		nodeObj.lat = float(nodeEl.attrib["lat"])
-		nodeObj.lon = float(nodeEl.attrib["lon"])
-		osmData.nodes.append(nodeObj)
 
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
-	ok = p.StoreObjects(osmData, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	ok = p.StoreObjects(request.data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 
 	if not ok:
 		return HttpResponseServerError(errStr, content_type='text/plain')
