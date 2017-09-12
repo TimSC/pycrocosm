@@ -4,6 +4,7 @@ from __future__ import unicode_literals
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
+from rest_framework.exceptions import ParseError
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
@@ -27,8 +28,15 @@ class OsmDataXmlParser(BaseParser):
 		data = pgmap.OsmData()
 		dec = pgmap.OsmXmlDecodeString()
 		dec.output = data
-		inputXml = stream.read()
-		dec.DecodeSubString(inputXml, len(inputXml), True)
+		pageSize = 100000
+		while True:
+			inputXml = stream.read(pageSize)
+			if len(inputXml) == 0:
+				break
+			dec.DecodeSubString(inputXml, len(inputXml), False)
+		dec.DecodeSubString("".encode("UTF-8"), 0, True)
+		if not dec.parseCompletedOk:
+			raise ParseError(detail=dec.errString)
 		return data
 
 # Create your views here.

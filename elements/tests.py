@@ -35,6 +35,15 @@ class ElementsTestCase(TestCase):
 
 		self.assertEqual(response.status_code, 200)
 
+	def test_create_node_invalid_xml(self):
+		createXml = """<osm>
+			 <node changeset="12" lat="51.0" lon="2.2">
+			   <tag k="note" v="Just a node"/>
+			</osm>"""
+		response = self.client.put(reverse('create', args=['node']), createXml, content_type='application/xml')
+
+		self.assertEqual(response.status_code, 400)
+
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
