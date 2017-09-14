@@ -4,15 +4,18 @@ from __future__ import unicode_literals
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, StreamingHttpResponse
 from django.conf import settings
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from django.views.decorators.gzip import gzip_page
+from django.views.decorators.csrf import csrf_exempt
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 import pgmap
 import io
+import random
 
 defaultDb = settings.DATABASES['default']
 p = pgmap.PgMap(b"dbname={} user={} password='{}' hostaddr={} port={}".format(defaultDb["NAME"], 
 	defaultDb["USER"], defaultDb["PASSWORD"], defaultDb["HOST"], defaultDb["PORT"]), 
 	str(defaultDb["PREFIX"]), str(defaultDb["PREFIX_TEST"]))
-
-# Create your views here.
 
 class MapQueryResponse(object):
 	def __init__(self, bbox):
@@ -35,7 +38,12 @@ class MapQueryResponse(object):
 		if ret < 0:
 			raise RuntimeError("Map query error")
 		if ret == 1:
-			self.complete = True			
+			#Add random whitespace to the end to confuse BREACH attacks
+			self.complete = True
+			whitespace = []
+			for i in range(random.randint(0, 256)):
+				whitespace.append(random.choice((b'\n',b' ',b'\t')))
+			return self.sio.getvalue() + b"".join(whitespace)
 
 		buff = self.sio.getvalue()
 		self.sio = io.BytesIO() #Reset buffer 
@@ -43,6 +51,9 @@ class MapQueryResponse(object):
 
 		return buff
 
+@gzip_page #Control gzip on a per-page basis because of BREACH vun. This page contains no secrets.
+@csrf_exempt #Contain no secrets to avoid BREACH vun (and this page is never POSTed anyway).
+@api_view(['GET'])
 def index(request):
 	bbox = request.GET.get('bbox', None)
 	if bbox is None:
