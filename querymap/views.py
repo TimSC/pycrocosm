@@ -18,7 +18,8 @@ class MapQueryResponse(object):
 	def __init__(self, bbox):
 		self.sio = io.BytesIO()
 		self.enc = pgmap.PyOsmXmlEncode(self.sio)
-		if p.pgMapQuery.Start(bbox, self.enc)<0:
+		self.mapQuery = p.GetQueryMgr()
+		if self.mapQuery.Start(bbox, self.enc)<0:
 			raise RuntimeError("Map query failed to start")
 		self.complete = False
 
@@ -29,7 +30,7 @@ class MapQueryResponse(object):
 		if self.complete:
 			raise StopIteration()
 	
-		ret = p.pgMapQuery.Continue()
+		ret = self.mapQuery.Continue()
 
 		if ret < 0:
 			raise RuntimeError("Map query error")
