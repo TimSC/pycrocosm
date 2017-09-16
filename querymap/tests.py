@@ -20,6 +20,7 @@ class ElementsTestCase(TestCase):
 		self.user = User.objects.create_user(self.username, self.email, self.password)
 		self.client = Client()
 		self.client.login(username=self.username, password=self.password)
+		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
 
 	def create_node(self):
 		node = pgmap.OsmNode()
@@ -108,7 +109,57 @@ class ElementsTestCase(TestCase):
 		for chunk in xml:
 			dec.DecodeSubString(chunk, len(chunk), False)
 		dec.DecodeSubString(b"", 0, True)
-		return data		
+		return data
+
+	def find_object_ids(self, data):
+		nodeIdSet = set()
+		for nodeNum in range(len(data.nodes)):
+			node2 = data.nodes[nodeNum]
+			nodeIdSet.add(node2.objId)
+
+		wayIdSet = set()
+		nodeMems = set()
+		wayMems = set()
+		relationMems = set()
+		for wayNum in range(len(data.ways)):
+			way2 = data.ways[wayNum]
+			wayIdSet.add(way2.objId)
+
+			for mem in way2.refs:
+				nodeMems.add(mem)
+
+		relationIdSet = set()
+		for relationNum in range(len(data.relations)):
+			relation2 = data.relations[relationNum]
+			relationIdSet.add(relation2.objId)
+
+			for memId, memType in zip(relation2.refIds, relation2.refTypeStrs):
+				if memType == "node":
+					nodeMems.add(memId)
+				if memType == "way":
+					wayMems.add(memId)
+				if memType == "relation":
+					relationMems.add(memId)
+
+		return nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems
+
+	def get_object_id_dicts(self, data):
+		nodeIdDict = {}
+		for nodeNum in range(len(data.nodes)):
+			node2 = data.nodes[nodeNum]
+			nodeIdDict[node2.objId] = node2
+
+		wayIdDict = {}
+		for wayNum in range(len(data.ways)):
+			way2 = data.ways[wayNum]
+			wayIdDict[way2.objId] = way2
+
+		relationIdDict = {}
+		for relationNum in range(len(data.relations)):
+			relation2 = data.relations[relationNum]
+			relationIdDict[relation2.objId] = relation2
+
+		return nodeIdDict, wayIdDict, relationIdDict
 
 	def check_node_in_query(self, node):
 
@@ -126,8 +177,8 @@ class ElementsTestCase(TestCase):
 		return node.objId in nodeIdSet
 		
 	def test_query_active_node(self):
-		
 		node = self.create_node()
+
 		found = self.check_node_in_query(node)
 		self.assertEqual(found, True)
 
@@ -143,7 +194,30 @@ class ElementsTestCase(TestCase):
 
 		self.delete_node(node, 1)
 		self.assertEqual(self.check_node_in_query(node), False)
-		
+
+	def test_delete_static_node(self):
+		#Find a node that is not part of any other object
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		candidateIds = list(nodeIdSet.difference(nodeMems))
+
+		if len(candidateIds) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeObjToDelete = nodeIdDict[candidateIds[0]]
+			print "nodeObjToDelete", nodeObjToDelete
+
+			self.delete_node(nodeObjToDelete, 1)
+			self.assertEqual(self.check_node_in_query(nodeObjToDelete), False)
+		else:
+			print "No free nodes in ROI for testing"
+
+		#Clear active data
+		#TODO
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
