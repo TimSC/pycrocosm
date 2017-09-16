@@ -21,6 +21,12 @@ class ElementsTestCase(TestCase):
 		self.client = Client()
 		self.client.login(username=self.username, password=self.password)
 		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
+		errStr = pgmap.PgMapError()
+		ok = p.ResetActiveTables(errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+
 
 	def create_node(self):
 		node = pgmap.OsmNode()
@@ -196,6 +202,7 @@ class ElementsTestCase(TestCase):
 		self.assertEqual(self.check_node_in_query(node), False)
 
 	def test_delete_static_node(self):
+
 		#Find a node that is not part of any other object
 		anonClient = Client()
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
@@ -208,17 +215,41 @@ class ElementsTestCase(TestCase):
 		if len(candidateIds) > 0:
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
-			print "nodeObjToDelete", nodeObjToDelete
 
 			self.delete_node(nodeObjToDelete, 1)
 			self.assertEqual(self.check_node_in_query(nodeObjToDelete), False)
 		else:
 			print "No free nodes in ROI for testing"
 
-		#Clear active data
-		#TODO
+	def test_modify_static_node(self):
+
+		#Find a static node
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		nodeIdSet = list(nodeIdSet)
+
+		if len(nodeIdSet) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeObjToModify = nodeIdDict[nodeIdSet[0]]
+			print "nodeObjToModify", nodeObjToModify
+
+			modNode = self.modify_node(nodeObjToModify, 1)
+			self.assertEqual(self.check_node_in_query(modNode), True)
+			self.assertEqual(self.check_node_in_query(nodeObjToModify), False)
+
+		else:
+			print "No nodes in ROI for testing"
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
+		errStr = pgmap.PgMapError()
+		ok = p.ResetActiveTables(errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
 
