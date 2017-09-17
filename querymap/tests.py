@@ -141,6 +141,29 @@ class ElementsTestCase(TestCase):
 			print errStr.errStr
 		self.assertEqual(ok, True)
 
+	def delete_way(self, wayIn, wayCurrentVer):
+		way = pgmap.OsmWay()
+		way.objId = wayIn.objId
+		way.metaData.version = wayCurrentVer + 1
+		way.metaData.timestamp = 0
+		way.metaData.changeset = 1000
+		way.metaData.uid = self.user.id
+		way.metaData.username = self.user.username.encode("UTF-8")
+		way.metaData.visible = False
+
+		data = pgmap.OsmData()
+		data.ways.append(way)
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+
 	def decode_response(self, xml):
 		data = pgmap.OsmData()
 		dec = pgmap.OsmXmlDecodeString()
@@ -280,7 +303,7 @@ class ElementsTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
-			self.delete_node(nodeObjToDelete, 1)
+			self.delete_node(nodeObjToDelete, nodeObjToDelete.metaData.version)
 			self.check_node_in_query(nodeObjToDelete, False)
 		else:
 			print "No free nodes in ROI for testing"
@@ -315,6 +338,26 @@ class ElementsTestCase(TestCase):
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(way, bbox, True)
+
+	def test_delete_static_way(self):
+
+		#Find a way that is not part of any other relation
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		candidateIds = list(wayIdSet.difference(wayMems))
+
+		if len(candidateIds) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			wayObjToDelete = wayIdDict[candidateIds[0]]
+
+			self.delete_way(wayObjToDelete, wayObjToDelete.metaData.version)
+			self.check_way_in_query(wayObjToDelete, self.roi, False)
+		else:
+			print "No free ways in ROI for testing"
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
