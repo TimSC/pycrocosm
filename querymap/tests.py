@@ -28,7 +28,7 @@ class ElementsTestCase(TestCase):
 		self.assertEqual(ok, True)
 
 
-	def create_node(self):
+	def create_node(self, nearbyNode = None):
 		node = pgmap.OsmNode()
 		node.objId = -1
 		node.metaData.version = 1
@@ -38,8 +38,12 @@ class ElementsTestCase(TestCase):
 		node.metaData.username = self.user.username.encode("UTF-8")
 		node.metaData.visible = True
 		node.tags[b"test"] = b"autumn"
-		node.lat = 43.0 + random.uniform(-1.0, 1.0)
-		node.lon = -70.3 + random.uniform(-1.0, 1.0)
+		if nearbyNode is None:
+			node.lat = 43.0 + random.uniform(-1.0, 1.0)
+			node.lon = -70.3 + random.uniform(-1.0, 1.0)
+		else:
+			node.lat = nearbyNode.lat + random.uniform(-0.00015, 0.00015)
+			node.lon = nearbyNode.lon + random.uniform(-0.00015, 0.00015)
 
 		data = pgmap.OsmData()
 		data.nodes.append(node)
@@ -196,7 +200,7 @@ class ElementsTestCase(TestCase):
 
 		return nodeIdDict, wayIdDict, relationIdDict
 
-	def check_node_in_query(self, node):
+	def check_node_in_query(self, node, expected=True):
 
 		anonClient = Client()
 		bbox = [node.lon-0.0001, node.lat-0.0001, node.lon+0.0001, node.lat+0.0001]
@@ -205,30 +209,61 @@ class ElementsTestCase(TestCase):
 
 		data = self.decode_response(response.streaming_content)
 
-		nodeIdSet = set()
-		for nodeNum in range(len(data.nodes)):
-			node2 = data.nodes[nodeNum]
-			nodeIdSet.add(node2.objId)
-		return node.objId in nodeIdSet
+		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		self.assertEqual(node.objId in nodeIdDict, expected)
+
+		if expected:
+			qNode = nodeIdDict[node.objId]
+			self.assertEqual(dict(node.tags) == dict(qNode.tags), True)
+
+			self.assertEqual(abs(node.lat - qNode.lat)<1e-6, True)
+			self.assertEqual(abs(node.lon - qNode.lon)<1e-6, True)
+
+	def get_bbox_for_nodes(self, nodes):
+		bbox = [None, None, None, None]
+		for node in nodes:
+			if bbox[0] is None or node.lon < bbox[0]:
+				bbox[0] = node.lon
+			if bbox[1] is None or node.lat < bbox[1]:
+				bbox[1] = node.lat
+			if bbox[2] is None or node.lon > bbox[2]:
+				bbox[2] = node.lon
+			if bbox[3] is None or node.lat > bbox[3]:
+				bbox[3] = node.lat
+		return bbox
+
+	def check_way_in_query(self, way, bbox, expected):
 		
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+
+		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		self.assertEqual(way.objId in wayIdDict, expected)
+		
+		if expected:
+			self.assertEqual(dict(way.tags) == dict(wayIdDict[way.objId].tags), True)
+			self.assertEqual(list(way.refs) == list(wayIdDict[way.objId].refs), True)
+
 	def test_query_active_node(self):
 		node = self.create_node()
 
-		found = self.check_node_in_query(node)
-		self.assertEqual(found, True)
+		self.check_node_in_query(node, True)
 
 	def test_modify_active_node(self):
 		node = self.create_node()
 
 		modNode = self.modify_node(node, 1)
-		self.assertEqual(self.check_node_in_query(modNode), True)
-		self.assertEqual(self.check_node_in_query(node), False)
+		self.check_node_in_query(modNode, True)
+		self.check_node_in_query(node, False)
 
 	def test_delete_active_node(self):
 		node = self.create_node()
 
 		self.delete_node(node, 1)
-		self.assertEqual(self.check_node_in_query(node), False)
+		self.check_node_in_query(node, False)
 
 	def test_delete_static_node(self):
 
@@ -246,7 +281,7 @@ class ElementsTestCase(TestCase):
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
 			self.delete_node(nodeObjToDelete, 1)
-			self.assertEqual(self.check_node_in_query(nodeObjToDelete), False)
+			self.check_node_in_query(nodeObjToDelete, False)
 		else:
 			print "No free nodes in ROI for testing"
 
@@ -267,19 +302,19 @@ class ElementsTestCase(TestCase):
 			print "nodeObjToModify", nodeObjToModify
 
 			modNode = self.modify_node(nodeObjToModify, 1)
-			self.assertEqual(self.check_node_in_query(modNode), True)
-			self.assertEqual(self.check_node_in_query(nodeObjToModify), False)
+			self.check_node_in_query(modNode, True)
+			self.check_node_in_query(nodeObjToModify, False)
 
 		else:
 			print "No nodes in ROI for testing"
 
 	def test_query_active_node(self):
 		node = self.create_node()
-		node2 = self.create_node()
+		node2 = self.create_node(node)
 		way = self.create_way([node.objId, node2.objId])
 
-		#found = self.check_way_in_query(way)
-		#self.assertEqual(found, True)
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_way_in_query(way, bbox, True)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
