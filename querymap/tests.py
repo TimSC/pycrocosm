@@ -56,6 +56,35 @@ class ElementsTestCase(TestCase):
 		node.objId = createdNodeIds[-1]
 		return node
 
+	def create_way(self, refs):
+
+		way = pgmap.OsmWay()
+		way.objId = -1
+		way.metaData.version = 1
+		way.metaData.timestamp = 0
+		way.metaData.changeset = 1000
+		way.metaData.uid = self.user.id
+		way.metaData.username = self.user.username.encode("UTF-8")
+		way.metaData.visible = True
+		way.tags[b"test"] = b"spring"
+		for ref in refs:
+			way.refs.append(ref)
+
+		data = pgmap.OsmData()
+		data.ways.append(way)
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+		way.objId = createdWayIds[-1]
+		return way
+
 	def modify_node(self, nodeIn, nodeCurrentVer):
 		node = pgmap.OsmNode()
 		node.objId = nodeIn.objId
@@ -243,6 +272,14 @@ class ElementsTestCase(TestCase):
 
 		else:
 			print "No nodes in ROI for testing"
+
+	def test_query_active_node(self):
+		node = self.create_node()
+		node2 = self.create_node()
+		way = self.create_way([node.objId, node2.objId])
+
+		#found = self.check_way_in_query(way)
+		#self.assertEqual(found, True)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
