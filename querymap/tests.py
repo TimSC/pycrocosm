@@ -12,7 +12,7 @@ import random
 
 # Create your tests here.
 
-class ElementsTestCase(TestCase):
+class QueryMapTestCase(TestCase):
 	def setUp(self):
 		self.username = "john"
 		self.password = "glass onion"
@@ -116,6 +116,34 @@ class ElementsTestCase(TestCase):
 		self.assertEqual(ok, True)
 		return node
 
+	def modify_way(self, wayIn, refsIn, tagsIn):
+		way = pgmap.OsmWay()
+		way.objId = wayIn.objId
+		way.metaData.version = wayIn.metaData.version + 1
+		way.metaData.timestamp = 0
+		way.metaData.changeset = 1000
+		way.metaData.uid = self.user.id
+		way.metaData.username = self.user.username.encode("UTF-8")
+		way.metaData.visible = True
+		for k in tagsIn:
+			way.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
+		for ref in refsIn:
+			way.refs.append(ref)
+
+		data = pgmap.OsmData()
+		data.ways.append(way)
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+		return way
+		
 	def delete_node(self, nodeIn, nodeCurrentVer):
 		node = pgmap.OsmNode()
 		node.objId = nodeIn.objId
@@ -141,10 +169,10 @@ class ElementsTestCase(TestCase):
 			print errStr.errStr
 		self.assertEqual(ok, True)
 
-	def delete_way(self, wayIn, wayCurrentVer):
+	def delete_way(self, wayIn):
 		way = pgmap.OsmWay()
 		way.objId = wayIn.objId
-		way.metaData.version = wayCurrentVer + 1
+		way.metaData.version = wayIn.metaData.version + 1
 		way.metaData.timestamp = 0
 		way.metaData.changeset = 1000
 		way.metaData.uid = self.user.id
@@ -163,6 +191,7 @@ class ElementsTestCase(TestCase):
 		if not ok:
 			print errStr.errStr
 		self.assertEqual(ok, True)
+		return way
 
 	def decode_response(self, xml):
 		data = pgmap.OsmData()
@@ -322,7 +351,6 @@ class ElementsTestCase(TestCase):
 		if len(nodeIdSet) > 0:
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			nodeObjToModify = nodeIdDict[nodeIdSet[0]]
-			print "nodeObjToModify", nodeObjToModify
 
 			modNode = self.modify_node(nodeObjToModify, 1)
 			self.check_node_in_query(modNode, True)
@@ -331,13 +359,33 @@ class ElementsTestCase(TestCase):
 		else:
 			print "No nodes in ROI for testing"
 
-	def test_query_active_node(self):
+	def test_query_active_way(self):
 		node = self.create_node()
 		node2 = self.create_node(node)
 		way = self.create_way([node.objId, node2.objId])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(way, bbox, True)
+
+	def test_modify_active_way(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		way = self.create_way([node.objId, node2.objId])
+
+		modWay = self.modify_way(way, [node.objId, node2.objId, node.objId], {"foo": "eggs"})
+		
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_way_in_query(modWay, bbox, True)
+
+	def test_delete_active_way(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		way = self.create_way([node.objId, node2.objId])
+
+		modWay = self.delete_way(way)
+		
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_way_in_query(modWay, bbox, False)
 
 	def test_delete_static_way(self):
 
@@ -354,7 +402,7 @@ class ElementsTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			wayObjToDelete = wayIdDict[candidateIds[0]]
 
-			self.delete_way(wayObjToDelete, wayObjToDelete.metaData.version)
+			self.delete_way(wayObjToDelete)
 			self.check_way_in_query(wayObjToDelete, self.roi, False)
 		else:
 			print "No free ways in ROI for testing"
