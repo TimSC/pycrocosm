@@ -11,11 +11,18 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 import pgmap
 import io
 import random
+import sys
+
+TEST = 'test' in sys.argv
+if TEST:
+	ACTIVE_DB = "PREFIX_TEST"
+else:
+	ACTIVE_DB = "PREFIX_MOD"
 
 defaultDb = settings.DATABASES['default']
 p = pgmap.PgMap(b"dbname={} user={} password='{}' hostaddr={} port={}".format(defaultDb["NAME"], 
 	defaultDb["USER"], defaultDb["PASSWORD"], defaultDb["HOST"], defaultDb["PORT"]), 
-	str(defaultDb["PREFIX"]), str(defaultDb["PREFIX_TEST"]))
+	str(defaultDb["PREFIX"]), str(defaultDb[ACTIVE_DB]))
 
 class MapQueryResponse(object):
 	def __init__(self, bbox):

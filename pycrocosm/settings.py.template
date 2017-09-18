@@ -92,6 +92,7 @@ DATABASES = {
 		'PORT': '5432',
 		'PREFIX': "portsmouth_",
 		'PREFIX_TEST': "portsmouth_test_",
+		'PREFIX_MOD': "portsmouth_mod_",
 	}
 }
 
