@@ -104,6 +104,8 @@ class QueryMapTestCase(TestCase):
 			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
 			relation.refIds.append(refId)
 			relation.refRoles.append(refRole.encode("UTF-8"))
+		assert len(relation.refTypeStrs) == len(relation.refTypeStrs)
+		assert len(relation.refTypeStrs) == len(relation.refRoles)
 
 		data = pgmap.OsmData()
 		data.relations.append(relation)
@@ -343,7 +345,7 @@ class QueryMapTestCase(TestCase):
 		
 		if expected:
 			self.assertEqual(dict(relation.tags) == dict(relationIdDict[relation.objId].tags), True)
-			self.assertEqual(list(relation.refsIds) == list(relationIdDict[relation.refsIds].refs), True)
+			self.assertEqual(list(relation.refIds) == list(relationIdDict[relation.objId].refIds), True)
 
 	def test_query_active_node(self):
 		node = self.create_node()
