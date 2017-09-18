@@ -104,8 +104,6 @@ class QueryMapTestCase(TestCase):
 			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
 			relation.refIds.append(refId)
 			relation.refRoles.append(refRole.encode("UTF-8"))
-		assert len(relation.refTypeStrs) == len(relation.refTypeStrs)
-		assert len(relation.refTypeStrs) == len(relation.refRoles)
 
 		data = pgmap.OsmData()
 		data.relations.append(relation)
@@ -176,21 +174,64 @@ class QueryMapTestCase(TestCase):
 			print errStr.errStr
 		self.assertEqual(ok, True)
 		return way
+
+	def modify_relation(self, relationIn, refsIn, tagsIn):
+		relation = pgmap.OsmRelation()
+		relation.objId = relationIn.objId
+		relation.metaData.version = relationIn.metaData.version + 1
+		relation.metaData.timestamp = 0
+		relation.metaData.changeset = 1000
+		relation.metaData.uid = self.user.id
+		relation.metaData.username = self.user.username.encode("UTF-8")
+		relation.metaData.visible = True
+		for k in tagsIn:
+			relation.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
+		for refTypeStr, refId, refRole in refsIn:
+			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+			relation.refIds.append(refId)
+			relation.refRoles.append(refRole.encode("UTF-8"))
+
+		data = pgmap.OsmData()
+		data.relations.append(relation)
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+		return relation
 		
-	def delete_node(self, nodeIn, nodeCurrentVer):
-		node = pgmap.OsmNode()
-		node.objId = nodeIn.objId
-		node.metaData.version = nodeCurrentVer + 1
-		node.metaData.timestamp = 0
-		node.metaData.changeset = 1000
-		node.metaData.uid = self.user.id
-		node.metaData.username = self.user.username.encode("UTF-8")
-		node.metaData.visible = False
-		node.lat = nodeIn.lat
-		node.lon = nodeIn.lon
+	def delete_object(self, objIn):
+		if isinstance(objIn, pgmap.OsmNode):
+			obj = pgmap.OsmNode()
+		elif isinstance(objIn, pgmap.OsmWay):
+			obj = pgmap.OsmWay()
+		elif isinstance(objIn, pgmap.OsmRelation):
+			obj = pgmap.OsmRelation()
+
+		obj.objId = objIn.objId
+		obj.metaData.version = objIn.metaData.version + 1
+		obj.metaData.timestamp = 0
+		obj.metaData.changeset = 1000
+		obj.metaData.uid = self.user.id
+		obj.metaData.username = self.user.username.encode("UTF-8")
+		obj.metaData.visible = False
+		if isinstance(objIn, pgmap.OsmNode):
+			obj.lat = objIn.lat
+			obj.lon = objIn.lon
 
 		data = pgmap.OsmData()
-		data.nodes.append(node)
+
+		if isinstance(objIn, pgmap.OsmNode):
+			data.nodes.append(obj)
+		elif isinstance(objIn, pgmap.OsmWay):
+			data.ways.append(obj)
+		elif isinstance(objIn, pgmap.OsmRelation):
+			data.relations.append(obj)
 
 		createdNodeIds = pgmap.mapi64i64()
 		createdWayIds = pgmap.mapi64i64()
@@ -201,30 +242,6 @@ class QueryMapTestCase(TestCase):
 		if not ok:
 			print errStr.errStr
 		self.assertEqual(ok, True)
-
-	def delete_way(self, wayIn):
-		way = pgmap.OsmWay()
-		way.objId = wayIn.objId
-		way.metaData.version = wayIn.metaData.version + 1
-		way.metaData.timestamp = 0
-		way.metaData.changeset = 1000
-		way.metaData.uid = self.user.id
-		way.metaData.username = self.user.username.encode("UTF-8")
-		way.metaData.visible = False
-
-		data = pgmap.OsmData()
-		data.ways.append(way)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-		if not ok:
-			print errStr.errStr
-		self.assertEqual(ok, True)
-		return way
 
 	def decode_response(self, xml):
 		data = pgmap.OsmData()
@@ -362,7 +379,7 @@ class QueryMapTestCase(TestCase):
 	def test_delete_active_node(self):
 		node = self.create_node()
 
-		self.delete_node(node, 1)
+		self.delete_object(node)
 		self.check_node_in_query(node, False)
 
 	def test_delete_static_node(self):
@@ -380,7 +397,7 @@ class QueryMapTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
-			self.delete_node(nodeObjToDelete, nodeObjToDelete.metaData.version)
+			self.delete_object(nodeObjToDelete)
 			self.check_node_in_query(nodeObjToDelete, False)
 		else:
 			print "No free nodes in ROI for testing"
@@ -430,10 +447,10 @@ class QueryMapTestCase(TestCase):
 		node2 = self.create_node(node)
 		way = self.create_way([node.objId, node2.objId])
 
-		modWay = self.delete_way(way)
+		self.delete_object(way)
 		
 		bbox = self.get_bbox_for_nodes([node, node2])
-		self.check_way_in_query(modWay, bbox, False)
+		self.check_way_in_query(way, bbox, False)
 
 	def test_modify_static_way(self):
 
@@ -472,7 +489,7 @@ class QueryMapTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
 			wayObjToDelete = wayIdDict[candidateIds[0]]
 
-			self.delete_way(wayObjToDelete)
+			self.delete_object(wayObjToDelete)
 			self.check_way_in_query(wayObjToDelete, self.roi, False)
 		else:
 			print "No free ways in ROI for testing"
@@ -481,10 +498,43 @@ class QueryMapTestCase(TestCase):
 		node = self.create_node()
 		node2 = self.create_node(node)
 		way = self.create_way([node.objId, node2.objId])
-		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+		relation = self.create_relation([("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(relation, bbox, True)
+
+	def test_query_active_relation_with_way_member(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		way = self.create_way([node.objId, node2.objId])
+		relation = self.create_relation([("way", way.objId, "parrot")])
+
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_relation_in_query(relation, bbox, True)
+
+	def test_modify_active_relation(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		node3 = self.create_node(node)
+		relation = self.create_relation([("node", node.objId, "parrot")])
+
+		modRelation = self.modify_relation(relation, 
+			[("node", node.objId, "parrot"), ("node", node2.objId, "dead"), ("node", node3.objId, "")], 
+			{"foo": "bar"})
+		
+		bbox = self.get_bbox_for_nodes([node, node2, node3])
+		self.check_relation_in_query(modRelation, bbox, True)
+
+	def test_delete_active_relation(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		way = self.create_way([node.objId, node2.objId])
+		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		self.delete_object(relation)
+		
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_relation_in_query(way, bbox, False)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
