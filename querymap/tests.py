@@ -536,6 +536,57 @@ class QueryMapTestCase(TestCase):
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(way, bbox, False)
 
+	def test_modify_static_relation(self):
+
+		#Find a relation that is not part of any other relation
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		candidateIds = list(relationIdSet.difference(relationMems))
+
+		#TODO Improve check for parents of relation?
+
+		if len(candidateIds) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			relationObjToMod = relationIdDict[candidateIds[0]]
+
+			refTypeStrs = list(relationObjToMod.refTypeStrs)
+			refTypeStrs.append(refTypeStrs[0])
+			refIds = list(relationObjToMod.refIds)
+			refIds.append(refIds[0])
+			refRoles = list(relationObjToMod.refRoles)
+			refRoles.append(refRoles[0])
+			modRelation = self.modify_relation(relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})
+			self.check_relation_in_query(modRelation, self.roi, True)
+		else:
+			print "No free relations in ROI for testing"
+
+	def test_delete_static_relation(self):
+
+		#Find a relation that is not part of any other relation
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		candidateIds = list(relationIdSet.difference(relationMems))
+
+		#TODO Improve check for parents of relation?
+
+		if len(candidateIds) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			relationObjToDel = relationIdDict[candidateIds[0]]
+
+			self.delete_object(relationObjToDel)
+			self.check_relation_in_query(relationObjToDel, self.roi, False)
+		else:
+			print "No free relations in ROI for testing"
+
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
