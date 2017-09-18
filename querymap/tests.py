@@ -89,6 +89,37 @@ class QueryMapTestCase(TestCase):
 		way.objId = createdWayIds[-1]
 		return way
 
+	def create_relation(self, refs):
+
+		relation = pgmap.OsmRelation()
+		relation.objId = -1
+		relation.metaData.version = 1
+		relation.metaData.timestamp = 0
+		relation.metaData.changeset = 1000
+		relation.metaData.uid = self.user.id
+		relation.metaData.username = self.user.username.encode("UTF-8")
+		relation.metaData.visible = True
+		relation.tags[b"test"] = b"moon"
+		for refTypeStr, refId, refRole in refs:
+			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+			relation.refIds.append(refId)
+			relation.refRoles.append(refRole.encode("UTF-8"))
+
+		data = pgmap.OsmData()
+		data.relations.append(relation)
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+		self.assertEqual(ok, True)
+		relation.objId = createdRelationIds[-1]
+		return relation
+
 	def modify_node(self, nodeIn, nodeCurrentVer):
 		node = pgmap.OsmNode()
 		node.objId = nodeIn.objId
@@ -299,6 +330,21 @@ class QueryMapTestCase(TestCase):
 			self.assertEqual(dict(way.tags) == dict(wayIdDict[way.objId].tags), True)
 			self.assertEqual(list(way.refs) == list(wayIdDict[way.objId].refs), True)
 
+	def check_relation_in_query(self, relation, bbox, expected):
+		
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+
+		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		self.assertEqual(relation.objId in relationIdDict, expected)
+		
+		if expected:
+			self.assertEqual(dict(relation.tags) == dict(relationIdDict[relation.objId].tags), True)
+			self.assertEqual(list(relation.refsIds) == list(relationIdDict[relation.refsIds].refs), True)
+
 	def test_query_active_node(self):
 		node = self.create_node()
 
@@ -387,6 +433,28 @@ class QueryMapTestCase(TestCase):
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(modWay, bbox, False)
 
+	def test_modify_static_way(self):
+
+		#Find a way that is not part of any other relation
+		anonClient = Client()
+		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		self.assertEqual(response.status_code, 200)
+
+		data = self.decode_response(response.streaming_content)
+		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
+		candidateIds = list(wayIdSet.difference(wayMems))
+
+		if len(candidateIds) > 0:
+			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			wayObjToMod = wayIdDict[candidateIds[0]]
+
+			refs = list(wayObjToMod.refs)
+			refs.append(refs[0])
+			modWay = self.modify_way(wayObjToMod, refs, {"foo": "bacon"})
+			self.check_way_in_query(modWay, self.roi, True)
+		else:
+			print "No free ways in ROI for testing"
+
 	def test_delete_static_way(self):
 
 		#Find a way that is not part of any other relation
@@ -406,6 +474,15 @@ class QueryMapTestCase(TestCase):
 			self.check_way_in_query(wayObjToDelete, self.roi, False)
 		else:
 			print "No free ways in ROI for testing"
+
+	def test_query_active_relation(self):
+		node = self.create_node()
+		node2 = self.create_node(node)
+		way = self.create_way([node.objId, node2.objId])
+		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		bbox = self.get_bbox_for_nodes([node, node2])
+		self.check_relation_in_query(relation, bbox, True)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
