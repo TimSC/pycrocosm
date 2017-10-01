@@ -4,40 +4,17 @@ from __future__ import unicode_literals
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError
 from django.views.decorators.csrf import csrf_exempt
-from rest_framework.exceptions import ParseError
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
-from rest_framework.parsers import BaseParser
 from querymap.views import p
 import pgmap
 import io
 import datetime
 import time
-
-class DefusedXmlParser(BaseParser):
-	media_type = 'application/xml'
-	def parse(self, stream, media_type, parser_context):
-		return parse(stream)
-
-class OsmDataXmlParser(BaseParser):
-	media_type = 'application/xml'
-	def parse(self, stream, media_type, parser_context):
-		data = pgmap.OsmData()
-		dec = pgmap.OsmXmlDecodeString()
-		dec.output = data
-		pageSize = 100000
-		while True:
-			inputXml = stream.read(pageSize)
-			if len(inputXml) == 0:
-				break
-			dec.DecodeSubString(inputXml, len(inputXml), False)
-		dec.DecodeSubString("".encode("UTF-8"), 0, True)
-		if not dec.parseCompletedOk:
-			raise ParseError(detail=dec.errString)
-		return data
+from pycrocosm.parsers import DefusedXmlParser, OsmDataXmlParser
 
 # Create your views here.
 

@@ -21,7 +21,7 @@ class ElementsTestCase(TestCase):
 
 	#def test_put_node(self):
 
-	#	response = self.client.put(reverse('element', args=['node', '5']), "", content_type='application/xml')
+	#	response = self.client.put(reverse('element', args=['node', '5']), "", content_type='text/xml')
 
 	#	self.assertEqual(response.status_code, 200)
 
@@ -31,7 +31,7 @@ class ElementsTestCase(TestCase):
 			   <tag k="note" v="Just a node"/>
 			 </node>
 			</osm>"""
-		response = self.client.put(reverse('create', args=['node']), createXml, content_type='application/xml')
+		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 200)
 
@@ -40,7 +40,7 @@ class ElementsTestCase(TestCase):
 			 <node changeset="12" lat="51.0" lon="2.2">
 			   <tag k="note" v="Just a node"/>
 			</osm>"""
-		response = self.client.put(reverse('create', args=['node']), createXml, content_type='application/xml')
+		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 400)
 

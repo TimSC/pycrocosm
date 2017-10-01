@@ -10,18 +10,12 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
 import xml.etree.ElementTree as ET
-from defusedxml.ElementTree import parse
-from rest_framework.parsers import BaseParser
 import cStringIO
 import datetime
 from .models import Changeset
+from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 
 # Create your views here.
-
-class DefusedXmlParser(BaseParser):
-	media_type = 'application/xml'
-	def parse(self, stream, media_type, parser_context):
-		return parse(stream)
 
 def CheckTags(tags):
 	for k in tags:
@@ -74,7 +68,7 @@ def SerializeChangeset(changesetData, include_discussion=False):
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
-@parser_classes((DefusedXmlParser,))
+@parser_classes((DefusedXmlParser, ))
 def create(request):
 
 	userRecord = request.user
@@ -92,7 +86,7 @@ def create(request):
 @csrf_exempt
 @api_view(['GET', 'PUT'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
-@parser_classes((DefusedXmlParser,))
+@parser_classes((DefusedXmlParser, ))
 def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
@@ -147,7 +141,7 @@ def download(request, changesetId):
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes((IsAuthenticated, ))
-@parser_classes((DefusedXmlParser,))
+@parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
@@ -195,7 +189,11 @@ def list(request):
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes((IsAuthenticated, ))
+@parser_classes((OsmChangeXmlParser, ))
 def upload(request, changesetId):
+	for i in range(request.data.blocks.size()):
+		print request.data.actions[i]
+
 	return HttpResponse("", content_type='text/xml')
 
 @csrf_exempt

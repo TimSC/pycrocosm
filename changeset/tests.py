@@ -71,7 +71,7 @@ class ChangesetTestCase(TestCase):
 
 	def test_create_changeset(self):
 
-		response = self.client.put(reverse('create'), self.createXml, content_type='application/xml')
+		response = self.client.put(reverse('create'), self.createXml, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
@@ -84,11 +84,11 @@ class ChangesetTestCase(TestCase):
 
 	def test_anon_create_changeset(self):
 		anonClient = Client()
-		response = anonClient.put(reverse('create'), self.createXml, content_type='application/xml')
+		response = anonClient.put(reverse('create'), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_create_changeset_unicodetags(self):
-		response = self.client.put(reverse('create'), self.createXmlUnicodeTags, content_type='application/xml')
+		response = self.client.put(reverse('create'), self.createXmlUnicodeTags, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
@@ -98,7 +98,7 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(cs.tags["comment"] == self.unicodeStr, True)
 
 	def test_create_changeset_overlong(self):
-		response = self.client.put(reverse('create'), self.createXmlOverlong, content_type='application/xml')
+		response = self.client.put(reverse('create'), self.createXmlOverlong, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 400)
 
@@ -144,7 +144,7 @@ class ChangesetTestCase(TestCase):
 	def test_put_changeset(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar", "man": "child"})
 
-		response = self.client.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='application/xml')
+		response = self.client.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -162,7 +162,7 @@ class ChangesetTestCase(TestCase):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar", "man": "child"})
 
 		anonClient = Client()
-		response = anonClient.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='application/xml')
+		response = anonClient.put(reverse('changeset', args=(cs.id,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_close_changeset(self):
@@ -202,7 +202,7 @@ class ChangesetTestCase(TestCase):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
 
 		response = self.client.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
-			content_type='application/xml')
+			content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
 		cs2 = Changeset.objects.get(id=cs.id)
@@ -226,17 +226,31 @@ class ChangesetTestCase(TestCase):
 
 		anonClient = Client()
 		response = anonClient.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
-			content_type='application/xml')
+			content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_expand_bbox_closed(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"}, is_open=False)
 
 		response = self.client.post(reverse('expand_bbox', args=(cs.id,)), self.expandBboxXml, 
-			content_type='application/xml')
+			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
 		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.id, cs.close_datetime.isoformat()))
+
+	def test_upload_single_node(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<create>
+		  <node changeset="{}" id="-5393" lat="50.79046578105" lon="-1.04971367626" />
+		</create>
+		</osmChange>""".format(cs.id)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 200)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
