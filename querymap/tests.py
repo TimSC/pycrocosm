@@ -22,11 +22,14 @@ class QueryMapTestCase(TestCase):
 		self.client.login(username=self.username, password=self.password)
 		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
 		errStr = pgmap.PgMapError()
-		ok = p.ResetActiveTables(errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.ResetActiveTables(errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
-
 
 	def create_node(self, nearbyNode = None):
 		node = pgmap.OsmNode()
@@ -53,9 +56,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		node.objId = createdNodeIds[-1]
 		return node
@@ -82,9 +89,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		way.objId = createdWayIds[-1]
 		return way
@@ -113,9 +124,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		relation.objId = createdRelationIds[-1]
 		return relation
@@ -141,9 +156,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		return node
 
@@ -169,9 +188,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		return way
 
@@ -199,9 +222,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 		return relation
 		
@@ -238,9 +265,13 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		ok = p.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
+			t.Abort()
 			print errStr.errStr
+		else:
+			t.Commit()
 		self.assertEqual(ok, True)
 
 	def decode_response(self, xml):
@@ -591,7 +622,8 @@ class QueryMapTestCase(TestCase):
 		u = User.objects.get(username = self.username)
 		u.delete()
 		errStr = pgmap.PgMapError()
-		ok = p.ResetActiveTables(errStr)
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print errStr.errStr
 		self.assertEqual(ok, True)

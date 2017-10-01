@@ -26,7 +26,8 @@ def element(request, objType, objId):
 
 	if request.method == 'GET':
 		osmData = pgmap.OsmData()
-		p.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData);
+		t = p.GetTransaction(b"ACCESS SHARE")
+		t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData);
 
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 			return HttpResponseNotFound("{} {} not found".format(objType, objId))
@@ -41,7 +42,14 @@ def element(request, objType, objId):
 		createdNodeIds = pgmap.mapi64i64()
 		createdWayIds = pgmap.mapi64i64()
 		createdRelationIds = pgmap.mapi64i64()
-		p.StoreObjects(osmData, createdNodeIds, createdWayIds, createdRelationIds)
+		errStr = pgmap.PgMapError()
+		t = p.GetTransaction(b"EXCLUSIVE")
+		t.StoreObjects(osmData, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+
+		if not ok:
+			return HttpResponseServerError(errStr, content_type='text/plain')
+		else:
+			t.Commit()
 
 		return HttpResponse("", content_type='text/plain')
 
@@ -55,10 +63,13 @@ def create(request, objType):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
-	ok = p.StoreObjects(request.data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.StoreObjects(request.data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 
 	if not ok:
 		return HttpResponseServerError(errStr, content_type='text/plain')
+	else:
+		t.Commit()
 
 	return HttpResponse("", content_type='text/plain')
 
