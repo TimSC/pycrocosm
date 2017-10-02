@@ -252,6 +252,14 @@ def upload(request, changesetId):
 			for i in range(block.relations.size()):
 				block.relations[i].metaData.version += 1
 
+			if action == "delete":
+				for i in range(block.nodes.size()):
+					block.nodes[i].metaData.visible = False
+				for i in range(block.ways.size()):
+					block.ways[i].metaData.visible = False
+				for i in range(block.relations.size()):
+					block.relations[i].metaData.visible = False
+
 		else:
 			raise HttpResponseServerError("Action type not implemented", content_type='text/plain') 
 

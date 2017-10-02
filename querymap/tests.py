@@ -538,7 +538,7 @@ class QueryMapTestCase(TestCase):
 	def test_query_active_relation_with_way_member(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = create_way([node.objId, node2.objId])
+		way = self.create_way([node.objId, node2.objId])
 		relation = self.create_relation([("way", way.objId, "parrot")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])

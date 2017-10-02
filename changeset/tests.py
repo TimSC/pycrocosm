@@ -268,6 +268,7 @@ class ChangesetTestCase(TestCase):
 		osmData = pgmap.OsmData()
 		t.GetObjectsById(b"node", [int(ndiff.attrib["new_id"])], osmData)
 		self.assertEqual(len(osmData.nodes), 1)
+		del t
 
 	def test_upload_modify_single_node(self):
 
@@ -299,6 +300,40 @@ class ChangesetTestCase(TestCase):
 		osmData = pgmap.OsmData()
 		t.GetObjectsById(b"node", [node.objId], osmData)
 		self.assertEqual(len(osmData.nodes), 1)
+		del t
+
+		dbNode = osmData.nodes[0]
+		self.assertEqual(abs(dbNode.lat-50.80)<1e-6, True)
+		self.assertEqual(abs(dbNode.lon+1.05)<1e-6, True)
+		self.assertEqual(len(dbNode.tags), 1)
+
+	def test_upload_delete_single_node(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "interstellar"}, is_open=True)
+		node = create_node(self.user.id, self.user.username)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.id, node.objId, node.metaData.version)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
+		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 1)
+		ndiff = xml[0]
+		self.assertEqual(int(ndiff.attrib["old_id"]), node.objId)
+
+		t = p.GetTransaction(b"ACCESS SHARE")
+		osmData = pgmap.OsmData()
+		t.GetObjectsById(b"node", [node.objId], osmData)
+		self.assertEqual(len(osmData.nodes), 0)
+		del t
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
