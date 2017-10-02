@@ -12,6 +12,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 import cStringIO
 import datetime
+from querymap.views import p
 from .models import Changeset
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 
@@ -191,8 +192,23 @@ def list(request):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((OsmChangeXmlParser, ))
 def upload(request, changesetId):
+	t = p.GetTransaction(b"EXCLUSIVE")
+
 	for i in range(request.data.blocks.size()):
 		print request.data.actions[i]
+		block = request.data.blocks[i]
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+		t = p.GetTransaction(b"EXCLUSIVE")
+		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+
+	if not ok:
+		return HttpResponseServerError(errStr, content_type='text/plain')
+	else:
+		t.Commit()
 
 	return HttpResponse("", content_type='text/xml')
 
