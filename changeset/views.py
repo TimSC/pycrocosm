@@ -195,6 +195,7 @@ def upload_check_create(objs):
 			return HttpResponseBadRequest("Created object IDs must be zero or negative")
 		if obj.metaData.version != 0:
 			return HttpResponseBadRequest("Version for created objects must be null or zero")
+	return None
 
 def upload_check_modify(objs):
 	for i in range(objs.size()):
@@ -203,6 +204,7 @@ def upload_check_modify(objs):
 			return HttpResponseBadRequest("Modified object IDs must be positive")
 		if obj.metaData.version <= 0:
 			return HttpResponseBadRequest("Version for modified objects must be positive")
+	return None
 
 @csrf_exempt
 @api_view(['POST'])
@@ -221,9 +223,12 @@ def upload(request, changesetId):
 		action = request.data.actions[i]
 
 		if action == "create":
-			upload_check_create(block.nodes)
-			upload_check_create(block.ways)
-			upload_check_create(block.relations)
+			ret = upload_check_create(block.nodes)
+			if ret is not None: return ret
+			ret = upload_check_create(block.ways)
+			if ret is not None: return ret
+			ret = upload_check_create(block.relations)
+			if ret is not None: return ret
 
 			for i in range(block.nodes.size()):
 				block.nodes[i].metaData.version = 1
@@ -233,9 +238,12 @@ def upload(request, changesetId):
 				block.relations[i].metaData.version = 1
 
 		elif action in ["modify", "delete"]:
-			upload_check_modify(block.nodes)
-			upload_check_modify(block.ways)
-			upload_check_modify(block.relations)
+			ret = upload_check_modify(block.nodes)
+			if ret is not None: return ret
+			ret = upload_check_modify(block.ways)
+			if ret is not None: return ret
+			ret = upload_check_modify(block.relations)
+			if ret is not None: return ret
 
 			for i in range(block.nodes.size()):
 				block.nodes[i].metaData.version += 1

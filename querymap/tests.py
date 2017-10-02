@@ -10,6 +10,43 @@ from querymap.views import p
 import pgmap
 import random
 
+def create_node(uid, username, nearbyNode = None, changeset = 1000):
+	node = pgmap.OsmNode()
+	node.objId = -1
+	node.metaData.version = 1
+	node.metaData.timestamp = 0
+	node.metaData.changeset = changeset
+	node.metaData.uid = uid
+	node.metaData.username = username.encode("UTF-8")
+	node.metaData.visible = True
+	node.tags[b"test"] = b"autumn"
+	if nearbyNode is None:
+		node.lat = 43.0 + random.uniform(-1.0, 1.0)
+		node.lon = -70.3 + random.uniform(-1.0, 1.0)
+	else:
+		node.lat = nearbyNode.lat + random.uniform(-0.00015, 0.00015)
+		node.lon = nearbyNode.lon + random.uniform(-0.00015, 0.00015)
+
+	data = pgmap.OsmData()
+	data.nodes.append(node)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	if not ok:
+		t.Abort()
+		print errStr.errStr
+		return None
+	else:
+		t.Commit()
+	node.objId = createdNodeIds[-1]
+	return node
+
+
 # Create your tests here.
 
 class QueryMapTestCase(TestCase):
@@ -30,42 +67,6 @@ class QueryMapTestCase(TestCase):
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
-
-	def create_node(self, nearbyNode = None):
-		node = pgmap.OsmNode()
-		node.objId = -1
-		node.metaData.version = 1
-		node.metaData.timestamp = 0
-		node.metaData.changeset = 1000
-		node.metaData.uid = self.user.id
-		node.metaData.username = self.user.username.encode("UTF-8")
-		node.metaData.visible = True
-		node.tags[b"test"] = b"autumn"
-		if nearbyNode is None:
-			node.lat = 43.0 + random.uniform(-1.0, 1.0)
-			node.lon = -70.3 + random.uniform(-1.0, 1.0)
-		else:
-			node.lat = nearbyNode.lat + random.uniform(-0.00015, 0.00015)
-			node.lon = nearbyNode.lon + random.uniform(-0.00015, 0.00015)
-
-		data = pgmap.OsmData()
-		data.nodes.append(node)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-		if not ok:
-			t.Abort()
-			print errStr.errStr
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		node.objId = createdNodeIds[-1]
-		return node
 
 	def create_way(self, refs):
 
@@ -396,19 +397,19 @@ class QueryMapTestCase(TestCase):
 			self.assertEqual(list(relation.refIds) == list(relationIdDict[relation.objId].refIds), True)
 
 	def test_query_active_node(self):
-		node = self.create_node()
+		node = create_node(self.user.id, self.user.username)
 
 		self.check_node_in_query(node, True)
 
 	def test_modify_active_node(self):
-		node = self.create_node()
+		node = create_node(self.user.id, self.user.username)
 
 		modNode = self.modify_node(node, 1)
 		self.check_node_in_query(modNode, True)
 		self.check_node_in_query(node, False)
 
 	def test_delete_active_node(self):
-		node = self.create_node()
+		node = create_node(self.user.id, self.user.username)
 
 		self.delete_object(node)
 		self.check_node_in_query(node, False)
@@ -456,16 +457,16 @@ class QueryMapTestCase(TestCase):
 			print "No nodes in ROI for testing"
 
 	def test_query_active_way(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
 		way = self.create_way([node.objId, node2.objId])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(way, bbox, True)
 
 	def test_modify_active_way(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
 		way = self.create_way([node.objId, node2.objId])
 
 		modWay = self.modify_way(way, [node.objId, node2.objId, node.objId], {"foo": "eggs"})
@@ -474,8 +475,8 @@ class QueryMapTestCase(TestCase):
 		self.check_way_in_query(modWay, bbox, True)
 
 	def test_delete_active_way(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
 		way = self.create_way([node.objId, node2.objId])
 
 		self.delete_object(way)
@@ -526,8 +527,8 @@ class QueryMapTestCase(TestCase):
 			print "No free ways in ROI for testing"
 
 	def test_query_active_relation(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
 		way = self.create_way([node.objId, node2.objId])
 		relation = self.create_relation([("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
 
@@ -535,18 +536,18 @@ class QueryMapTestCase(TestCase):
 		self.check_relation_in_query(relation, bbox, True)
 
 	def test_query_active_relation_with_way_member(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
-		way = self.create_way([node.objId, node2.objId])
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way([node.objId, node2.objId])
 		relation = self.create_relation([("way", way.objId, "parrot")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(relation, bbox, True)
 
 	def test_modify_active_relation(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
-		node3 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		node3 = create_node(self.user.id, self.user.username, node)
 		relation = self.create_relation([("node", node.objId, "parrot")])
 
 		modRelation = self.modify_relation(relation, 
@@ -557,8 +558,8 @@ class QueryMapTestCase(TestCase):
 		self.check_relation_in_query(modRelation, bbox, True)
 
 	def test_delete_active_relation(self):
-		node = self.create_node()
-		node2 = self.create_node(node)
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
 		way = self.create_way([node.objId, node2.objId])
 		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
