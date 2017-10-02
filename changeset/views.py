@@ -208,7 +208,22 @@ def upload_check_modify(objs):
 			return HttpResponseBadRequest("Modified object IDs must be positive")
 		if obj.metaData.version <= 0:
 			return HttpResponseBadRequest("Version for modified objects must be positive")
+		if isinstance(obj, pgmap.OsmNode):
+			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
+				return HttpResponseBadRequest("Node outside valid range")
 	return None
+
+def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
+	for i in range(objs.size()):
+		obj = objs[i]
+		comment = ET.SubElement(responseRoot, objType)
+		comment.attrib["old_id"] = str(obj.objId)
+		if action == "create":
+			comment.attrib["new_id"] = str(createdIds[obj.objId])
+			comment.attrib["new_version"] = str(obj.metaData.version)
+		if action == "modify":
+			comment.attrib["new_id"] = str(obj.objId)
+			comment.attrib["new_version"] = str(obj.metaData.version)
 
 @csrf_exempt
 @api_view(['POST'])
@@ -275,17 +290,10 @@ def upload(request, changesetId):
 		if not ok:
 			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 		
-		for i in range(block.nodes.size()):
-			obj = block.nodes[i]
-			comment = ET.SubElement(responseRoot, "node")
-			comment.attrib["old_id"] = str(obj.objId)
-			if action == "create":
-				comment.attrib["new_id"] = str(createdNodeIds[obj.objId])
-				comment.attrib["new_version"] = str(obj.metaData.version)
-			if action == "modify":
-				comment.attrib["new_id"] = str(obj.objId)
-				comment.attrib["new_version"] = str(obj.metaData.version)
-
+		upload_update_diff_result(action, "node", block.nodes, createdNodeIds, responseRoot)
+		upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
+		upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
+		
 	if ok:
 		t.Commit()
 
