@@ -195,6 +195,10 @@ def upload_check_create(objs):
 			return HttpResponseBadRequest("Created object IDs must be zero or negative")
 		if obj.metaData.version != 0:
 			return HttpResponseBadRequest("Version for created objects must be null or zero")
+		if isinstance(obj, pgmap.OsmNode):
+			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
+				return HttpResponseBadRequest("Node outside valid range")
+
 	return None
 
 def upload_check_modify(objs):
@@ -252,16 +256,16 @@ def upload(request, changesetId):
 			for i in range(block.relations.size()):
 				block.relations[i].metaData.version += 1
 
-			if action == "delete":
-				for i in range(block.nodes.size()):
-					block.nodes[i].metaData.visible = False
-				for i in range(block.ways.size()):
-					block.ways[i].metaData.visible = False
-				for i in range(block.relations.size()):
-					block.relations[i].metaData.visible = False
-
 		else:
-			raise HttpResponseServerError("Action type not implemented", content_type='text/plain') 
+			continue #Skip this block
+
+		visible = action != "delete"
+		for i in range(block.nodes.size()):
+			block.nodes[i].metaData.visible = visible
+		for i in range(block.ways.size()):
+			block.ways[i].metaData.visible = visible
+		for i in range(block.relations.size()):
+			block.relations[i].metaData.visible = visible
 
 		createdNodeIds = pgmap.mapi64i64()
 		createdWayIds = pgmap.mapi64i64()
