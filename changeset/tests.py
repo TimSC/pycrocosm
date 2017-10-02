@@ -11,6 +11,8 @@ from .models import Changeset
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse, fromstring
 import StringIO
+import pgmap
+from querymap.views import p
 from xml.sax.saxutils import escape
 
 # Create your tests here.
@@ -253,6 +255,18 @@ class ChangesetTestCase(TestCase):
 		if response.status_code != 200:
 			print response.content
 		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 1)
+		ndiff = xml[0]
+		self.assertEqual(int(ndiff.attrib["old_id"]), -5393)
+		self.assertEqual(int(ndiff.attrib["new_version"]), 1)
+		self.assertEqual(int(ndiff.attrib["new_id"])>0, True)
+
+		t = p.GetTransaction(b"ACCESS SHARE")
+		osmData = pgmap.OsmData()
+		t.GetObjectsById(b"node", [int(ndiff.attrib["new_id"])], osmData)
+		self.assertEqual(len(osmData.nodes), 1)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)

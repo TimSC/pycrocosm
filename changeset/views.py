@@ -188,6 +188,22 @@ def list(request):
 
 	return HttpResponse("xxx"+str(len(cs)), content_type='text/plain')
 
+def upload_check_create(objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if obj.objId > 0:
+			return HttpResponseBadRequest("Created object IDs must be zero or negative")
+		if obj.metaData.version != 0:
+			return HttpResponseBadRequest("Version for created objects must be null or zero")
+
+def upload_check_modify(objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if obj.objId <= 0:
+			return HttpResponseBadRequest("Modified object IDs must be positive")
+		if obj.metaData.version <= 0:
+			return HttpResponseBadRequest("Version for modified objects must be positive")
+
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes((IsAuthenticated, ))
@@ -195,32 +211,39 @@ def list(request):
 def upload(request, changesetId):
 	t = p.GetTransaction(b"EXCLUSIVE")
 
+	responseRoot = ET.Element('diffResult')
+	doc = ET.ElementTree(responseRoot)
+	responseRoot.attrib["version"] = str(settings.API_VERSION)
+	responseRoot.attrib["generator"] = settings.GENERATOR
+
 	for i in range(request.data.blocks.size()):
 		block = request.data.blocks[i]
 		action = request.data.actions[i]
 
 		if action == "create":
+			upload_check_create(block.nodes)
+			upload_check_create(block.ways)
+			upload_check_create(block.relations)
+
 			for i in range(block.nodes.size()):
-				obj = block.nodes[i]
-				if obj.objId > 0:
-					return HttpResponseBadRequest("Created object IDs must be zero or negative")
-				if obj.metaData.version != 0:
-					return HttpResponseBadRequest("Version for created objects must be null or zero")
-				obj.metaData.version = 1
+				block.nodes[i].metaData.version = 1
 			for i in range(block.ways.size()):
-				obj = block.ways[i]
-				if obj.objId > 0:
-					return HttpResponseBadRequest("Created object IDs must be zero or negative")
-				if obj.metaData.version != 0:
-					return HttpResponseBadRequest("Version for created objects must be null or zero")
-				obj.metaData.version = 1
+				block.ways[i].metaData.version = 1
 			for i in range(block.relations.size()):
-				obj = block.relations[i]
-				if obj.objId > 0:
-					return HttpResponseBadRequest("Created object IDs must be zero or negative")
-				if obj.metaData.version != 0:
-					return HttpResponseBadRequest("Version for created objects must be null or zero")
-				obj.metaData.version = 1
+				block.relations[i].metaData.version = 1
+
+		elif action in ["modify", "delete"]:
+			upload_check_modify(block.nodes)
+			upload_check_modify(block.ways)
+			upload_check_modify(block.relations)
+
+			for i in range(block.nodes.size()):
+				block.nodes[i].metaData.version += 1
+			for i in range(block.ways.size()):
+				block.ways[i].metaData.version += 1
+			for i in range(block.relations.size()):
+				block.relations[i].metaData.version += 1
+
 		else:
 			raise HttpResponseServerError("Action type not implemented", content_type='text/plain') 
 
@@ -232,10 +255,23 @@ def upload(request, changesetId):
 		if not ok:
 			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 		
+		for i in range(block.nodes.size()):
+			obj = block.nodes[i]
+			comment = ET.SubElement(responseRoot, "node")
+			comment.attrib["old_id"] = str(obj.objId)
+			if action == "create":
+				comment.attrib["new_id"] = str(createdNodeIds[obj.objId])
+				comment.attrib["new_version"] = str(obj.metaData.version)
+			if action == "modify":
+				comment.attrib["new_id"] = str(obj.objId)
+				comment.attrib["new_version"] = str(obj.metaData.version)
+
 	if ok:
 		t.Commit()
 
-	return HttpResponse("", content_type='text/xml')
+	sio = cStringIO.StringIO()
+	doc.write(sio, "utf-8")
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt
 @api_view(['POST'])
