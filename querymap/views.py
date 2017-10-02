@@ -19,10 +19,11 @@ if TEST:
 else:
 	ACTIVE_DB = "PREFIX_MOD"
 
-defaultDb = settings.DATABASES['default']
-p = pgmap.PgMap(b"dbname={} user={} password='{}' hostaddr={} port={}".format(defaultDb["NAME"], 
-	defaultDb["USER"], defaultDb["PASSWORD"], defaultDb["HOST"], defaultDb["PORT"]), 
-	str(defaultDb["PREFIX"]), str(defaultDb[ACTIVE_DB]))
+mapDbSettings = settings.MAP_DATABASE
+connectionString = b"dbname={} user={} password='{}' hostaddr={} port={}".format(mapDbSettings["NAME"], 
+	mapDbSettings["USER"], mapDbSettings["PASSWORD"], mapDbSettings["HOST"], mapDbSettings["PORT"])
+p = pgmap.PgMap(connectionString, 
+	str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]))
 
 class MapQueryResponse(object):
 	def __init__(self, bbox):

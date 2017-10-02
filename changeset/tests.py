@@ -250,6 +250,8 @@ class ChangesetTestCase(TestCase):
 
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
 		self.assertEqual(response.status_code, 200)
 
 	def tearDown(self):

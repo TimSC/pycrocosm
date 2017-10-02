@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
@@ -12,6 +12,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 import cStringIO
 import datetime
+import pgmap
 from querymap.views import p
 from .models import Changeset
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
@@ -195,19 +196,43 @@ def upload(request, changesetId):
 	t = p.GetTransaction(b"EXCLUSIVE")
 
 	for i in range(request.data.blocks.size()):
-		print request.data.actions[i]
 		block = request.data.blocks[i]
+		action = request.data.actions[i]
+
+		if action == "create":
+			for i in range(block.nodes.size()):
+				obj = block.nodes[i]
+				if obj.objId > 0:
+					return HttpResponseBadRequest("Created object IDs must be zero or negative")
+				if obj.metaData.version != 0:
+					return HttpResponseBadRequest("Version for created objects must be null or zero")
+				obj.metaData.version = 1
+			for i in range(block.ways.size()):
+				obj = block.ways[i]
+				if obj.objId > 0:
+					return HttpResponseBadRequest("Created object IDs must be zero or negative")
+				if obj.metaData.version != 0:
+					return HttpResponseBadRequest("Version for created objects must be null or zero")
+				obj.metaData.version = 1
+			for i in range(block.relations.size()):
+				obj = block.relations[i]
+				if obj.objId > 0:
+					return HttpResponseBadRequest("Created object IDs must be zero or negative")
+				if obj.metaData.version != 0:
+					return HttpResponseBadRequest("Version for created objects must be null or zero")
+				obj.metaData.version = 1
+		else:
+			raise HttpResponseServerError("Action type not implemented", content_type='text/plain') 
 
 		createdNodeIds = pgmap.mapi64i64()
 		createdWayIds = pgmap.mapi64i64()
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-
-	if not ok:
-		return HttpResponseServerError(errStr, content_type='text/plain')
-	else:
+		if not ok:
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+		
+	if ok:
 		t.Commit()
 
 	return HttpResponse("", content_type='text/xml')

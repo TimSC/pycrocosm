@@ -32,6 +32,8 @@ class ElementsTestCase(TestCase):
 			 </node>
 			</osm>"""
 		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
 
 		self.assertEqual(response.status_code, 200)
 

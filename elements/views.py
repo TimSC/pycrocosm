@@ -47,7 +47,7 @@ def element(request, objType, objId):
 		t.StoreObjects(osmData, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 
 		if not ok:
-			return HttpResponseServerError(errStr, content_type='text/plain')
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 		else:
 			t.Commit()
 
@@ -59,6 +59,29 @@ def element(request, objType, objId):
 @parser_classes((OsmDataXmlParser,))
 def create(request, objType):
 
+	#Validate input
+	if(request.data.nodes.size() != (objType == "node")
+		or request.data.ways.size() != (objType == "way")
+		or request.data.relations.size() != (objType == "relation")):
+		return HttpResponseBadRequest("Wrong number of objects")
+	for i in range(request.data.nodes.size()):
+		obj = request.data.nodes[i]
+		if obj.metaData.version != 0:
+			return HttpResponseBadRequest("Version for created objects must be null or zero")
+		obj.metaData.version = 1
+	for i in range(request.data.ways.size()):
+		obj = request.data.ways[i]
+		if obj.metaData.version != 0:
+			return HttpResponseBadRequest("Version for created objects must be null or zero")
+		obj.metaData.version = 1
+	for i in range(request.data.relations.size()):
+		obj = request.data.relations[i]
+		if obj.metaData.version != 0:
+			return HttpResponseBadRequest("Version for created objects must be null or zero")
+		obj.metaData.version = 1
+
+	#TODO check changeset ID
+
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
@@ -67,7 +90,7 @@ def create(request, objType):
 	ok = t.StoreObjects(request.data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 
 	if not ok:
-		return HttpResponseServerError(errStr, content_type='text/plain')
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 	else:
 		t.Commit()
 
