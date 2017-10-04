@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
@@ -67,6 +67,61 @@ def SerializeChangeset(changesetData, include_discussion=False):
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def GetOsmDataIndex(osmData):
+	
+	nodeDict = {}
+	for i in range(osmData.nodes.size()):
+		node = osmData.nodes[i]
+		nodeDict[node.objId] = node
+	wayDict = {}
+	for i in range(osmData.ways.size()):
+		way = osmData.ways[i]
+		wayDict[node.objId] = way
+	relationDict = {}
+	for i in range(osmData.relations.size()):
+		relation = osmData.relations[i]
+		relationDict[node.objId] = relation
+
+	out = {'node':nodeDict, 'way':wayDict, 'relation':relationDict}
+	return out
+
+def upload_check_create(objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if obj.objId > 0:
+			return HttpResponseBadRequest("Created object IDs must be zero or negative")
+		if obj.metaData.version != 0:
+			return HttpResponseBadRequest("Version for created objects must be null or zero")
+		if isinstance(obj, pgmap.OsmNode):
+			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
+				return HttpResponseBadRequest("Node outside valid range")
+
+	return None
+
+def upload_check_modify(objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if obj.objId <= 0:
+			return HttpResponseBadRequest("Modified object IDs must be positive")
+		if obj.metaData.version <= 0:
+			return HttpResponseBadRequest("Version for modified objects must be positive")
+		if isinstance(obj, pgmap.OsmNode):
+			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
+				return HttpResponseBadRequest("Node outside valid range")
+	return None
+
+def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
+	for i in range(objs.size()):
+		obj = objs[i]
+		comment = ET.SubElement(responseRoot, objType)
+		comment.attrib["old_id"] = str(obj.objId)
+		if action == "create":
+			comment.attrib["new_id"] = str(createdIds[obj.objId])
+			comment.attrib["new_version"] = str(obj.metaData.version)
+		if action == "modify":
+			comment.attrib["new_id"] = str(obj.objId)
+			comment.attrib["new_version"] = str(obj.metaData.version)
+
 def upload_block(action, block, changesetId, t, responseRoot):
 
 	if action == "create":
@@ -114,7 +169,52 @@ def upload_block(action, block, changesetId, t, responseRoot):
 	for i in range(block.relations.size()):
 		if block.relations[i].metaData.changeset != int(changesetId):
 			return HttpResponseBadRequest("Changeset does not match expected value")
-				
+
+	#Get list of referenced objects
+	refedNodes, refedWays, refedRelations = set(), set(), set()
+	for i in range(block.nodes.size()):
+		node = block.nodes[i]
+		refedNodes.add(node.objId)
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		refedWays.add(way.objId)
+		for ref in way.refs:
+			refedNodes.add(ref)
+	for i in range(block.relations.size()):
+		relation = block.relations[i]
+		refedRelations.add(relation.objId)
+		for i, refId in enumerate(relation.refIds):
+			refTypeStr = relation.refTypeStrs[i]
+			if refTypeStr == "node":
+				refedNodes.add(refId)
+			if refTypeStr == "way":
+				refedWays.add(refId)
+			if refTypeStr == "relation":
+				refedRelations.add(refId)
+
+	#Check positive ID objects already exist
+	posRefedNodes = [objId for objId in refedNodes if objId>0]
+	posRefedWays = [objId for objId in refedWays if objId>0]
+	posRefedRelations = [objId for objId in refedRelations if objId>0]
+
+	foundNodeData = pgmap.OsmData()
+	t.GetObjectsById(b"node", posRefedNodes, foundNodeData);
+	foundNodeIndex = GetOsmDataIndex(foundNodeData)
+	if set(posRefedNodes) != set(foundNodeIndex["node"].keys()):
+		return HttpResponseNotFound("Referenced node(s) not found")
+
+	foundWayData = pgmap.OsmData()
+	t.GetObjectsById(b"way", posRefedWays, foundWayData);
+	foundWayIndex = GetOsmDataIndex(foundWayData)
+	if set(posRefedWays) != set(foundWayIndex["way"].keys()):
+		return HttpResponseNotFound("Referenced way(s) not found")
+
+	foundRelationData = pgmap.OsmData()
+	t.GetObjectsById(b"relation", posRefedRelations, foundRelationData);
+	foundRelationIndex = GetOsmDataIndex(foundRelationData)
+	if set(posRefedRelations) != set(foundRelationIndex["relation"].keys()):
+		return HttpResponseNotFound("Referenced relation(s) not found")
+	
 	#Set visiblity flag
 	visible = action != "delete"
 	for i in range(block.nodes.size()):
@@ -166,7 +266,7 @@ def changeset(request, changesetId):
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
 	except Changeset.DoesNotExist:
-		return HttpResponseNotFound()
+		return HttpResponseNotFound("Changeset not found")
 
 	if request.method == 'GET':
 		return SerializeChangeset(changesetData, include_discussion)
@@ -174,7 +274,7 @@ def changeset(request, changesetId):
 	if request.method == 'PUT':
 		
 		if request.user != changesetData.user:
-			return HttpResponseNotAllowed("This changeset belongs to a different user")
+			return HttpResponseForbidden("This changeset belongs to a different user")
 
 		csIn = request.data.find("changeset")
 		tags = {}
@@ -195,7 +295,7 @@ def close(request, changesetId):
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
 	except Changeset.DoesNotExist:
-		return HttpResponseNotFound()
+		return HttpResponseNotFound("Changeset not found")
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
@@ -204,7 +304,7 @@ def close(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseNotAllowed("This changeset belongs to a different user")
+		return HttpResponseForbidden("This changeset belongs to a different user")
 
 	changesetData.is_open = False
 	changesetData.close_datetime = datetime.datetime.now()
@@ -225,7 +325,7 @@ def expand_bbox(request, changesetId):
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
 	except Changeset.DoesNotExist:
-		return HttpResponseNotFound()
+		return HttpResponseNotFound("Changeset not found")
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
@@ -234,7 +334,7 @@ def expand_bbox(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseNotAllowed("This changeset belongs to a different user")
+		return HttpResponseForbidden("This changeset belongs to a different user")
 
 	for node in request.data.findall("node"):
 		if not changesetData.bbox_set:
@@ -268,43 +368,6 @@ def list(request):
 
 	return HttpResponse("xxx"+str(len(cs)), content_type='text/plain')
 
-def upload_check_create(objs):
-	for i in range(objs.size()):
-		obj = objs[i]
-		if obj.objId > 0:
-			return HttpResponseBadRequest("Created object IDs must be zero or negative")
-		if obj.metaData.version != 0:
-			return HttpResponseBadRequest("Version for created objects must be null or zero")
-		if isinstance(obj, pgmap.OsmNode):
-			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
-				return HttpResponseBadRequest("Node outside valid range")
-
-	return None
-
-def upload_check_modify(objs):
-	for i in range(objs.size()):
-		obj = objs[i]
-		if obj.objId <= 0:
-			return HttpResponseBadRequest("Modified object IDs must be positive")
-		if obj.metaData.version <= 0:
-			return HttpResponseBadRequest("Version for modified objects must be positive")
-		if isinstance(obj, pgmap.OsmNode):
-			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
-				return HttpResponseBadRequest("Node outside valid range")
-	return None
-
-def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
-	for i in range(objs.size()):
-		obj = objs[i]
-		comment = ET.SubElement(responseRoot, objType)
-		comment.attrib["old_id"] = str(obj.objId)
-		if action == "create":
-			comment.attrib["new_id"] = str(createdIds[obj.objId])
-			comment.attrib["new_version"] = str(obj.metaData.version)
-		if action == "modify":
-			comment.attrib["new_id"] = str(obj.objId)
-			comment.attrib["new_version"] = str(obj.metaData.version)
-
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes((IsAuthenticated, ))
@@ -316,7 +379,7 @@ def upload(request, changesetId):
 	try:
 		changesetData = Changeset.objects.get(id=changesetId)
 	except Changeset.DoesNotExist:
-		return HttpResponseNotFound("No such changeset")
+		return HttpResponseNotFound("Changeset not found")
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
@@ -325,7 +388,7 @@ def upload(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseNotAllowed("This changeset belongs to a different user")
+		return HttpResponseForbidden("This changeset belongs to a different user")
 
 	#Prepare diff result xml
 	responseRoot = ET.Element('diffResult')

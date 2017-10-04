@@ -6,4 +6,5 @@ pip install djangorestframework
 
 pip install defusedxml
 
+Depends on https://github.com/TimSC/pgmap-query/ to handle the PostGIS database.
 

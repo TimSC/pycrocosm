@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
@@ -42,7 +42,7 @@ def upload_single_object(action, request, obj, objType, t):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseNotAllowed("This changeset belongs to a different user")
+		return HttpResponseForbidden("This changeset belongs to a different user")
 
 	#Prepare diff result xml
 	responseRoot = ET.Element('diffResult')
