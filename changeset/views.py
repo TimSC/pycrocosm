@@ -303,7 +303,7 @@ def changeset(request, changesetId):
 	if request.method == 'PUT':
 		
 		if request.user != changesetData.user:
-			return HttpResponseForbidden("This changeset belongs to a different user")
+			return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 		csIn = request.data.find("changeset")
 		tags = {}
@@ -333,7 +333,7 @@ def close(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseForbidden("This changeset belongs to a different user")
+		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	changesetData.is_open = False
 	changesetData.close_datetime = datetime.datetime.now()
@@ -363,7 +363,7 @@ def expand_bbox(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseForbidden("This changeset belongs to a different user")
+		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	for node in request.data.findall("node"):
 		if not changesetData.bbox_set:
@@ -417,7 +417,7 @@ def upload(request, changesetId):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseForbidden("This changeset belongs to a different user")
+		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
 	responseRoot = ET.Element('diffResult')

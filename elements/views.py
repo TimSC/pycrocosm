@@ -42,7 +42,7 @@ def upload_single_object(action, request, obj, objType, t):
 		return response
 
 	if request.user != changesetData.user:
-		return HttpResponseForbidden("This changeset belongs to a different user")
+		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
 	responseRoot = ET.Element('diffResult')

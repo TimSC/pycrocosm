@@ -299,6 +299,13 @@ class ChangesetUploadTestCase(TestCase):
 		self.client = Client()
 		self.client.login(username=self.username, password=self.password)
 
+		self.username2 = "ringo"
+		self.password2 = "penny lane"
+		self.email2 = 'rstarr@beatles.com'
+		self.user2 = User.objects.create_user(self.username2, self.email2, self.password2)
+		self.client2 = Client()
+		self.client2.login(username=self.username2, password=self.password2)
+
 	def test_upload_create_single_node(self):
 
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
@@ -370,6 +377,23 @@ class ChangesetUploadTestCase(TestCase):
 		</osmChange>""".format(cs.id, node.objId, node.metaData.version+1)
 
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 409)
+
+	def test_upload_modify_single_node_wrong_user(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "apollo"}, is_open=True)
+		node = create_node(self.user.id, self.user.username)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<modify>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}">
+			<tag k="note" v="Just a node"/>
+		  </node>
+		</modify>
+		</osmChange>""".format(cs.id, node.objId, node.metaData.version)
+
+		response = self.client2.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
