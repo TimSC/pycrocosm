@@ -244,6 +244,9 @@ def upload_block(action, block, changesetId, t, responseRoot):
 		if modRelationIdVers[objId] > 1 and modRelationIdVers[objId] != foundNodeIndex["relation"][objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
+	#Check that deleting objects doesn't break anything
+	#TODO	
+
 	#Set visiblity flag
 	visible = action != "delete"
 	for i in range(block.nodes.size()):

@@ -46,6 +46,38 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	node.objId = createdNodeIds[-1]
 	return node
 
+def create_way(uid, username, refs, changeset = 1000):
+
+	way = pgmap.OsmWay()
+	way.objId = -1
+	way.metaData.version = 1
+	way.metaData.timestamp = 0
+	way.metaData.changeset = changeset
+	way.metaData.uid = uid
+	way.metaData.username = username.encode("UTF-8")
+	way.metaData.visible = True
+	way.tags[b"test"] = b"spring"
+	for ref in refs:
+		way.refs.append(ref)
+
+	data = pgmap.OsmData()
+	data.ways.append(way)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	if not ok:
+		t.Abort()
+		print errStr.errStr
+		return None
+	else:
+		t.Commit()
+	way.objId = createdWayIds[-1]
+	return way
 
 # Create your tests here.
 
@@ -67,39 +99,6 @@ class QueryMapTestCase(TestCase):
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
-
-	def create_way(self, refs):
-
-		way = pgmap.OsmWay()
-		way.objId = -1
-		way.metaData.version = 1
-		way.metaData.timestamp = 0
-		way.metaData.changeset = 1000
-		way.metaData.uid = self.user.id
-		way.metaData.username = self.user.username.encode("UTF-8")
-		way.metaData.visible = True
-		way.tags[b"test"] = b"spring"
-		for ref in refs:
-			way.refs.append(ref)
-
-		data = pgmap.OsmData()
-		data.ways.append(way)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-		if not ok:
-			t.Abort()
-			print errStr.errStr
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		way.objId = createdWayIds[-1]
-		return way
 
 	def create_relation(self, refs):
 
@@ -459,7 +458,7 @@ class QueryMapTestCase(TestCase):
 	def test_query_active_way(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(way, bbox, True)
@@ -467,7 +466,7 @@ class QueryMapTestCase(TestCase):
 	def test_modify_active_way(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
 		modWay = self.modify_way(way, [node.objId, node2.objId, node.objId], {"foo": "eggs"})
 		
@@ -477,7 +476,7 @@ class QueryMapTestCase(TestCase):
 	def test_delete_active_way(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
 		self.delete_object(way)
 		
@@ -529,7 +528,7 @@ class QueryMapTestCase(TestCase):
 	def test_query_active_relation(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 		relation = self.create_relation([("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
@@ -538,7 +537,7 @@ class QueryMapTestCase(TestCase):
 	def test_query_active_relation_with_way_member(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 		relation = self.create_relation([("way", way.objId, "parrot")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
@@ -560,7 +559,7 @@ class QueryMapTestCase(TestCase):
 	def test_delete_active_relation(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
-		way = self.create_way([node.objId, node2.objId])
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
 		self.delete_object(relation)

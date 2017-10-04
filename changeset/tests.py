@@ -16,7 +16,7 @@ import gc
 import sys
 from querymap.views import p
 from xml.sax.saxutils import escape
-from querymap.tests import create_node
+from querymap.tests import create_node, create_way
 
 def ParseOsmDiffToDict(xml):
 	out = {'node':{}, 'way':{}, 'relation':{}}
@@ -526,9 +526,29 @@ class ChangesetUploadTestCase(TestCase):
 		rel2Tags = dict(rel2.tags)
 		self.assertEqual(rel2Tags, {'rst': 'xyz'})
 
+	def test_upload_delete_node_used_by_way(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.id, node.objId, node.metaData.version)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 409)
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
+		u2 = User.objects.get(username = self.username2)
+		u2.delete()
 
 		#Swig based transaction object is not freed if an exception is thrown in python view code
 		#Encourage this to happen here.
