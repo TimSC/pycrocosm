@@ -5,6 +5,7 @@ from django.test import TestCase
 from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
+from changeset.models import Changeset
 
 from querymap.views import p
 
@@ -26,11 +27,13 @@ class ElementsTestCase(TestCase):
 	#	self.assertEqual(response.status_code, 200)
 
 	def test_create_node(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
 		createXml = """<osm>
-			 <node changeset="12" lat="51.0" lon="2.2">
+			 <node changeset="{}" lat="51.0" lon="2.2">
 			   <tag k="note" v="Just a node"/>
 			 </node>
-			</osm>"""
+			</osm>""".format(cs.id)
 		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -38,10 +41,12 @@ class ElementsTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 	def test_create_node_invalid_xml(self):
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
 		createXml = """<osm>
-			 <node changeset="12" lat="51.0" lon="2.2">
+			 <node changeset="{}" lat="51.0" lon="2.2">
 			   <tag k="note" v="Just a node"/>
-			</osm>"""
+			</osm>""".format(cs.id)
 		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 400)

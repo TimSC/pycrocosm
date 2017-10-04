@@ -67,6 +67,77 @@ def SerializeChangeset(changesetData, include_discussion=False):
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def upload_block(action, block, changesetId, t, responseRoot):
+
+	if action == "create":
+		ret = upload_check_create(block.nodes)
+		if ret is not None: return ret
+		ret = upload_check_create(block.ways)
+		if ret is not None: return ret
+		ret = upload_check_create(block.relations)
+		if ret is not None: return ret
+
+		for i in range(block.nodes.size()):
+			block.nodes[i].metaData.version = 1
+		for i in range(block.ways.size()):
+			block.ways[i].metaData.version = 1
+		for i in range(block.relations.size()):
+			block.relations[i].metaData.version = 1
+
+	elif action in ["modify", "delete"]:
+		ret = upload_check_modify(block.nodes)
+		if ret is not None: return ret
+		ret = upload_check_modify(block.ways)
+		if ret is not None: return ret
+		ret = upload_check_modify(block.relations)
+		if ret is not None: return ret
+
+		for i in range(block.nodes.size()):
+			block.nodes[i].metaData.version += 1
+		for i in range(block.ways.size()):
+			block.ways[i].metaData.version += 1
+		for i in range(block.relations.size()):
+			block.relations[i].metaData.version += 1
+
+		#TODO implement if-unused attribute on delete action
+
+	else:
+		return True #Skip this block
+
+	#Check changeset value is consistent
+	for i in range(block.nodes.size()):
+		if block.nodes[i].metaData.changeset != int(changesetId):
+			return HttpResponseBadRequest("Changeset does not match expected value")
+	for i in range(block.ways.size()):
+		if block.ways[i].metaData.changeset != int(changesetId):
+			return HttpResponseBadRequest("Changeset does not match expected value")
+	for i in range(block.relations.size()):
+		if block.relations[i].metaData.changeset != int(changesetId):
+			return HttpResponseBadRequest("Changeset does not match expected value")
+				
+	#Set visiblity flag
+	visible = action != "delete"
+	for i in range(block.nodes.size()):
+		block.nodes[i].metaData.visible = visible
+	for i in range(block.ways.size()):
+		block.ways[i].metaData.visible = visible
+	for i in range(block.relations.size()):
+		block.relations[i].metaData.visible = visible
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	if not ok:
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+	
+	upload_update_diff_result(action, "node", block.nodes, createdNodeIds, responseRoot)
+	upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
+	upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
+	
+	return True
+
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
@@ -102,6 +173,9 @@ def changeset(request, changesetId):
 
 	if request.method == 'PUT':
 		
+		if request.user != changesetData.user:
+			return HttpResponseNotAllowed("This changeset belongs to a different user")
+
 		csIn = request.data.find("changeset")
 		tags = {}
 		for tag in csIn.findall("tag"):
@@ -129,6 +203,9 @@ def close(request, changesetId):
 		response.status_code = 409
 		return response
 
+	if request.user != changesetData.user:
+		return HttpResponseNotAllowed("This changeset belongs to a different user")
+
 	changesetData.is_open = False
 	changesetData.close_datetime = datetime.datetime.now()
 	changesetData.save()
@@ -155,6 +232,9 @@ def expand_bbox(request, changesetId):
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
 		return response
+
+	if request.user != changesetData.user:
+		return HttpResponseNotAllowed("This changeset belongs to a different user")
 
 	for node in request.data.findall("node"):
 		if not changesetData.bbox_set:
@@ -232,70 +312,36 @@ def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
 def upload(request, changesetId):
 	t = p.GetTransaction(b"EXCLUSIVE")
 
+	#Check changeset is open and for this user
+	try:
+		changesetData = Changeset.objects.get(id=changesetId)
+	except Changeset.DoesNotExist:
+		return HttpResponseNotFound("No such changeset")
+
+	if not changesetData.is_open:
+		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		response = HttpResponse(err, content_type="text/plain")
+		response.status_code = 409
+		return response
+
+	if request.user != changesetData.user:
+		return HttpResponseNotAllowed("This changeset belongs to a different user")
+
+	#Prepare diff result xml
 	responseRoot = ET.Element('diffResult')
 	doc = ET.ElementTree(responseRoot)
 	responseRoot.attrib["version"] = str(settings.API_VERSION)
 	responseRoot.attrib["generator"] = settings.GENERATOR
 
 	for i in range(request.data.blocks.size()):
-		block = request.data.blocks[i]
 		action = request.data.actions[i]
+		block = request.data.blocks[i]
 
-		if action == "create":
-			ret = upload_check_create(block.nodes)
-			if ret is not None: return ret
-			ret = upload_check_create(block.ways)
-			if ret is not None: return ret
-			ret = upload_check_create(block.relations)
-			if ret is not None: return ret
+		ret = upload_block(action, block, changesetId, t, responseRoot)		
+		if ret != True:
+			return ret
 
-			for i in range(block.nodes.size()):
-				block.nodes[i].metaData.version = 1
-			for i in range(block.ways.size()):
-				block.ways[i].metaData.version = 1
-			for i in range(block.relations.size()):
-				block.relations[i].metaData.version = 1
-
-		elif action in ["modify", "delete"]:
-			ret = upload_check_modify(block.nodes)
-			if ret is not None: return ret
-			ret = upload_check_modify(block.ways)
-			if ret is not None: return ret
-			ret = upload_check_modify(block.relations)
-			if ret is not None: return ret
-
-			for i in range(block.nodes.size()):
-				block.nodes[i].metaData.version += 1
-			for i in range(block.ways.size()):
-				block.ways[i].metaData.version += 1
-			for i in range(block.relations.size()):
-				block.relations[i].metaData.version += 1
-
-		else:
-			continue #Skip this block
-
-		visible = action != "delete"
-		for i in range(block.nodes.size()):
-			block.nodes[i].metaData.visible = visible
-		for i in range(block.ways.size()):
-			block.ways[i].metaData.visible = visible
-		for i in range(block.relations.size()):
-			block.relations[i].metaData.visible = visible
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-		if not ok:
-			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
-		
-		upload_update_diff_result(action, "node", block.nodes, createdNodeIds, responseRoot)
-		upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
-		upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
-		
-	if ok:
-		t.Commit()
+	t.Commit()
 
 	sio = cStringIO.StringIO()
 	doc.write(sio, "utf-8")
