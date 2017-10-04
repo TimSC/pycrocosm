@@ -12,6 +12,8 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse, fromstring
 import StringIO
 import pgmap
+import gc
+import sys
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node
@@ -278,6 +280,25 @@ class ChangesetTestCase(TestCase):
 
 		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.id, cs.close_datetime.isoformat()))
 
+	def tearDown(self):
+		u = User.objects.get(username = self.username)
+		u.delete()
+
+		#Swig based transaction object is not freed if an exception is thrown in python view code
+		#Encourage this to happen here.
+		#https://stackoverflow.com/a/8927538/4288232
+		sys.exc_clear()
+
+class ChangesetUploadTestCase(TestCase):
+
+	def setUp(self):
+		self.username = "john"
+		self.password = "glass onion"
+		self.email = 'jlennon@beatles.com'
+		self.user = User.objects.create_user(self.username, self.email, self.password)
+		self.client = Client()
+		self.client.login(username=self.username, password=self.password)
+
 	def test_upload_create_single_node(self):
 
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
@@ -334,6 +355,23 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(abs(dbNode.lat-50.80)<1e-6, True)
 		self.assertEqual(abs(dbNode.lon+1.05)<1e-6, True)
 		self.assertEqual(len(dbNode.tags), 1)
+
+	def test_upload_modify_single_node_wrong_version(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "interstellar"}, is_open=True)
+		node = create_node(self.user.id, self.user.username)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<modify>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}">
+			<tag k="note" v="Just a node"/>
+		  </node>
+		</modify>
+		</osmChange>""".format(cs.id, node.objId, node.metaData.version+1)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 409)
 
 	def test_upload_delete_single_node(self):
 
@@ -467,4 +505,9 @@ class ChangesetTestCase(TestCase):
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
+
+		#Swig based transaction object is not freed if an exception is thrown in python view code
+		#Encourage this to happen here.
+		#https://stackoverflow.com/a/8927538/4288232
+		sys.exc_clear()
 

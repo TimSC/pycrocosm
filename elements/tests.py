@@ -8,6 +8,8 @@ from django.contrib.auth.models import User
 from changeset.models import Changeset
 
 from querymap.views import p
+import gc
+import sys
 
 # Create your tests here.
 
@@ -55,4 +57,9 @@ class ElementsTestCase(TestCase):
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
+
+		#Swig based transaction object is not freed if an exception is thrown in python view code
+		#Encourage this to happen here.
+		#https://stackoverflow.com/a/8927538/4288232
+		sys.exc_clear()
 

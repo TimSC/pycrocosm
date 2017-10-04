@@ -170,6 +170,24 @@ def upload_block(action, block, changesetId, t, responseRoot):
 		if block.relations[i].metaData.changeset != int(changesetId):
 			return HttpResponseBadRequest("Changeset does not match expected value")
 
+	#Get list of modified objects, check they are unique
+	modNodeIdVers, modWayIdVers, modRelationIdVers = {}, {}, {}
+	for i in range(block.nodes.size()):
+		node = block.nodes[i]
+		if node.objId in modNodeIdVers:
+			return HttpResponseBadRequest("Modified object ID is not unique")
+		modNodeIdVers[node.objId] = node.metaData.version
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		if way.objId in modWayIdVers:
+			return HttpResponseBadRequest("Modified object ID is not unique")
+		modWayIdVers[way.objId] = way.metaData.version
+	for i in range(block.relations.size()):
+		relation = block.relations[i]
+		if relation.objId in modRelationIdVers:
+			return HttpResponseBadRequest("Modified object ID is not unique")
+		modRelationIdVers[relation.objId] = relation.metaData.version
+
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = set(), set(), set()
 	for i in range(block.nodes.size()):
@@ -215,6 +233,17 @@ def upload_block(action, block, changesetId, t, responseRoot):
 	if set(posRefedRelations) != set(foundRelationIndex["relation"].keys()):
 		return HttpResponseNotFound("Referenced relation(s) not found")
 	
+	#Check versions of updated/deleted objects match what we expect
+	for objId in modNodeIdVers:
+		if modNodeIdVers[objId] > 1 and modNodeIdVers[objId] != foundNodeIndex["node"][objId].metaData.version+1:
+			return HttpResponse("Node has wrong version", status=409, content_type="text/plain")
+	for objId in modWayIdVers:
+		if modWayIdVers[objId] > 1 and modWayIdVers[objId] != foundNodeIndex["way"][objId].metaData.version+1:
+			return HttpResponse("Way has wrong version", status=409, content_type="text/plain")
+	for objId in modRelationIdVers:
+		if modRelationIdVers[objId] > 1 and modRelationIdVers[objId] != foundNodeIndex["relation"][objId].metaData.version+1:
+			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
+
 	#Set visiblity flag
 	visible = action != "delete"
 	for i in range(block.nodes.size()):
