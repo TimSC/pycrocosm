@@ -104,7 +104,7 @@ def upload_check_modify(objs):
 		if obj.objId <= 0:
 			return HttpResponseBadRequest("Modified object IDs must be positive")
 		if obj.metaData.version <= 0:
-			return HttpResponseBadRequest("Version for modified objects must be positive")
+			return HttpResponseBadRequest("Version for modified objects must be specified and positive")
 		if isinstance(obj, pgmap.OsmNode):
 			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
 				return HttpResponseBadRequest("Node outside valid range")
@@ -122,7 +122,7 @@ def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
 			comment.attrib["new_id"] = str(obj.objId)
 			comment.attrib["new_version"] = str(obj.metaData.version)
 
-def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
+def upload_block(action, block, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds, ifunused = False):
 
 	if action == "create":
 		ret = upload_check_create(block.nodes)
@@ -251,7 +251,7 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"#{} is still used by way #{}.".format("?", pb)
-			return HttpResponse(err, status=409, content_type="text/plain")
+			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForNodes = pgmap.OsmData()
 		t.GetRelationsForObjs(b"node", modNodeIdVers.keys(), parentRelationsForNodes);	
@@ -260,7 +260,7 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"Node #{} is still used by relation #{}.".format("?", pb)
-			return HttpResponse(err, status=409, content_type="text/plain")
+			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForWays = pgmap.OsmData()
 		t.GetRelationsForObjs(b"way", modWayIdVers.keys(), parentRelationsForWays);	
@@ -269,7 +269,7 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"Way #{} still used by relation #{}.".format("?", pb)
-			return HttpResponse(err, status=409, content_type="text/plain")
+			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForRelations = pgmap.OsmData()
 		t.GetRelationsForObjs(b"relation", modRelationIdVers.keys(), parentRelationsForRelations);	
@@ -278,7 +278,7 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"The relation #{} is used in relation #{}.".format("?", pb)
-			return HttpResponse(err, status=409, content_type="text/plain")
+			return HttpResponse(err, status=412, content_type="text/plain")
 
 		#TODO implement if-unused attribute on delete action
 
@@ -291,9 +291,6 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 	for i in range(block.relations.size()):
 		block.relations[i].metaData.visible = visible
 
-	createdNodeIds = pgmap.mapi64i64()
-	createdWayIds = pgmap.mapi64i64()
-	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 	if not ok:
@@ -463,12 +460,16 @@ def upload(request, changesetId):
 	responseRoot.attrib["version"] = str(settings.API_VERSION)
 	responseRoot.attrib["generator"] = settings.GENERATOR
 
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+
 	for i in range(request.data.blocks.size()):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
 		ifunused = request.data.ifunused[i]
 
-		ret = upload_block(action, block, changesetId, t, responseRoot, ifunused)
+		ret = upload_block(action, block, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds, ifunused)
 		if ret != True:
 			return ret
 

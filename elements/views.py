@@ -50,7 +50,11 @@ def upload_single_object(action, request, obj, objType, t):
 	responseRoot.attrib["version"] = str(settings.API_VERSION)
 	responseRoot.attrib["generator"] = settings.GENERATOR
 
-	ret = upload_block("create", request.data, changesetId, t, responseRoot)
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+
+	ret = upload_block("create", request.data, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds)
 	if ret != True:
 		return ret
 

@@ -543,7 +543,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
-		self.assertEqual(response.status_code, 409)
+		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_node_used_by_relation(self):
 
@@ -562,7 +562,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
 		#print response.content
-		self.assertEqual(response.status_code, 409)
+		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_node_used_by_way(self):
 
@@ -582,7 +582,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
 		#print response.content
-		self.assertEqual(response.status_code, 409)
+		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_node_used_by_relation(self):
 
@@ -602,7 +602,40 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
 		#print response.content
-		self.assertEqual(response.status_code, 409)
+		self.assertEqual(response.status_code, 412)
+
+	def test_upload_multi_action(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+
+		xml = """<osmChange version="0.6" generator="JOSM">
+		<create>
+		  <node id='-3912' changeset='{0}' lat='50.78673385857' lon='-1.04730886255'>
+			<tag k='abc' v='def' />
+		  </node>
+		</create>
+		<modify>
+		  <way id='{1}' changeset='{0}' version="{2}">
+			<nd ref='-3912' />
+			<nd ref='{3}' />
+			<nd ref='{4}' />
+			<tag k='ghi' v='jkl' />
+		  </way>
+		</modify>
+		</osmChange>""".format(cs.id, way.objId, way.metaData.version, node.objId, node2.objId)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
+		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		diffDict = ParseOsmDiffToDict(xml)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
