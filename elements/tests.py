@@ -97,5 +97,6 @@ class ElementsGetParentsTestCase(TestCase):
 		#Encourage this to happen here.
 		#https://stackoverflow.com/a/8927538/4288232
 		sys.exc_clear()
+		gc.collect()
 
 

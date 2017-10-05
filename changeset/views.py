@@ -76,11 +76,11 @@ def GetOsmDataIndex(osmData):
 	wayDict = {}
 	for i in range(osmData.ways.size()):
 		way = osmData.ways[i]
-		wayDict[node.objId] = way
+		wayDict[way.objId] = way
 	relationDict = {}
 	for i in range(osmData.relations.size()):
 		relation = osmData.relations[i]
-		relationDict[node.objId] = relation
+		relationDict[relation.objId] = relation
 
 	out = {'node':nodeDict, 'way':wayDict, 'relation':relationDict}
 	return out
@@ -236,16 +236,51 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 		if modNodeIdVers[objId] > 1 and modNodeIdVers[objId] != foundNodeIndex["node"][objId].metaData.version+1:
 			return HttpResponse("Node has wrong version", status=409, content_type="text/plain")
 	for objId in modWayIdVers:
-		if modWayIdVers[objId] > 1 and modWayIdVers[objId] != foundNodeIndex["way"][objId].metaData.version+1:
+		if modWayIdVers[objId] > 1 and modWayIdVers[objId] != foundWayIndex["way"][objId].metaData.version+1:
 			return HttpResponse("Way has wrong version", status=409, content_type="text/plain")
 	for objId in modRelationIdVers:
-		if modRelationIdVers[objId] > 1 and modRelationIdVers[objId] != foundNodeIndex["relation"][objId].metaData.version+1:
+		if modRelationIdVers[objId] > 1 and modRelationIdVers[objId] != foundRelationIndex["relation"][objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
-	#Check that deleting objects doesn't break anything
-	#TODO
+	if action == "delete":
+		#Check that deleting objects doesn't break anything
+		parentWayForNodes = pgmap.OsmData()
+		t.GetWaysForNodes(modNodeIdVers.keys(), parentWayForNodes)
+		parentWayIds = set(GetOsmDataIndex(parentWayForNodes)["way"].keys())
+		potentiallyBreaks = parentWayIds.difference(set(modWayIdVers.keys()))
+		if len(potentiallyBreaks) > 0:
+			pb = potentiallyBreaks.pop()
+			err = b"#{} is still used by way #{}.".format("?", pb)
+			return HttpResponse(err, status=409, content_type="text/plain")
 
-	#TODO implement if-unused attribute on delete action
+		parentRelationsForNodes = pgmap.OsmData()
+		t.GetRelationsForObjs(b"node", modNodeIdVers.keys(), parentRelationsForNodes);	
+		parentRelationIds = set(GetOsmDataIndex(parentRelationsForNodes)["relation"].keys())
+		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		if len(potentiallyBreaks) > 0:
+			pb = potentiallyBreaks.pop()
+			err = b"Node #{} is still used by relation #{}.".format("?", pb)
+			return HttpResponse(err, status=409, content_type="text/plain")
+
+		parentRelationsForWays = pgmap.OsmData()
+		t.GetRelationsForObjs(b"way", modWayIdVers.keys(), parentRelationsForWays);	
+		parentRelationIds = set(GetOsmDataIndex(parentRelationsForWays)["relation"].keys())
+		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		if len(potentiallyBreaks) > 0:
+			pb = potentiallyBreaks.pop()
+			err = b"Way #{} still used by relation #{}.".format("?", pb)
+			return HttpResponse(err, status=409, content_type="text/plain")
+
+		parentRelationsForRelations = pgmap.OsmData()
+		t.GetRelationsForObjs(b"relation", modRelationIdVers.keys(), parentRelationsForRelations);	
+		parentRelationIds = set(GetOsmDataIndex(parentRelationsForRelations)["relation"].keys())
+		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		if len(potentiallyBreaks) > 0:
+			pb = potentiallyBreaks.pop()
+			err = b"The relation #{} is used in relation #{}.".format("?", pb)
+			return HttpResponse(err, status=409, content_type="text/plain")
+
+		#TODO implement if-unused attribute on delete action
 
 	#Set visiblity flag
 	visible = action != "delete"

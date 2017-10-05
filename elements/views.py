@@ -121,7 +121,7 @@ def relations_for_obj(request, objType, objId):
 	t = p.GetTransaction(b"ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData);	
+	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio)

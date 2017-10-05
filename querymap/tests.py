@@ -20,6 +20,8 @@ def DecodeOsmdataResponse(xml):
 	return data
 
 def GetObjectIdDicts(data):
+	#This basically duplicates changeset.views.GetOsmDataIndex
+	#TODO deduplicate code
 	nodeIdDict = {}
 	for nodeNum in range(len(data.nodes)):
 		node2 = data.nodes[nodeNum]
@@ -106,6 +108,42 @@ def create_way(uid, username, refs, changeset = 1000):
 	way.objId = createdWayIds[-1]
 	return way
 
+def create_relation(uid, username, refs, changeset = 1000):
+
+	relation = pgmap.OsmRelation()
+	relation.objId = -1
+	relation.metaData.version = 1
+	relation.metaData.timestamp = 0
+	relation.metaData.changeset = changeset
+	relation.metaData.uid = uid
+	relation.metaData.username = username.encode("UTF-8")
+	relation.metaData.visible = True
+	relation.tags[b"test"] = b"moon"
+	for refTypeStr, refId, refRole in refs:
+		relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+		relation.refIds.append(refId)
+		relation.refRoles.append(refRole.encode("UTF-8"))
+
+	data = pgmap.OsmData()
+	data.relations.append(relation)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	if not ok:
+		t.Abort()
+		print errStr.errStr
+		return None
+	else:
+		t.Commit()
+	relation.objId = createdRelationIds[-1]
+	return relation
+
+
 # Create your tests here.
 
 class QueryMapTestCase(TestCase):
@@ -126,41 +164,6 @@ class QueryMapTestCase(TestCase):
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
-
-	def create_relation(self, refs):
-
-		relation = pgmap.OsmRelation()
-		relation.objId = -1
-		relation.metaData.version = 1
-		relation.metaData.timestamp = 0
-		relation.metaData.changeset = 1000
-		relation.metaData.uid = self.user.id
-		relation.metaData.username = self.user.username.encode("UTF-8")
-		relation.metaData.visible = True
-		relation.tags[b"test"] = b"moon"
-		for refTypeStr, refId, refRole in refs:
-			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
-			relation.refIds.append(refId)
-			relation.refRoles.append(refRole.encode("UTF-8"))
-
-		data = pgmap.OsmData()
-		data.relations.append(relation)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-		if not ok:
-			t.Abort()
-			print errStr.errStr
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		relation.objId = createdRelationIds[-1]
-		return relation
 
 	def modify_node(self, nodeIn, nodeCurrentVer):
 		node = pgmap.OsmNode()
@@ -529,7 +532,7 @@ class QueryMapTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
-		relation = self.create_relation([("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(relation, bbox, True)
@@ -538,7 +541,7 @@ class QueryMapTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
-		relation = self.create_relation([("way", way.objId, "parrot")])
+		relation = create_relation(self.user.id, self.user.username, [("way", way.objId, "parrot")])
 
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(relation, bbox, True)
@@ -547,7 +550,7 @@ class QueryMapTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		node3 = create_node(self.user.id, self.user.username, node)
-		relation = self.create_relation([("node", node.objId, "parrot")])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot")])
 
 		modRelation = self.modify_relation(relation, 
 			[("node", node.objId, "parrot"), ("node", node2.objId, "dead"), ("node", node3.objId, "")], 
@@ -560,7 +563,7 @@ class QueryMapTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
-		relation = self.create_relation([("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
 		self.delete_object(relation)
 		

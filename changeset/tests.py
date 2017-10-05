@@ -16,7 +16,7 @@ import gc
 import sys
 from querymap.views import p
 from xml.sax.saxutils import escape
-from querymap.tests import create_node, create_way
+from querymap.tests import create_node, create_way, create_relation
 
 def ParseOsmDiffToDict(xml):
 	out = {'node':{}, 'way':{}, 'relation':{}}
@@ -288,6 +288,7 @@ class ChangesetTestCase(TestCase):
 		#Encourage this to happen here.
 		#https://stackoverflow.com/a/8927538/4288232
 		sys.exc_clear()
+		gc.collect()
 
 class ChangesetUploadTestCase(TestCase):
 
@@ -544,6 +545,65 @@ class ChangesetUploadTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
+	def test_upload_delete_node_used_by_relation(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.id, node.objId, node.metaData.version)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 409)
+
+	def test_upload_delete_node_used_by_way(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <way changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.id, way.objId, way.metaData.version)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 409)
+
+	def test_upload_delete_node_used_by_relation(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+		relation2 = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("relation", relation.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <relation changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.id, relation.objId, relation.metaData.version)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 409)
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
@@ -554,4 +614,5 @@ class ChangesetUploadTestCase(TestCase):
 		#Encourage this to happen here.
 		#https://stackoverflow.com/a/8927538/4288232
 		sys.exc_clear()
+		gc.collect()
 
