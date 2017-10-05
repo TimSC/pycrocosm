@@ -116,3 +116,33 @@ def create(request, objType):
 
 	return HttpResponse("", content_type='text/plain')
 
+@api_view(['GET'])
+def relations_for_obj(request, objType, objId):
+	t = p.GetTransaction(b"ACCESS SHARE")
+
+	osmData = pgmap.OsmData()
+	t.GetRelationsForObjs(objType, [int(objId)], osmData);	
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def ways_for_node(request, objType, objId):
+	t = p.GetTransaction(b"ACCESS SHARE")
+
+	osmData = pgmap.OsmData()
+	t.GetWaysForNodes([int(objId)], osmData);	
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def full_obj(request, objType, objId):
+	t = p.GetTransaction(b"ACCESS SHARE")
+
+	return HttpResponse("", content_type='text/xml')
+

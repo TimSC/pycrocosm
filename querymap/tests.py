@@ -10,6 +10,33 @@ from querymap.views import p
 import pgmap
 import random
 
+def DecodeOsmdataResponse(xml):
+	data = pgmap.OsmData()
+	dec = pgmap.OsmXmlDecodeString()
+	dec.output = data
+	for chunk in xml:
+		dec.DecodeSubString(chunk, len(chunk), False)
+	dec.DecodeSubString(b"", 0, True)
+	return data
+
+def GetObjectIdDicts(data):
+	nodeIdDict = {}
+	for nodeNum in range(len(data.nodes)):
+		node2 = data.nodes[nodeNum]
+		nodeIdDict[node2.objId] = node2
+
+	wayIdDict = {}
+	for wayNum in range(len(data.ways)):
+		way2 = data.ways[wayNum]
+		wayIdDict[way2.objId] = way2
+
+	relationIdDict = {}
+	for relationNum in range(len(data.relations)):
+		relation2 = data.relations[relationNum]
+		relationIdDict[relation2.objId] = relation2
+
+	return nodeIdDict, wayIdDict, relationIdDict
+
 def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	node = pgmap.OsmNode()
 	node.objId = -1
@@ -274,15 +301,6 @@ class QueryMapTestCase(TestCase):
 			t.Commit()
 		self.assertEqual(ok, True)
 
-	def decode_response(self, xml):
-		data = pgmap.OsmData()
-		dec = pgmap.OsmXmlDecodeString()
-		dec.output = data
-		for chunk in xml:
-			dec.DecodeSubString(chunk, len(chunk), False)
-		dec.DecodeSubString(b"", 0, True)
-		return data
-
 	def find_object_ids(self, data):
 		nodeIdSet = set()
 		for nodeNum in range(len(data.nodes)):
@@ -315,24 +333,6 @@ class QueryMapTestCase(TestCase):
 
 		return nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems
 
-	def get_object_id_dicts(self, data):
-		nodeIdDict = {}
-		for nodeNum in range(len(data.nodes)):
-			node2 = data.nodes[nodeNum]
-			nodeIdDict[node2.objId] = node2
-
-		wayIdDict = {}
-		for wayNum in range(len(data.ways)):
-			way2 = data.ways[wayNum]
-			wayIdDict[way2.objId] = way2
-
-		relationIdDict = {}
-		for relationNum in range(len(data.relations)):
-			relation2 = data.relations[relationNum]
-			relationIdDict[relation2.objId] = relation2
-
-		return nodeIdDict, wayIdDict, relationIdDict
-
 	def check_node_in_query(self, node, expected=True):
 
 		anonClient = Client()
@@ -340,9 +340,9 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 
-		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 		self.assertEqual(node.objId in nodeIdDict, expected)
 
 		if expected:
@@ -371,9 +371,9 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 
-		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 		self.assertEqual(way.objId in wayIdDict, expected)
 		
 		if expected:
@@ -386,9 +386,9 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 
-		nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+		nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 		self.assertEqual(relation.objId in relationIdDict, expected)
 		
 		if expected:
@@ -420,12 +420,12 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(nodeIdSet.difference(nodeMems))
 
 		if len(candidateIds) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
 			self.delete_object(nodeObjToDelete)
@@ -440,12 +440,12 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		nodeIdSet = list(nodeIdSet)
 
 		if len(nodeIdSet) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			nodeObjToModify = nodeIdDict[nodeIdSet[0]]
 
 			modNode = self.modify_node(nodeObjToModify, 1)
@@ -490,12 +490,12 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(wayIdSet.difference(wayMems))
 
 		if len(candidateIds) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			wayObjToMod = wayIdDict[candidateIds[0]]
 
 			refs = list(wayObjToMod.refs)
@@ -512,12 +512,12 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(wayIdSet.difference(wayMems))
 
 		if len(candidateIds) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			wayObjToDelete = wayIdDict[candidateIds[0]]
 
 			self.delete_object(wayObjToDelete)
@@ -574,14 +574,14 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
 
 		#TODO Improve check for parents of relation?
 
 		if len(candidateIds) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			relationObjToMod = relationIdDict[candidateIds[0]]
 
 			refTypeStrs = list(relationObjToMod.refTypeStrs)
@@ -602,14 +602,14 @@ class QueryMapTestCase(TestCase):
 		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
-		data = self.decode_response(response.streaming_content)
+		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
 
 		#TODO Improve check for parents of relation?
 
 		if len(candidateIds) > 0:
-			nodeIdDict, wayIdDict, relationIdDict = self.get_object_id_dicts(data)
+			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
 			relationObjToDel = relationIdDict[candidateIds[0]]
 
 			self.delete_object(relationObjToDel)

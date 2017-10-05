@@ -122,7 +122,7 @@ def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
 			comment.attrib["new_id"] = str(obj.objId)
 			comment.attrib["new_version"] = str(obj.metaData.version)
 
-def upload_block(action, block, changesetId, t, responseRoot):
+def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 
 	if action == "create":
 		ret = upload_check_create(block.nodes)
@@ -153,8 +153,6 @@ def upload_block(action, block, changesetId, t, responseRoot):
 			block.ways[i].metaData.version += 1
 		for i in range(block.relations.size()):
 			block.relations[i].metaData.version += 1
-
-		#TODO implement if-unused attribute on delete action
 
 	else:
 		return True #Skip this block
@@ -246,6 +244,8 @@ def upload_block(action, block, changesetId, t, responseRoot):
 
 	#Check that deleting objects doesn't break anything
 	#TODO	
+
+	#TODO implement if-unused attribute on delete action
 
 	#Set visiblity flag
 	visible = action != "delete"
@@ -431,8 +431,9 @@ def upload(request, changesetId):
 	for i in range(request.data.blocks.size()):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
+		ifunused = request.data.ifunused[i]
 
-		ret = upload_block(action, block, changesetId, t, responseRoot)		
+		ret = upload_block(action, block, changesetId, t, responseRoot, ifunused)
 		if ret != True:
 			return ret
 
