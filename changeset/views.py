@@ -243,7 +243,7 @@ def upload_block(action, block, changesetId, t, responseRoot, ifunused = False):
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
 	#Check that deleting objects doesn't break anything
-	#TODO	
+	#TODO
 
 	#TODO implement if-unused attribute on delete action
 
