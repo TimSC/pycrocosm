@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 import cStringIO
 import datetime
 import pgmap
+import time
 from querymap.views import p
 from .models import Changeset
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
@@ -122,7 +123,9 @@ def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
 			comment.attrib["new_id"] = str(obj.objId)
 			comment.attrib["new_version"] = str(obj.metaData.version)
 
-def upload_block(action, block, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds, ifunused = False):
+def upload_block(action, block, changesetId, t, responseRoot, 
+	uid, username, timestamp,
+	createdNodeIds, createdWayIds, createdRelationIds, ifunused = False):
 
 	if action == "create":
 		ret = upload_check_create(block.nodes)
@@ -290,6 +293,20 @@ def upload_block(action, block, changesetId, t, responseRoot, createdNodeIds, cr
 		block.ways[i].metaData.visible = visible
 	for i in range(block.relations.size()):
 		block.relations[i].metaData.visible = visible
+
+	#Set user info
+	for i in range(block.nodes.size()):
+		block.nodes[i].metaData.uid = uid
+		block.nodes[i].metaData.username = username.encode("UTF-8")
+		block.nodes[i].metaData.timestamp = timestamp
+	for i in range(block.ways.size()):
+		block.ways[i].metaData.uid = uid
+		block.ways[i].metaData.username = username.encode("UTF-8")
+		block.ways[i].metaData.timestamp = timestamp
+	for i in range(block.relations.size()):
+		block.relations[i].metaData.uid = uid
+		block.relations[i].metaData.username = username.encode("UTF-8")
+		block.relations[i].metaData.timestamp = timestamp
 
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
@@ -468,8 +485,11 @@ def upload(request, changesetId):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
 		ifunused = request.data.ifunused[i]
+		timestamp = int(time.time())
 
-		ret = upload_block(action, block, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds, ifunused)
+		ret = upload_block(action, block, changesetId, t, responseRoot, 
+			request.user.id, request.user.username, timestamp,
+			createdNodeIds, createdWayIds, createdRelationIds, ifunused)
 		if ret != True:
 			return ret
 

@@ -14,6 +14,7 @@ import StringIO
 import pgmap
 import gc
 import sys
+import time
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation
@@ -331,7 +332,11 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(int(ndiff.attrib["new_id"])>0, True)
 		
 		dbNode = GetObj(p, "node", int(ndiff.attrib["new_id"]))
+
 		self.assertEqual(dbNode is not None, True)
+		self.assertEqual(dbNode.metaData.username, self.user.username)
+		self.assertEqual(dbNode.metaData.uid, self.user.id)
+		self.assertEqual(abs(dbNode.metaData.timestamp - time.time())<60, True)
 
 	def test_upload_modify_single_node(self):
 

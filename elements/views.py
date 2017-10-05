@@ -54,7 +54,10 @@ def upload_single_object(action, request, obj, objType, t):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	ret = upload_block("create", request.data, changesetId, t, responseRoot, createdNodeIds, createdWayIds, createdRelationIds)
+	timestamp = time.time()
+	ret = upload_block("create", request.data, changesetId, t, responseRoot, 
+		request.user.id, request.user.username, timestamp,
+		createdNodeIds, createdWayIds, createdRelationIds)
 	if ret != True:
 		return ret
 
