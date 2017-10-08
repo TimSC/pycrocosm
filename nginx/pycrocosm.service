@@ -1,0 +1,13 @@
+[Unit]
+Description=uWSGI instance to serve mysite
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/var/pycrocosm
+ExecStart=/usr/local/bin/uwsgi --ini pycrocosm.ini
+KillSignal=SIGQUIT
+
+[Install]
+WantedBy=multi-user.target

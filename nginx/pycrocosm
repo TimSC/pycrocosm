@@ -1,0 +1,31 @@
+# the upstream component nginx needs to connect to
+upstream pycrocosm {
+    server unix:///run/pycrocosm.sock; # for a file socket
+    # server 127.0.0.1:8001; # for a web port socket
+}
+
+# Default server configuration
+#
+server {
+    listen 8010;
+    listen [::]:8010;
+
+    listen 8012 ssl;
+    listen [::]:8012 ssl;
+
+    root /var/www/pycrocosm;
+    ssl_certificate     sodium.crt;
+    ssl_certificate_key sodium.key;
+
+    # Add index.php to the list if you are using PHP
+    index index.php index.html index.htm index.nginx-debian.html;
+
+    server_name _;
+
+    location / {
+        include     /etc/nginx/uwsgi_params; # the uwsgi_params file you installed
+        uwsgi_pass  pycrocosm;
+        uwsgi_read_timeout 300;
+    }
+
+}
