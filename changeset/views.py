@@ -298,15 +298,15 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	for i in range(block.nodes.size()):
 		block.nodes[i].metaData.uid = uid
 		block.nodes[i].metaData.username = username.encode("UTF-8")
-		block.nodes[i].metaData.timestamp = timestamp
+		block.nodes[i].metaData.timestamp = int(timestamp)
 	for i in range(block.ways.size()):
 		block.ways[i].metaData.uid = uid
 		block.ways[i].metaData.username = username.encode("UTF-8")
-		block.ways[i].metaData.timestamp = timestamp
+		block.ways[i].metaData.timestamp = int(timestamp)
 	for i in range(block.relations.size()):
 		block.relations[i].metaData.uid = uid
 		block.relations[i].metaData.username = username.encode("UTF-8")
-		block.relations[i].metaData.timestamp = timestamp
+		block.relations[i].metaData.timestamp = int(timestamp)
 
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
