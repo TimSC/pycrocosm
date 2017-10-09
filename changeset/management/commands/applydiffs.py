@@ -5,6 +5,39 @@ import gzip
 import pgmap
 from querymap.views import p
 
+def ProcessFile(fi):
+	t = p.GetTransaction(b"EXCLUSIVE")
+
+	#Decode XML
+	data = pgmap.OsmChange()
+	dec = pgmap.OsmChangeXmlDecodeString()
+	dec.output = data
+	pageSize = 100000
+	while True:
+		inputXml = fi.read(pageSize)
+		if len(inputXml) == 0:
+			break
+		dec.DecodeSubString(inputXml, len(inputXml), False)
+	dec.DecodeSubString("".encode("UTF-8"), 0, True)
+	if not dec.parseCompletedOk:
+		raise RuntimeError(dec.errString)
+
+	for i in range(data.blocks.size()):
+		action = data.actions[i]
+		block = data.blocks[i]
+
+		createdNodeIds = pgmap.mapi64i64()
+		createdWayIds = pgmap.mapi64i64()
+		createdRelationIds = pgmap.mapi64i64()
+		errStr = pgmap.PgMapError()
+
+		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		if not ok:
+			print errStr.errStr
+			return
+
+	t.Commit()
+
 class Command(BaseCommand):
 	help = 'Apply diffs to database'
 
@@ -14,7 +47,7 @@ class Command(BaseCommand):
 
 	def handle(self, *args, **options):
 
-		diffFolder = "/home/tim/Desktop/diffs"
+		diffFolder = "/home/tim/Desktop/103"
 		
 		for root, dirs, files in os.walk(diffFolder):
 
@@ -24,36 +57,5 @@ class Command(BaseCommand):
 				fullFina = os.path.join(root, fina)
 				print fullFina
 				xml = gzip.open(fullFina)
-
-				t = p.GetTransaction(b"EXCLUSIVE")
-
-				#Decode XML
-				data = pgmap.OsmChange()
-				dec = pgmap.OsmChangeXmlDecodeString()
-				dec.output = data
-				pageSize = 100000
-				while True:
-					inputXml = xml.read(pageSize)
-					if len(inputXml) == 0:
-						break
-					dec.DecodeSubString(inputXml, len(inputXml), False)
-				dec.DecodeSubString("".encode("UTF-8"), 0, True)
-				if not dec.parseCompletedOk:
-					raise ParseError(detail=dec.errString)
-
-				for i in range(data.blocks.size()):
-					action = data.actions[i]
-					block = data.blocks[i]
-
-					createdNodeIds = pgmap.mapi64i64()
-					createdWayIds = pgmap.mapi64i64()
-					createdRelationIds = pgmap.mapi64i64()
-					errStr = pgmap.PgMapError()
-
-					ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
-					if not ok:
-						print errStr.errStr
-						return
-
-				t.Commit()
+				ProcessFile(xml)
 
