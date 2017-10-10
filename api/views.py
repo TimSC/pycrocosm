@@ -6,9 +6,11 @@ import cStringIO
 from django.shortcuts import render
 from django.http import HttpResponse
 from django.conf import settings
+from rest_framework.decorators import api_view
 
 # Create your views here.
 
+@api_view(['GET'])
 def capabilities(request):
 
 	root = ET.Element('osm')
@@ -50,6 +52,7 @@ def capabilities(request):
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+@api_view(['GET'])
 def permissions(request):
 	root = ET.Element('osm')
 	doc = ET.ElementTree(root)
@@ -61,4 +64,8 @@ def permissions(request):
 	sio = cStringIO.StringIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def apibase(request):
+	return HttpResponse("API root", content_type='text/plain')
 

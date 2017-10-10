@@ -18,8 +18,8 @@ class UserData(models.Model):
 
 @receiver(post_save, sender=User)
 def user_post_save(sender, instance, signal, *args, **kwargs):
-    # Creates user profile
-    profile, new = UserData.objects.get_or_create(user=instance)
+	# Creates user profile
+	profile, new = UserData.objects.get_or_create(user=instance)
 
 class UserPreference(models.Model):
 	user = models.ForeignKey(User, on_delete=models.CASCADE)

@@ -11,16 +11,16 @@ from . import forms
 # Based on https://simpleisbetterthancomplex.com/tutorial/2017/02/18/how-to-create-user-sign-up-view.html
 
 def index(request):
-    if request.method == 'POST':
-        form = forms.RegisterForm(request.POST)
-        if form.is_valid():
-            form.save()
-            username = form.cleaned_data.get('username')
-            raw_password = form.cleaned_data.get('password1')
-            user = authenticate(username=username, password=raw_password)
-            login(request, user)
-            return redirect('/')
-    else:
-        form = forms.RegisterForm()
-    return render(request, 'register/index.html', {'form': form})
+	if request.method == 'POST':
+		form = forms.RegisterForm(request.POST)
+		if form.is_valid():
+			form.save()
+			username = form.cleaned_data.get('username')
+			raw_password = form.cleaned_data.get('password1')
+			user = authenticate(username=username, password=raw_password)
+			login(request, user)
+			return redirect('/')
+	else:
+		form = forms.RegisterForm()
+	return render(request, 'register/index.html', {'form': form})
 

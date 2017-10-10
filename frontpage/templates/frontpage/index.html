@@ -1,0 +1,16 @@
+<p>Front page</p>
+
+<p>Api: <a href="{{ apibase|safe }}">{{ apibase }}</a></p>
+
+
+{% if user.is_authenticated %}
+
+<p>Hi {{ user.username }}</p>
+
+<p><a href="/accounts/logout/">Log out</a></p>
+
+{% else %}
+<p><a href="/register/">Register</a></p>
+
+<p><a href="/accounts/login/">Log in</a></p>
+{% endif %}
