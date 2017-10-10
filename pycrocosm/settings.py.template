@@ -37,6 +37,8 @@ INSTALLED_APPS = [
 	'querymap.apps.QuerymapConfig',
 	'elements.apps.ElementsConfig',
 	'multifetch.apps.MultifetchConfig',
+	'register.apps.RegisterConfig',
+	'frontpage.apps.FrontpageConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
