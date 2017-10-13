@@ -31,6 +31,15 @@ def ProcessFile(fi):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
+		#Set visiblity flag
+		visible = action != "delete"
+		for j in range(block.nodes.size()):
+			block.nodes[j].metaData.visible = visible
+		for j in range(block.ways.size()):
+			block.ways[j].metaData.visible = visible
+		for j in range(block.relations.size()):
+			block.relations[j].metaData.visible = visible
+
 		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
 			print errStr.errStr
