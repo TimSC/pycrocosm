@@ -340,7 +340,7 @@ class QueryMapTestCase(TestCase):
 
 		anonClient = Client()
 		bbox = [node.lon-0.0001, node.lat-0.0001, node.lon+0.0001, node.lat+0.0001]
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -371,7 +371,7 @@ class QueryMapTestCase(TestCase):
 	def check_way_in_query(self, way, bbox, expected):
 		
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -386,7 +386,7 @@ class QueryMapTestCase(TestCase):
 	def check_relation_in_query(self, relation, bbox, expected):
 		
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*bbox))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -420,7 +420,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a node that is not part of any other object
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -440,7 +440,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a static node
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -490,7 +490,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a way that is not part of any other relation
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -512,7 +512,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a way that is not part of any other relation
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -574,7 +574,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a relation that is not part of any other relation
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
@@ -602,7 +602,7 @@ class QueryMapTestCase(TestCase):
 
 		#Find a relation that is not part of any other relation
 		anonClient = Client()
-		response = anonClient.get(reverse('index') + "?bbox={},{},{},{}".format(*self.roi))
+		response = anonClient.get(reverse('querymap') + "?bbox={},{},{},{}".format(*self.roi))
 		self.assertEqual(response.status_code, 200)
 
 		data = DecodeOsmdataResponse(response.streaming_content)
