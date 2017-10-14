@@ -491,6 +491,7 @@ def upload(request, changesetId):
 			request.user.id, request.user.username, timestamp,
 			createdNodeIds, createdWayIds, createdRelationIds, ifunused)
 		if ret != True:
+			print ret
 			return ret
 
 	t.Commit()
