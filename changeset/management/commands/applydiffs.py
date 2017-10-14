@@ -45,6 +45,12 @@ def ProcessFile(fi):
 			print errStr.errStr
 			return False
 
+	errStr = pgmap.PgMapError()
+	ok = t.UpdateNextIds(errStr)
+	if not ok:
+		print errStr.errStr
+		return False
+
 	t.Commit()
 	return True
 
