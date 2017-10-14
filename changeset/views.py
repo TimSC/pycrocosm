@@ -309,7 +309,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		block.relations[i].metaData.timestamp = int(timestamp)
 
 	errStr = pgmap.PgMapError()
-	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 	

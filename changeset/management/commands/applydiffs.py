@@ -40,7 +40,7 @@ def ProcessFile(fi):
 		for j in range(block.relations.size()):
 			block.relations[j].metaData.visible = visible
 
-		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			print errStr.errStr
 			return False

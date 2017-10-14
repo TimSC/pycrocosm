@@ -9,6 +9,8 @@ from django.contrib.auth.models import User
 from querymap.views import p
 import pgmap
 import random
+import sys
+import gc
 
 def DecodeOsmdataResponse(xml):
 	data = pgmap.OsmData()
@@ -65,7 +67,7 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction(b"EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
 		print errStr.errStr
@@ -98,7 +100,7 @@ def create_way(uid, username, refs, changeset = 1000):
 	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction(b"EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
 		print errStr.errStr
@@ -133,7 +135,7 @@ def create_relation(uid, username, refs, changeset = 1000):
 	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction(b"EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
 		print errStr.errStr
@@ -187,7 +189,7 @@ class QueryMapTestCase(TestCase):
 		errStr = pgmap.PgMapError()
 
 		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
 			print errStr.errStr
@@ -219,7 +221,7 @@ class QueryMapTestCase(TestCase):
 		errStr = pgmap.PgMapError()
 
 		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
 			print errStr.errStr
@@ -253,7 +255,7 @@ class QueryMapTestCase(TestCase):
 		errStr = pgmap.PgMapError()
 
 		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
 			print errStr.errStr
@@ -296,7 +298,7 @@ class QueryMapTestCase(TestCase):
 		errStr = pgmap.PgMapError()
 
 		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, errStr)
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
 			print errStr.errStr
@@ -620,8 +622,13 @@ class QueryMapTestCase(TestCase):
 		else:
 			print "No free relations in ROI for testing"
 
-
 	def tearDown(self):
+		#Swig based transaction object is not freed if an exception is thrown in python view code
+		#Encourage this to happen here.
+		#https://stackoverflow.com/a/8927538/4288232
+		sys.exc_clear()
+		gc.collect()
+
 		u = User.objects.get(username = self.username)
 		u.delete()
 		errStr = pgmap.PgMapError()
