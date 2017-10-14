@@ -43,9 +43,10 @@ def ProcessFile(fi):
 		ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, errStr)
 		if not ok:
 			print errStr.errStr
-			return
+			return False
 
 	t.Commit()
+	return True
 
 class Command(BaseCommand):
 	help = 'Apply diffs to database'
@@ -66,5 +67,7 @@ class Command(BaseCommand):
 				fullFina = os.path.join(root, fina)
 				print fullFina
 				xml = gzip.open(fullFina)
-				ProcessFile(xml)
+				ok = ProcessFile(xml)
+				if not ok:
+					return
 
