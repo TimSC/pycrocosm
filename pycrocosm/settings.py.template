@@ -39,6 +39,7 @@ INSTALLED_APPS = [
 	'multifetch.apps.MultifetchConfig',
 	'register.apps.RegisterConfig',
 	'frontpage.apps.FrontpageConfig',
+	'replicate.apps.ReplicateConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',

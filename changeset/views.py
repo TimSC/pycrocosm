@@ -485,7 +485,7 @@ def upload(request, changesetId):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
 		ifunused = request.data.ifunused[i]
-		timestamp = int(time.time())
+		timestamp = time.time()
 
 		ret = upload_block(action, block, changesetId, t, responseRoot, 
 			request.user.id, request.user.username, timestamp,
