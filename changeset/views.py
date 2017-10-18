@@ -22,9 +22,9 @@ from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 
 def CheckTags(tags):
 	for k in tags:
-		if len(k) > 255:
+		if len(k) > settings.MAX_TAG_LENGTH:
 			return False
-		if len(tags[k]) > 255:
+		if len(tags[k]) > settings.MAX_TAG_LENGTH:
 			return False
 	return True
 

@@ -177,4 +177,5 @@ POLICY_IMAGERY_BLACKLIST = [".*\.google(apis)?\..*/(vt|kh)[\?/].*([xyz]=.*){3}.*
 	"http://xdworld\.vworld\.kr:8080/.*", ".*\.here\.com[/:].*"]
 
 REPLICATE_EPOCH = datetime.datetime(2012, 9, 12)
+MAX_TAG_LENGTH = 255
 

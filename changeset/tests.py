@@ -18,6 +18,7 @@ import time
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation
+from django.conf import settings
 
 def ParseOsmDiffToDict(xml):
 	out = {'node':{}, 'way':{}, 'relation':{}}
@@ -438,7 +439,7 @@ class ChangesetUploadTestCase(TestCase):
 		    <tag k="{}" v="{}"/>
 		  </node>
 		</create>
-		</osmChange>""".format(cs.id, "x" * 255, "y" * 255)
+		</osmChange>""".format(cs.id, "x" * settings.MAX_TAG_LENGTH, "y" * settings.MAX_TAG_LENGTH)
 
 		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
 			content_type='text/xml')
