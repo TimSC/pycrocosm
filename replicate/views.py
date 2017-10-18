@@ -12,11 +12,9 @@ import datetime
 import zlib
 
 def index(request):
-	return HttpResponse("<a href='minute/'>Minutely</a>")
+	return HttpResponse("<a href='minute/'>Minutely</a> <a href='hour/'>Hourly</a> <a href='day/'>Daily</a>")
 
 def catalog(request, timebase):
-	if timebase != "minute":
-		return HttpResponseServerError("Not implemented yet")
 
 	timenow = int(time.time())
 	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
@@ -24,8 +22,14 @@ def catalog(request, timebase):
 	elapsed = timenow - epochts
 	if elapsed < 0: elapsed = 0
 	
-	elapsedMin = elapsed / 60
-	val1 = elapsedMin / 1000 
+	if timebase == "minute":
+		elapsedUnits = elapsed / 60
+	if timebase == "hour":
+		elapsedUnits = elapsed / 60 / 60
+	if timebase == "day":
+		elapsedUnits = elapsed / 60 / 60 / 24
+
+	val1 = elapsedUnits / 1000 
 	val2 = val1 / 1000
 
 	out = []
@@ -35,19 +39,30 @@ def catalog(request, timebase):
 	return HttpResponse(out)
 
 def catalog2(request, timebase, cat1):
-	if timebase != "minute":
-		return HttpResponseServerError("Not implemented yet")
 
 	timenow = int(time.time())
 	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
 
-	pageStartTimestamp = int(cat1) * 60000000 + epochts
+	if timebase == "minute":
+		pageStep = 60000000
+	if timebase == "hour":
+		pageStep = 60000000 * 60
+	if timebase == "day":
+		pageStep = 60000000 * 60 * 24
+
+	pageStartTimestamp = int(cat1) * pageStep + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 	
-	elapsedInPageMin = elapsedInPage / 60
-	val1 = elapsedInPageMin / 1000 
+	if timebase == "minute":
+		elapsedInPageUnits = elapsedInPage / 60
+	if timebase == "hour":
+		elapsedInPageUnits = elapsedInPage / 60 / 60
+	if timebase == "day":
+		elapsedInPageUnits = elapsedInPage / 60 / 60 / 24
+
+	val1 = elapsedInPageUnits / 1000 
 	if val1 > 999: val1 = 999
 
 	out = []
@@ -57,18 +72,29 @@ def catalog2(request, timebase, cat1):
 	return HttpResponse(out)
 
 def catalog3(request, timebase, cat1, cat2):
-	if timebase != "minute":
-		return HttpResponseServerError("Not implemented yet")
 
 	timenow = int(time.time())
 	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
 
-	pageStartTimestamp = int(cat1) * 60000000 + int(cat2) * 60000 + epochts
+	if timebase == "minute":
+		pageStep = 60000000
+	if timebase == "hour":
+		pageStep = 60000000 * 60
+	if timebase == "day":
+		pageStep = 60000000 * 60 * 24
+	pageStep2 = pageStep / 1000
+
+	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 	
-	val1 = elapsedInPage / 60
+	if timebase == "minute":
+		val1 = elapsedInPage / 60
+	if timebase == "hour":
+		val1 = elapsedInPage / 60 / 60
+	if timebase == "day":
+		val1 = elapsedInPage / 60 / 60 / 24
 	if val1 > 999: val1 = 999
 
 	out = []
@@ -79,20 +105,28 @@ def catalog3(request, timebase, cat1, cat2):
 	return HttpResponse(out)
 
 def getoscdiff(timebase, cat1, cat2, cat3):
-	if timebase != "minute":
-		return HttpResponseServerError("Not implemented yet")
 
 	timenow = int(time.time())
 	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
 
-	pageStartTimestamp = int(cat1) * 60000000 + int(cat2) * 60000 + int(cat3) * 60 + epochts
+	if timebase == "minute":
+		pageStep = 60000000
+	if timebase == "hour":
+		pageStep = 60000000 * 60
+	if timebase == "day":
+		pageStep = 60000000 * 60 * 24
+
+	pageStep2 = pageStep / 1000
+	pageStep3 = pageStep2 / 1000
+
+	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
 	t = p.GetTransaction(b"ACCESS SHARE")
 	osmData = pgmap.OsmData()
-	t.GetReplicateDiff(pageStartTimestamp-60, pageStartTimestamp, osmData)
+	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmData)
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio)
@@ -114,13 +148,21 @@ def diffgz(request, timebase, cat1, cat2, cat3):
 	return HttpResponse(gzip_data, content_type='application/x-gzip')
 	
 def state(request, timebase, cat1, cat2, cat3):
-	if timebase != "minute":
-		return HttpResponseServerError("Not implemented yet")
 
 	timenow = int(time.time())
 	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
 
-	pageStartTimestamp = int(cat1) * 60000000 + int(cat2) * 60000 + int(cat3) * 60 + epochts
+	if timebase == "minute":
+		pageStep = 60000000
+	if timebase == "hour":
+		pageStep = 60000000 * 60
+	if timebase == "day":
+		pageStep = 60000000 * 60 * 24
+
+	pageStep2 = pageStep / 1000
+	pageStep3 = pageStep2 / 1000
+
+	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
