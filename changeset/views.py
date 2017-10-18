@@ -90,12 +90,17 @@ def upload_check_create(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
 		if obj.objId > 0:
-			return HttpResponseBadRequest("Created object IDs must be zero or negative")
+			return HttpResponseBadRequest("Created object IDs must be zero or negative", content_type="text/plain")
 		if obj.metaData.version != 0:
-			return HttpResponseBadRequest("Version for created objects must be null or zero")
+			return HttpResponseBadRequest("Version for created objects must be null or zero", content_type="text/plain")
 		if isinstance(obj, pgmap.OsmNode):
 			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
-				return HttpResponseBadRequest("Node outside valid range")
+				return HttpResponseBadRequest("Node outside valid range", content_type="text/plain")
+		for k in obj.tags:
+			if len(k) > 255:
+				return HttpResponseBadRequest("Tag key is too long", content_type="text/plain")
+			if len(obj.tags[k]) > 255:
+				return HttpResponseBadRequest("Tag value is too long", content_type="text/plain")
 
 	return None
 
@@ -103,12 +108,17 @@ def upload_check_modify(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
 		if obj.objId <= 0:
-			return HttpResponseBadRequest("Modified object IDs must be positive")
+			return HttpResponseBadRequest("Modified object IDs must be positive", content_type="text/plain")
 		if obj.metaData.version <= 0:
-			return HttpResponseBadRequest("Version for modified objects must be specified and positive")
+			return HttpResponseBadRequest("Version for modified objects must be specified and positive", content_type="text/plain")
 		if isinstance(obj, pgmap.OsmNode):
 			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
-				return HttpResponseBadRequest("Node outside valid range")
+				return HttpResponseBadRequest("Node outside valid range", content_type="text/plain")
+		for k in obj.tags:
+			if len(k) > 255:
+				return HttpResponseBadRequest("Tag key is too long", content_type="text/plain")
+			if len(obj.tags[k]) > 255:
+				return HttpResponseBadRequest("Tag value is too long", content_type="text/plain")
 	return None
 
 def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
@@ -163,30 +173,30 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#Check changeset value is consistent
 	for i in range(block.nodes.size()):
 		if block.nodes[i].metaData.changeset != int(changesetId):
-			return HttpResponseBadRequest("Changeset does not match expected value")
+			return HttpResponseBadRequest("Changeset does not match expected value", content_type="text/plain")
 	for i in range(block.ways.size()):
 		if block.ways[i].metaData.changeset != int(changesetId):
-			return HttpResponseBadRequest("Changeset does not match expected value")
+			return HttpResponseBadRequest("Changeset does not match expected value", content_type="text/plain")
 	for i in range(block.relations.size()):
 		if block.relations[i].metaData.changeset != int(changesetId):
-			return HttpResponseBadRequest("Changeset does not match expected value")
+			return HttpResponseBadRequest("Changeset does not match expected value", content_type="text/plain")
 
 	#Get list of modified objects, check they are unique
 	modNodeIdVers, modWayIdVers, modRelationIdVers = {}, {}, {}
 	for i in range(block.nodes.size()):
 		node = block.nodes[i]
 		if node.objId in modNodeIdVers:
-			return HttpResponseBadRequest("Modified object ID is not unique")
+			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
 		modNodeIdVers[node.objId] = node.metaData.version
 	for i in range(block.ways.size()):
 		way = block.ways[i]
 		if way.objId in modWayIdVers:
-			return HttpResponseBadRequest("Modified object ID is not unique")
+			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
 		modWayIdVers[way.objId] = way.metaData.version
 	for i in range(block.relations.size()):
 		relation = block.relations[i]
 		if relation.objId in modRelationIdVers:
-			return HttpResponseBadRequest("Modified object ID is not unique")
+			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
 		modRelationIdVers[relation.objId] = relation.metaData.version
 
 	#Get list of referenced objects

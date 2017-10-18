@@ -428,6 +428,40 @@ class ChangesetUploadTestCase(TestCase):
 		dbNode = GetObj(p, "node", node.objId)
 		self.assertEqual(dbNode is None, True)
 
+	def test_upload_create_long_tag(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<create>
+		  <node changeset="{}" id="-5393" lat="50.79046578105" lon="-1.04971367626">
+		    <tag k="{}" v="{}"/>
+		  </node>
+		</create>
+		</osmChange>""".format(cs.id, "x" * 255, "y" * 255)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
+		self.assertEqual(response.status_code, 200)
+
+	def test_upload_create_overlong_tag(self):
+
+		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<create>
+		  <node changeset="{}" id="-5393" lat="50.79046578105" lon="-1.04971367626">
+		    <tag k="{}" v="{}"/>
+		  </node>
+		</create>
+		</osmChange>""".format(cs.id, "x" * 256, "y" * 256)
+
+		response = self.client.post(reverse('upload', args=(cs.id,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 400)
+
 	def test_upload_create_way(self):
 
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
