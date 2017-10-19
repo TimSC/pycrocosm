@@ -335,6 +335,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 @parser_classes((DefusedXmlParser, ))
 def create(request):
 
+	Changeset.objects.all().delete()
+
 	userRecord = request.user
 	csIn = request.data.find("changeset")
 	tags = {}
@@ -343,8 +345,12 @@ def create(request):
 	if not CheckTags(tags):
 		return HttpResponseBadRequest()
 
-	changeset = Changeset.objects.create(user=userRecord, tags=tags)
+	t = p.GetTransaction(b"EXCLUSIVE")
+	cid = t.GetAllocatedId(b"changeset")
 
+	changeset = Changeset.objects.create(id=cid, user=userRecord, tags=tags)
+
+	t.Commit()
 	return HttpResponse(changeset.id, content_type='text/plain')
 
 @csrf_exempt
