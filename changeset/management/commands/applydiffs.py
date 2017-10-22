@@ -3,6 +3,8 @@ from changeset.views import upload_update_diff_result
 import os
 import gzip
 import pgmap
+import zlib
+import tarfile
 from querymap.views import p
 
 def ProcessFile(fi):
@@ -58,22 +60,42 @@ class Command(BaseCommand):
 	help = 'Apply diffs to database'
 
 	def add_arguments(self, parser):
-		#parser.add_argument('poll_id', nargs='+', type=int)
+		parser.add_argument('path', nargs='+', type=str)
 		pass
 
 	def handle(self, *args, **options):
 
-		diffFolder = "/home/tim/Desktop/103"
-		
-		for root, dirs, files in os.walk(diffFolder):
+		diffFolder = options['path'][0]
+		if not os.path.exists(diffFolder):
+			raise CommandError('Could not find path '+diffFolder)
 
-			for fina in files:
-				ext = os.path.splitext(fina)[-1]
+		if os.path.isfile(diffFolder):
+
+			#Apply all diffs contained in a .tar.gz file
+			container = tarfile.open(diffFolder, 'r:gz')
+			for mem in container.getmembers():
+				ext = os.path.splitext(mem.name)[-1]
 				if ext != '.gz': continue
-				fullFina = os.path.join(root, fina)
-				print fullFina
-				xml = gzip.open(fullFina)
+				self.stdout.write(mem.name)
+				fi = container.extractfile(mem)
+				xml = zlib.decompress(fi.read(), zlib.MAX_WBITS|16)
 				ok = ProcessFile(xml)
 				if not ok:
-					return
+					raise CommandError("Error processing "+mem.name)
+
+		if os.path.isdir(diffFolder):
+
+			#Apply all diffs in a folder (seek recusively)
+			for root, dirs, files in os.walk(diffFolder):		
+				for fina in files:
+					ext = os.path.splitext(fina)[-1]
+					if ext != '.gz': continue
+					fullFina = os.path.join(root, fina)
+					self.stdout.write(fullFina)
+					xml = gzip.open(fullFina)
+					ok = ProcessFile(xml)
+					if not ok:
+						raise CommandError("Error processing "+fullFina)
+
+		self.stdout.write(self.style.SUCCESS('All done!'))
 

@@ -16,7 +16,9 @@ class Command(BaseCommand):
 		errStr = pgmap.PgMapError()
 		ok = t.UpdateNextIds(errStr)
 		if not ok:
-			print errStr.errStr
+			self.stdout.write(self.style.ERROR(errStr.errStr))
 
 		t.Commit()
+
+		self.stdout.write(self.style.SUCCESS('All done!'))
 
