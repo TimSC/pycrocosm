@@ -16,7 +16,6 @@ import io
 import datetime
 import time
 from pycrocosm.parsers import DefusedXmlParser, OsmDataXmlParser
-from changeset.models import Changeset
 from changeset.views import upload_block
 
 def upload_single_object(action, request, obj, objType, t):

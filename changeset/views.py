@@ -15,7 +15,6 @@ import datetime
 import pgmap
 import time
 from querymap.views import p
-from .models import Changeset
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 
 # Create your views here.
@@ -49,8 +48,8 @@ def SerializeChangesetToElement(changesetData, include_discussion=False):
 
 	for tagKey in changesetData.tags:
 		tag = ET.SubElement(changeset, "tag")
-		tag.attrib["k"] = tagKey
-		tag.attrib["v"] = changesetData.tags[tagKey]
+		tag.attrib["k"] = tagKey.decode("utf-8")
+		tag.attrib["v"] = changesetData.tags[tagKey].decode("utf-8")
 
 	if include_discussion:
 
