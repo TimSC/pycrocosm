@@ -28,24 +28,24 @@ def CheckTags(tags):
 			return False
 	return True
 
-def SerializeChangeset(changesetData, include_discussion=False):
-	root = ET.Element('osm')
-	doc = ET.ElementTree(root)
-	root.attrib["version"] = str(settings.API_VERSION)
-	root.attrib["generator"] = settings.GENERATOR
+def SerializeChangesetToElement(changesetData, include_discussion=False):
 
-	changeset = ET.SubElement(root, "changeset")
-	changeset.attrib["id"] = str(changesetData.id)
-	changeset.attrib["user"] = str(changesetData.user.username)
-	changeset.attrib["uid"] = str(changesetData.user.id)
-	changeset.attrib["created_at"] = str(changesetData.open_datetime.isoformat())
-	if not changesetData.is_open:
-		changeset.attrib["closed_at"] = str(changesetData.close_datetime.isoformat())
+	changeset = ET.Element("changeset")
+	changeset.attrib["id"] = str(changesetData.objId)
+	if len(changesetData.username) > 0:
+		changeset.attrib["user"] = str(changesetData.username)
+	if changesetData.uid != 0:
+		changeset.attrib["uid"] = str(changesetData.uid)
+	if changesetData.open_timestamp != 0:
+		changeset.attrib["created_at"] = datetime.datetime.fromtimestamp(changesetData.open_timestamp).isoformat()
+	if not changesetData.is_open and changesetData.close_timestamp != 0:
+		changeset.attrib["closed_at"] = datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat()
 	changeset.attrib["open"] = str(changesetData.is_open).lower()
-	changeset.attrib["min_lon"] = str(changesetData.min_lon)
-	changeset.attrib["min_lat"] = str(changesetData.min_lat)
-	changeset.attrib["max_lon"] = str(changesetData.max_lon)
-	changeset.attrib["max_lat"] = str(changesetData.max_lat)
+	if changesetData.bbox_set:
+		changeset.attrib["min_lon"] = str(changesetData.x1)
+		changeset.attrib["min_lat"] = str(changesetData.y1)
+		changeset.attrib["max_lon"] = str(changesetData.x2)
+		changeset.attrib["max_lat"] = str(changesetData.y2)
 
 	for tagKey in changesetData.tags:
 		tag = ET.SubElement(changeset, "tag")
@@ -64,6 +64,17 @@ def SerializeChangeset(changesetData, include_discussion=False):
 		text = ET.SubElement(comment, "text")
 		text.text = "Did you verify those street names?"
 
+	return changeset
+
+def SerializeChangesets(changesetsData, include_discussion=False):
+	root = ET.Element('osm')
+	root.attrib["version"] = str(settings.API_VERSION)
+	root.attrib["generator"] = settings.GENERATOR
+
+	for changesetData in changesetsData:
+		root.append(SerializeChangesetToElement(changesetData, include_discussion))
+
+	doc = ET.ElementTree(root)
 	sio = cStringIO.StringIO()
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
@@ -360,13 +371,21 @@ def create(request):
 def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
-	try:
-		changesetData = Changeset.objects.get(id=changesetId)
-	except Changeset.DoesNotExist:
+	t = p.GetTransaction(b"EXCLUSIVE")
+	
+	changesetData = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
+	if ret == -1:
 		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
+
+	t.Commit()
 
 	if request.method == 'GET':
-		return SerializeChangeset(changesetData, include_discussion)
+
+		return SerializeChangesets([changesetData], include_discussion)
 
 	if request.method == 'PUT':
 		
@@ -383,7 +402,7 @@ def changeset(request, changesetId):
 		changesetData.tags = tags
 		changesetData.save()
 
-		return SerializeChangeset(changesetData)
+		return SerializeChangesets([changesetData])
 
 @csrf_exempt
 @api_view(['PUT'])
@@ -407,7 +426,7 @@ def close(request, changesetId):
 	changesetData.close_datetime = datetime.datetime.now()
 	changesetData.save()
 
-	return HttpResponse("", content_type='text/plain')
+	return SerializeChangesets([changesetData])
 
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
@@ -448,7 +467,7 @@ def expand_bbox(request, changesetId):
 
 	changesetData.save()
 
-	return SerializeChangeset(changesetData)
+	return SerializeChangesets([changesetData])
 
 @api_view(['GET'])
 def list(request):
@@ -461,9 +480,17 @@ def list(request):
 	close = request.GET.get('closed', None)
 	changesets = request.GET.get('changesets', None)
 
-	cs = Changeset.objects.all()[:100]
+	changesets = pgmap.vectorchangeset()
+	errStr = pgmap.PgMapError()
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.GetChangesets(changesets, errStr)
 
-	return HttpResponse("xxx"+str(len(cs)), content_type='text/plain')
+	t.Commit()
+
+	changesetLi = []
+	for i in range(len(changesets)):
+		changesetLi.append(changesets[i])
+	return SerializeChangesets(changesetLi)
 
 @csrf_exempt
 @api_view(['POST'])
