@@ -345,23 +345,31 @@ def upload_block(action, block, changesetId, t, responseRoot,
 @parser_classes((DefusedXmlParser, ))
 def create(request):
 
-	Changeset.objects.all().delete()
-
 	userRecord = request.user
+
+	changeset = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+
 	csIn = request.data.find("changeset")
-	tags = {}
 	for tag in csIn.findall("tag"):
-		tags[tag.attrib["k"]] = tag.attrib["v"]
-	if not CheckTags(tags):
+		changeset.tags[tag.attrib["k"].encode("utf-8")] = tag.attrib["v"].encode("utf-8")
+	changeset.uid = request.user.id
+	changeset.username = request.user.username.encode("utf-8")
+
+	if not CheckTags(changeset.tags):
 		return HttpResponseBadRequest()
 
 	t = p.GetTransaction(b"EXCLUSIVE")
-	cid = t.GetAllocatedId(b"changeset")
 
-	changeset = Changeset.objects.create(id=cid, user=userRecord, tags=tags)
+	changeset.created_timestamp = int(time.time())
+
+	cid = t.CreateChangeset(changeset, errStr)
+	if cid == 0:
+		t.Abort()
+		return HttpResponseServerError(errStr.errStr)
 
 	t.Commit()
-	return HttpResponse(changeset.id, content_type='text/plain')
+	return HttpResponse(cid, content_type='text/plain')
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])

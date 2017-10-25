@@ -6,8 +6,6 @@ from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
 
-from .models import Changeset
-
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse, fromstring
 import StringIO
@@ -74,7 +72,7 @@ class ChangesetTestCase(TestCase):
 		  <osm>
 		  <changeset>
 			<tag k="created_by" v="JOSM 1.61"/>
-			<tag k="comment" v="Just adding some streetnames"/>
+			<tag k="comment" v="Just adding more streetnames"/>
 		  </changeset>
 		</osm>"""
 
@@ -117,14 +115,22 @@ class ChangesetTestCase(TestCase):
 
 		response = self.client.put(reverse('create'), self.createXml, content_type='text/xml')
 
+		if response.status_code != 200:
+			print response.content
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
 		
-		cs = Changeset.objects.get(id = cid)
-		self.assertEqual("created_by" in cs.tags, True)
-		self.assertEqual("comment" in cs.tags, True)
-		self.assertEqual(cs.tags["created_by"] == "JOSM 1.61", True)
-		self.assertEqual(cs.tags["comment"] == "Just adding some streetnames", True)
+		t = p.GetTransaction(b"ACCESS SHARE")
+
+		cs = pgmap.PgChangeset()
+		errStr = pgmap.PgMapError()
+		ret = t.GetChangeset(cid, cs, errStr)
+
+		self.assertEqual(ret > 0, True)
+		self.assertEqual(b"created_by" in cs.tags, True)
+		self.assertEqual(b"comment" in cs.tags, True)
+		self.assertEqual(cs.tags[b"created_by"] == b"JOSM 1.61", True)
+		self.assertEqual(cs.tags[b"comment"] == b"Just adding some streetnames", True)
 
 	def test_anon_create_changeset(self):
 		anonClient = Client()
