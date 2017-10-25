@@ -111,7 +111,7 @@ class ChangesetTestCase(TestCase):
 			  </way>
 			</osm>"""
 
-	def create_test_changeset(self, user, tags = None, is_open = True):
+	def create_test_changeset(self, user, tags=None, is_open=True, bbox=None):
 		if tags is None:
 			tags = {'foo': 'bar'}
 		t = p.GetTransaction(b"EXCLUSIVE")
@@ -122,7 +122,17 @@ class ChangesetTestCase(TestCase):
 		cs.username = user.username.encode("utf-8")
 		cs.uid = user.id
 		cs.is_open = is_open
+		cs.open_timestamp = int(time.time())
+		if not is_open:
+			cs.close_timestamp = int(time.time())
+		if bbox is not None:
+			cs.bbox_set=True
+			cs.x1=bbox[0]
+			cs.y1=bbox[1]
+			cs.x2=bbox[2]
+			cs.y2=bbox[3]
 		cid = t.CreateChangeset(cs, errStr);
+		cs.objId = cid
 		t.Commit()
 		del t
 		return cs
@@ -181,7 +191,7 @@ class ChangesetTestCase(TestCase):
 
 	def test_get_changeset(self):
 		teststr = u"Съешь же ещё этих мягких французских булок да выпей чаю"
-		cs = self.create_test_changeset(self.user, tags={"foo": "bar", 'test': teststr})
+		cs = self.create_test_changeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372))
 
 		anonClient = Client()
 
@@ -277,7 +287,7 @@ class ChangesetTestCase(TestCase):
 		response = anonClient.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 403)
 
-		cs2 = Changeset.objects.get(id=cs.objId)
+		cs2 = self.get_test_changeset(cs.objId)
 		self.assertEqual(cs2.is_open, True)
 
 	def test_expand_bbox(self):
