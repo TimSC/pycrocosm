@@ -216,13 +216,25 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(response.status_code, 403)
 
 	def test_close_changeset(self):
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})
+		t = p.GetTransaction(b"EXCLUSIVE")
+		cs = pgmap.PgChangeset()
+		errStr = pgmap.PgMapError()
+		cs.tags[b'foo'] = b'bar'
+		cs.username = self.user.username.encode("utf-8")
+		cs.uid = self.user.id
+		cid = t.CreateChangeset(cs, errStr);
+		t.Commit()
+		del t
 
-		response = self.client.put(reverse('close', args=(cs.id,)))
+		response = self.client.put(reverse('close', args=(cid,)))
 		self.assertEqual(response.status_code, 200)
 
-		cs2 = Changeset.objects.get(id=cs.id)
+		t = p.GetTransaction(b"ACCESS SHARE")
+		cs2 = pgmap.PgChangeset()
+		ok = t.GetChangeset(cid, cs2, errStr)
+		self.assertEqual(ok, True)
 		self.assertEqual(cs2.is_open, False)
+		t.Commit()
 
 	def test_close_changeset_double_close(self):
 		cs = Changeset.objects.create(user=self.user, tags={"foo": "bar"})

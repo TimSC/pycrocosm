@@ -415,10 +415,15 @@ def changeset(request, changesetId):
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def close(request, changesetId):
-	try:
-		changesetData = Changeset.objects.get(id=changesetId)
-	except Changeset.DoesNotExist:
+	t = p.GetTransaction(b"EXCLUSIVE")
+
+	changesetData = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
+	if ret == -1:
 		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
@@ -426,12 +431,11 @@ def close(request, changesetId):
 		response.status_code = 409
 		return response
 
-	if request.user != changesetData.user:
+	if request.user.id != changesetData.uid:
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
-	changesetData.is_open = False
-	changesetData.close_datetime = datetime.datetime.now()
-	changesetData.save()
+	t.CloseChangeset(int(changesetId), int(time.time()), errStr)
+	t.Commit()
 
 	return SerializeChangesets([changesetData])
 
@@ -445,10 +449,15 @@ def download(request, changesetId):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
-	try:
-		changesetData = Changeset.objects.get(id=changesetId)
-	except Changeset.DoesNotExist:
+	t = p.GetTransaction(b"EXCLUSIVE")
+	
+	changesetData = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
+	if ret == -1:
 		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
@@ -507,10 +516,15 @@ def upload(request, changesetId):
 	t = p.GetTransaction(b"EXCLUSIVE")
 
 	#Check changeset is open and for this user
-	try:
-		changesetData = Changeset.objects.get(id=changesetId)
-	except Changeset.DoesNotExist:
+	t = p.GetTransaction(b"EXCLUSIVE")
+	
+	changesetData = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
+	if ret == -1:
 		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
