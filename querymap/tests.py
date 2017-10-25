@@ -631,10 +631,12 @@ class QueryMapTestCase(TestCase):
 
 		u = User.objects.get(username = self.username)
 		u.delete()
+
 		errStr = pgmap.PgMapError()
 		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print errStr.errStr
+		t.Commit()
 		self.assertEqual(ok, True)
 

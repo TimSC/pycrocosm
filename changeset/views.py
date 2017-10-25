@@ -350,14 +350,17 @@ def create(request):
 	changeset = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
 
+	unicodeTags = {}
 	csIn = request.data.find("changeset")
 	for tag in csIn.findall("tag"):
-		changeset.tags[tag.attrib["k"].encode("utf-8")] = tag.attrib["v"].encode("utf-8")
+		unicodeTags[tag.attrib["k"]] = tag.attrib["v"]
+	if not CheckTags(unicodeTags):
+		return HttpResponseBadRequest("Invalid tags")
+
+	for tag in unicodeTags:
+		changeset.tags[tag.encode("utf-8")] = unicodeTags[tag].encode("utf-8")
 	changeset.uid = request.user.id
 	changeset.username = request.user.username.encode("utf-8")
-
-	if not CheckTags(changeset.tags):
-		return HttpResponseBadRequest()
 
 	t = p.GetTransaction(b"EXCLUSIVE")
 
@@ -396,17 +399,27 @@ def changeset(request, changesetId):
 
 	if request.method == 'PUT':
 		
-		if request.user != changesetData.user:
+		if request.user.id != changesetData.uid:
 			return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
-		csIn = request.data.find("changeset")
-		tags = {}
-		for tag in csIn.findall("tag"):
-			tags[tag.attrib["k"]] = tag.attrib["v"]
-		if not CheckTags(tags):
-			return HttpResponseBadRequest()
+		if not changesetData.is_open:
+			err = "The changeset {} was closed at {}.".format(changesetData.objId, 
+				datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
+			response = HttpResponse(err, content_type="text/plain")
+			response.status_code = 409
+			return response
 
-		changesetData.tags = tags
+		unicodeTags = {}
+		csIn = request.data.find("changeset")
+		for tag in csIn.findall("tag"):
+			unicodeTags[tag.attrib["k"]] = tag.attrib["v"]
+		if not CheckTags(unicodeTags):
+			return HttpResponseBadRequest("Invalid tags")
+
+		changesetData.tags = {}
+		for tag in unicodeTags:
+			changesetData.tags[tag.encode("utf-8")] = unicodeTags[tag].encode("utf-8")
+
 		changesetData.save()
 
 		return SerializeChangesets([changesetData])
@@ -426,7 +439,8 @@ def close(request, changesetId):
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		err = "The changeset {} was closed at {}.".format(changesetData.objId, 
+			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
 		return response
@@ -459,14 +473,15 @@ def expand_bbox(request, changesetId):
 	if ret == 0:	
 		return HttpResponseServerError(errStr.errStr)
 
+	if request.user != changesetData.user:
+		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
+
 	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		err = "The changeset {} was closed at {}.".format(changesetData.objId, 
+			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
 		return response
-
-	if request.user != changesetData.user:
-		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	for node in request.data.findall("node"):
 		if not changesetData.bbox_set:
