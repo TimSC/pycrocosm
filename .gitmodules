@@ -1,0 +1,3 @@
+[submodule "pgmap"]
+	path = pgmap
+	url = https://github.com/TimSC/pgmap.git
