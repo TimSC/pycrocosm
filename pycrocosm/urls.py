@@ -16,6 +16,7 @@ Including another URLconf
 from django.conf.urls import include, url
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
+from oauth_provider import views as oauth_views
 
 urlpatterns = [
 	url(r'api/0.6/map', include('querymap.urls')),
@@ -28,5 +29,8 @@ urlpatterns = [
 	url(r'accounts/', include('django.contrib.auth.urls')),
 	url(r'register/', include('register.urls')),
 	url(r'replication/', include('replicate.urls')),
+    url(r'^oauth/authorize$',     oauth_views.user_authorization, name='oauth_user_authorization'),
+    url(r'^oauth/access_token$',  oauth_views.access_token,       name='oauth_access_token'),
+    url(r'oauth/', include('oauthquirks.urls')),
 	url(r'', include('frontpage.urls')),
 ]
