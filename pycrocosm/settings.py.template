@@ -79,8 +79,15 @@ TEMPLATES = [
 	},
 ]
 
-WSGI_APPLICATION = 'pycrocosm.wsgi.application'
+REST_FRAMEWORK = {
+	'DEFAULT_AUTHENTICATION_CLASSES': (
+		'rest_framework.authentication.SessionAuthentication',
+		'rest_framework.authentication.BasicAuthentication',
+		'oauth_provider.authentication.OAuthAuthentication',
+	)
+}
 
+WSGI_APPLICATION = 'pycrocosm.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/1.11/ref/settings/#databases

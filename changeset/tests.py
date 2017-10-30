@@ -170,6 +170,8 @@ class ChangesetTestCase(TestCase):
 	def test_anon_create_changeset(self):
 		anonClient = Client()
 		response = anonClient.put(reverse('create'), self.createXml, content_type='text/xml')
+		if response.status_code != 403:
+			print response.content
 		self.assertEqual(response.status_code, 403)
 
 	def test_create_changeset_unicodetags(self):
@@ -293,6 +295,8 @@ class ChangesetTestCase(TestCase):
 
 		anonClient = Client()
 		response = anonClient.put(reverse('close', args=(cs.objId,)))
+		if response.status_code != 403:
+			print response.content
 		self.assertEqual(response.status_code, 403)
 
 		cs2 = self.get_test_changeset(cs.objId)
