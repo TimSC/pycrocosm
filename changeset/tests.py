@@ -261,9 +261,10 @@ class ChangesetTestCase(TestCase):
 
 		t = p.GetTransaction(b"ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
-		ok = t.GetChangeset(cid, cs2, errStr)
+		errStr = pgmap.PgMapError()
+		ret = t.GetChangeset(cs.objId, cs2, errStr)
 		t.Commit()
-		self.assertEqual(ok, True)
+		self.assertEqual(ret != 0, True)
 		self.assertEqual(cs2.is_open, False)
 
 	def test_close_changeset_double_close(self):
@@ -272,13 +273,18 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
-		cs2 = Changeset.objects.get(id=cs.objId)
+		t = p.GetTransaction(b"ACCESS SHARE")
+		cs2 = pgmap.PgChangeset()
+		errStr = pgmap.PgMapError()
+		ret = t.GetChangeset(cs.objId, cs2, errStr)
+		t.Commit()
+
 		self.assertEqual(cs2.is_open, False)
 
 		response = self.client.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.id, cs2.close_datetime.isoformat()))
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.objId, datetime.datetime.fromtimestamp(cs2.close_timestamp).isoformat()))
 
 	def test_close_changeset_anon(self):
 		cs = self.create_test_changeset(self.user)

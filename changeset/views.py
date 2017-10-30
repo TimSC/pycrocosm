@@ -464,7 +464,7 @@ def download(request, changesetId):
 @parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
 	t = p.GetTransaction(b"EXCLUSIVE")
-	
+
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
@@ -473,7 +473,7 @@ def expand_bbox(request, changesetId):
 	if ret == 0:	
 		return HttpResponseServerError(errStr.errStr)
 
-	if request.user != changesetData.user:
+	if request.user.id != changesetData.uid:
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	if not changesetData.is_open:
@@ -497,6 +497,7 @@ def expand_bbox(request, changesetId):
 			if node.attrib["lon"] > changesetData.max_lon: changesetData.max_lon = node.attrib["lon"]
 
 	changesetData.save()
+	t.commit()
 
 	return SerializeChangesets([changesetData])
 
@@ -528,7 +529,6 @@ def list(request):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((OsmChangeXmlParser, ))
 def upload(request, changesetId):
-	t = p.GetTransaction(b"EXCLUSIVE")
 
 	#Check changeset is open and for this user
 	t = p.GetTransaction(b"EXCLUSIVE")
@@ -547,7 +547,7 @@ def upload(request, changesetId):
 		response.status_code = 409
 		return response
 
-	if request.user != changesetData.user:
+	if request.user.id != changesetData.uid:
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
