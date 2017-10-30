@@ -56,6 +56,32 @@ def GetObj(p, objType, objId):
 		return pgmap.OsmRelation(objs[0])
 	return None
 
+def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
+	if tags is None:
+		tags = {'foo': 'bar'}
+	t = p.GetTransaction(b"EXCLUSIVE")
+	cs = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	for k in tags:
+		cs.tags[k.encode("utf-8")] = tags[k].encode("utf-8")
+	cs.username = user.username.encode("utf-8")
+	cs.uid = user.id
+	cs.is_open = is_open
+	cs.open_timestamp = int(time.time())
+	if not is_open:
+		cs.close_timestamp = int(time.time())
+	if bbox is not None:
+		cs.bbox_set=True
+		cs.x1=bbox[0]
+		cs.y1=bbox[1]
+		cs.x2=bbox[2]
+		cs.y2=bbox[3]
+	cid = t.CreateChangeset(cs, errStr);
+	cs.objId = cid
+	t.Commit()
+	del t
+	return cs
+
 # Create your tests here.
 # alter user microcosm with createdb;
 # python manage.py test changeset --keep
@@ -112,32 +138,6 @@ class ChangesetTestCase(TestCase):
 			  </way>
 			</osm>"""
 
-	def create_test_changeset(self, user, tags=None, is_open=True, bbox=None):
-		if tags is None:
-			tags = {'foo': 'bar'}
-		t = p.GetTransaction(b"EXCLUSIVE")
-		cs = pgmap.PgChangeset()
-		errStr = pgmap.PgMapError()
-		for k in tags:
-			cs.tags[k.encode("utf-8")] = tags[k].encode("utf-8")
-		cs.username = user.username.encode("utf-8")
-		cs.uid = user.id
-		cs.is_open = is_open
-		cs.open_timestamp = int(time.time())
-		if not is_open:
-			cs.close_timestamp = int(time.time())
-		if bbox is not None:
-			cs.bbox_set=True
-			cs.x1=bbox[0]
-			cs.y1=bbox[1]
-			cs.x2=bbox[2]
-			cs.y2=bbox[3]
-		cid = t.CreateChangeset(cs, errStr);
-		cs.objId = cid
-		t.Commit()
-		del t
-		return cs
-
 	def get_test_changeset(self, cid):
 		t = p.GetTransaction(b"ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
@@ -192,7 +192,7 @@ class ChangesetTestCase(TestCase):
 
 	def test_get_changeset(self):
 		teststr = u"Съешь же ещё этих мягких французских булок да выпей чаю"
-		cs = self.create_test_changeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372))
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372))
 
 		anonClient = Client()
 
@@ -231,7 +231,7 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(response.status_code, 404)
 
 	def test_put_changeset(self):
-		cs = self.create_test_changeset(self.user, tags={"foo": "bar", "man": "child"})
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", "man": "child"})
 
 		response = self.client.put(reverse('changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
@@ -248,14 +248,14 @@ class ChangesetTestCase(TestCase):
 				self.assertEqual(tag.attrib["v"], "JOSM 1.61")
 
 	def test_put_changeset_anon(self):
-		cs = self.create_test_changeset(self.user, tags={"foo": "bar", "man": "child"})
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", "man": "child"})
 
 		anonClient = Client()
 		response = anonClient.put(reverse('changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_close_changeset(self):
-		cs = self.create_test_changeset(self.user)
+		cs = CreateTestChangeset(self.user)
 
 		response = self.client.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
@@ -269,7 +269,7 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(cs2.is_open, False)
 
 	def test_close_changeset_double_close(self):
-		cs = self.create_test_changeset(self.user)
+		cs = CreateTestChangeset(self.user)
 
 		response = self.client.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
@@ -285,10 +285,11 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.objId, datetime.datetime.fromtimestamp(cs2.close_timestamp).isoformat()))
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.objId, 
+			datetime.datetime.fromtimestamp(cs2.close_timestamp).isoformat()))
 
 	def test_close_changeset_anon(self):
-		cs = self.create_test_changeset(self.user)
+		cs = CreateTestChangeset(self.user)
 
 		anonClient = Client()
 		response = anonClient.put(reverse('close', args=(cs.objId,)))
@@ -298,7 +299,7 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(cs2.is_open, True)
 
 	def test_expand_bbox(self):
-		cs = self.create_test_changeset(self.user)
+		cs = CreateTestChangeset(self.user)
 
 		response = self.client.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
 			content_type='text/xml')
@@ -327,7 +328,7 @@ class ChangesetTestCase(TestCase):
 		t.Commit()
 
 	def test_expand_bbox_anon(self):
-		cs = self.create_test_changeset(self.user)
+		cs = CreateTestChangeset(self.user)
 
 		anonClient = Client()
 		response = anonClient.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
@@ -335,13 +336,14 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(response.status_code, 403)
 
 	def test_expand_bbox_closed(self):
-		cs = self.create_test_changeset(self.user, is_open=False)
+		cs = CreateTestChangeset(self.user, is_open=False)
 
 		response = self.client.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.objId, cs.close_datetime.isoformat()))
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.objId, 
+			datetime.datetime.fromtimestamp(cs.close_timestamp).isoformat()))
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
@@ -379,7 +381,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_create_single_node(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<create>
@@ -409,7 +411,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_modify_single_node(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "interstellar"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
@@ -440,7 +442,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_modify_single_node_wrong_version(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "interstellar"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
@@ -457,7 +459,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_modify_single_node_wrong_user(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "apollo"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "apollo"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
@@ -474,7 +476,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_delete_single_node(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "interstellar"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
@@ -499,7 +501,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_create_long_tag(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<create>
@@ -517,7 +519,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_create_overlong_tag(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<create>
@@ -533,7 +535,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_create_way(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "invade"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<create>
@@ -570,7 +572,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_create_complex(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 
@@ -637,7 +639,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_delete_node_used_by_way(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
@@ -655,7 +657,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_delete_node_used_by_relation(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
@@ -674,7 +676,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_delete_node_used_by_way(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
@@ -694,7 +696,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_delete_node_used_by_relation(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
@@ -714,7 +716,7 @@ class ChangesetUploadTestCase(TestCase):
 
 	def test_upload_multi_action(self):
 
-		cs = Changeset.objects.create(user=self.user, tags={"foo": "me"}, is_open=True)
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)

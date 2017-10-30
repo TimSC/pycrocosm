@@ -391,9 +391,8 @@ def changeset(request, changesetId):
 	if ret == 0:	
 		return HttpResponseServerError(errStr.errStr)
 
-	t.Commit()
-
 	if request.method == 'GET':
+		t.Commit()
 
 		return SerializeChangesets([changesetData], include_discussion)
 
@@ -416,11 +415,16 @@ def changeset(request, changesetId):
 		if not CheckTags(unicodeTags):
 			return HttpResponseBadRequest("Invalid tags")
 
-		changesetData.tags = {}
+		changesetData.tags = pgmap.mapstringstring()
 		for tag in unicodeTags:
 			changesetData.tags[tag.encode("utf-8")] = unicodeTags[tag].encode("utf-8")
 
-		changesetData.save()
+		ok = t.UpdateChangeset(changesetData, errStr)
+		if not ok:
+			t.Abort()
+			return HttpResponseServerError(errStr.errStr)
+
+		t.Commit()
 
 		return SerializeChangesets([changesetData])
 
