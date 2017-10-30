@@ -29,18 +29,22 @@ def upload_single_object(action, request, obj, objType, t):
 	changesetId = obj.metaData.changeset
 
 	#Check changeset is open and for this user
-	try:
-		changesetData = Changeset.objects.get(id=changesetId)
-	except Changeset.DoesNotExist:
-		return HttpResponseNotFound("No such changeset")
+	changesetData = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
+	if ret == -1:
+		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		err = "The changeset {} was closed at {}.".format(changesetData.id, 
+			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
 		return response
 
-	if request.user != changesetData.user:
+	if request.user.id != changesetData.uid:
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
