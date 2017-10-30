@@ -17,13 +17,13 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
    source pgmapenv/bin/activate
 
-Unhelpfully, django-oauth-plus 2.2.9 (latest at time of writing) is not compatible with Django 1.11.6, so compile it from source:
+Unhelpfully, django-oauth-plus 2.2.9 (latest at time of writing) is not compatible with Django 1.11.6. I've also added some fixes for JOSM quirks, so compile it from source:
 
-   wget https://bitbucket.org/david/django-oauth-plus/get/tip.tar.gz
+   wget https://bitbucket.org/TimSCUK/django-oauth-plus/get/pluspr19.tar.gz
 
-   tar xvf tip.tar.gz
+   tar xvf pluspr19.tar.gz
 
-   cd david-django-oauth-plus-.... 
+   cd TimSCUK-django-oauth-plus-.... 
 
    python setup.py install
 
