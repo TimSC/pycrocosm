@@ -315,19 +315,19 @@ class ChangesetTestCase(TestCase):
 		t.GetChangeset(cs.objId, cs2, errStr)
 
 		self.assertEqual(cs2.bbox_set, True)
-		self.assertEqual(abs(cs2.y1 - 50.2964626834) < 1e-6, True) 
-		self.assertEqual(abs(cs2.y2 - 51.7985258134) < 1e-6, True) 
-		self.assertEqual(abs(cs2.x1 + 3.08999061719) < 1e-6, True) 
-		self.assertEqual(abs(cs2.x2 + 5.24880409375) < 1e-6, True)
+		self.assertEqual(abs(cs2.y1 - 50.2964626834) < 1e-5, True) 
+		self.assertEqual(abs(cs2.y2 - 51.7985258134) < 1e-5, True) 
+		self.assertEqual(abs(cs2.x1 + 5.24880409375) < 1e-5, True)
+		self.assertEqual(abs(cs2.x2 + 3.08999061719) < 1e-5, True) 
 
 		xml = fromstring(response.content)
 		self.assertEqual(xml.tag, "osm")
 		csout = xml.find("changeset")
 		self.assertEqual(int(csout.attrib["id"]) == cs.objId, True)
-		self.assertEqual(abs(float(csout.attrib["min_lat"]) - 50.2964626834) < 1e-6, True)
-		self.assertEqual(abs(float(csout.attrib["max_lat"]) - 51.7985258134) < 1e-6, True)
-		self.assertEqual(abs(float(csout.attrib["min_lon"]) + 3.08999061719) < 1e-6, True)
-		self.assertEqual(abs(float(csout.attrib["max_lon"]) + 5.24880409375) < 1e-6, True)
+		self.assertEqual(abs(float(csout.attrib["min_lat"]) - 50.2964626834) < 1e-5, True)
+		self.assertEqual(abs(float(csout.attrib["max_lat"]) - 51.7985258134) < 1e-5, True)
+		self.assertEqual(abs(float(csout.attrib["min_lon"]) + 5.24880409375) < 1e-5, True)
+		self.assertEqual(abs(float(csout.attrib["max_lon"]) + 3.08999061719) < 1e-5, True)
 
 		t.Commit()
 

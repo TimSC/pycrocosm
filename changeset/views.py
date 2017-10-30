@@ -489,16 +489,16 @@ def expand_bbox(request, changesetId):
 
 	for node in request.data.findall("node"):
 		if not changesetData.bbox_set:
-			changesetData.min_lat = node.attrib["lat"]
-			changesetData.max_lat = node.attrib["lat"]
-			changesetData.min_lon = node.attrib["lon"]
-			changesetData.max_lon = node.attrib["lon"]
+			changesetData.y1 = float(node.attrib["lat"])
+			changesetData.y2 = float(node.attrib["lat"])
+			changesetData.x1 = float(node.attrib["lon"])
+			changesetData.x2 = float(node.attrib["lon"])
 			changesetData.bbox_set = True
 		else:
-			if node.attrib["lat"] < changesetData.min_lat: changesetData.min_lat = node.attrib["lat"]
-			if node.attrib["lat"] > changesetData.max_lat: changesetData.max_lat = node.attrib["lat"]
-			if node.attrib["lon"] < changesetData.min_lon: changesetData.min_lon = node.attrib["lon"]
-			if node.attrib["lon"] > changesetData.max_lon: changesetData.max_lon = node.attrib["lon"]
+			if float(node.attrib["lat"]) < changesetData.y1: changesetData.y1 = float(node.attrib["lat"])
+			if float(node.attrib["lat"]) > changesetData.y2: changesetData.y2 = float(node.attrib["lat"])
+			if float(node.attrib["lon"]) < changesetData.x1: changesetData.x1 = float(node.attrib["lon"])
+			if float(node.attrib["lon"]) > changesetData.x2: changesetData.x2 = float(node.attrib["lon"])
 
 	ok = t.UpdateChangeset(changesetData, errStr)
 	if not ok:
