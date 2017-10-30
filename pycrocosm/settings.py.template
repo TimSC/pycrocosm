@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 	'register.apps.RegisterConfig',
 	'frontpage.apps.FrontpageConfig',
 	'replicate.apps.ReplicateConfig',
+	'oauth.apps.OauthConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
@@ -166,7 +167,7 @@ APPEND_SLASH = False
 
 #OAuth settings
 
-#OAUTH_AUTHORIZE_VIEW = 'myapp.views.oauth_authorize'
+OAUTH_AUTHORIZE_VIEW = 'oauth.views.oauth_authorize'
 OAUTH_PROVIDER_SECRET_SIZE = 1024
 OAUTH_PROVIDER_CONSUMER_KEY_SIZE = 1024
 OAUTH_PROVIDER_OUT_OF_BAND = ["oob", ""]
