@@ -48,6 +48,7 @@ INSTALLED_APPS = [
 	'django.contrib.messages',
 	'django.contrib.staticfiles',
 	'rest_framework',
+	'oauth_provider',
 ]
 
 MIDDLEWARE = [
@@ -155,6 +156,13 @@ LOGIN_REDIRECT_URL = '/'
 
 #Stop django adding slashes to URLs that are missing
 APPEND_SLASH = False
+
+#OAuth settings
+
+#OAUTH_AUTHORIZE_VIEW = 'myapp.views.oauth_authorize'
+OAUTH_PROVIDER_SECRET_SIZE = 1024
+OAUTH_PROVIDER_CONSUMER_KEY_SIZE = 1024
+OAUTH_PROVIDER_OUT_OF_BAND = ["oob", ""]
 
 # Map server settings
 
