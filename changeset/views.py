@@ -496,8 +496,12 @@ def expand_bbox(request, changesetId):
 			if node.attrib["lon"] < changesetData.min_lon: changesetData.min_lon = node.attrib["lon"]
 			if node.attrib["lon"] > changesetData.max_lon: changesetData.max_lon = node.attrib["lon"]
 
-	changesetData.save()
-	t.commit()
+	ok = t.UpdateChangeset(changesetData, errStr)
+	if not ok:
+		t.Abort()
+		return HttpResponseServerError(errStr.errStr)
+
+	t.Commit()
 
 	return SerializeChangesets([changesetData])
 

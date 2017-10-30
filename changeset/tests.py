@@ -13,6 +13,7 @@ import pgmap
 import gc
 import sys
 import time
+import datetime
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation
@@ -303,12 +304,16 @@ class ChangesetTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
-		cs2 = Changeset.objects.get(id=cs.objId)
+		t = p.GetTransaction(b"ACCESS SHARE")
+		cs2 = pgmap.PgChangeset()
+		errStr = pgmap.PgMapError()
+		t.GetChangeset(cs.objId, cs2, errStr)
+
 		self.assertEqual(cs2.bbox_set, True)
-		self.assertEqual(abs(cs2.min_lat - 50.2964626834) < 1e-6, True) 
-		self.assertEqual(abs(cs2.max_lat - 51.7985258134) < 1e-6, True) 
-		self.assertEqual(abs(cs2.min_lon + 3.08999061719) < 1e-6, True) 
-		self.assertEqual(abs(cs2.max_lon + 5.24880409375) < 1e-6, True)
+		self.assertEqual(abs(cs2.y1 - 50.2964626834) < 1e-6, True) 
+		self.assertEqual(abs(cs2.y2 - 51.7985258134) < 1e-6, True) 
+		self.assertEqual(abs(cs2.x1 + 3.08999061719) < 1e-6, True) 
+		self.assertEqual(abs(cs2.x2 + 5.24880409375) < 1e-6, True)
 
 		xml = fromstring(response.content)
 		self.assertEqual(xml.tag, "osm")
@@ -318,6 +323,8 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(abs(float(csout.attrib["max_lat"]) - 51.7985258134) < 1e-6, True)
 		self.assertEqual(abs(float(csout.attrib["min_lon"]) + 3.08999061719) < 1e-6, True)
 		self.assertEqual(abs(float(csout.attrib["max_lon"]) + 5.24880409375) < 1e-6, True)
+
+		t.Commit()
 
 	def test_expand_bbox_anon(self):
 		cs = self.create_test_changeset(self.user)
