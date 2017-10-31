@@ -7,7 +7,7 @@
 <h3>Client applications</h3>
 
 {% for rec in consumers %}
-<form method="POST"><p>{{ rec }} 
+<form method="POST"><p>Consumer {{ rec.name }}  with key {{ rec.key }} and secret {{ rec.secret }} 
 {% if rec.user == user %}
 {% csrf_token %}
 <input type="hidden" name="key" value="{{rec.key}}"/>

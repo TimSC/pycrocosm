@@ -49,8 +49,11 @@ def manage(request):
 			consumerForm = AddProviderForm(request.POST)
 
 			if consumerForm.is_valid():
+
 				try:
-					consumer = oauth_models.Consumer(**consumerForm.cleaned_data)
+					consumer = oauth_models.Consumer(key=get_random_string(16),
+						secret = get_random_string(40),
+						**consumerForm.cleaned_data)
 					consumer.user = request.user
 					consumer.status = oauth_consts.ACCEPTED #Hopefully not too trusting
 					consumer.save()
@@ -81,8 +84,7 @@ def manage(request):
 				token.delete()
 
 	if consumerForm is None:
-		consumerForm = AddProviderForm(initial={'key':get_random_string(16),
-			'secret':get_random_string(64)})
+		consumerForm = AddProviderForm()
 
 	publicConsumers = oauth_models.Consumer.objects.filter(user = None)
 	userConsumers = oauth_models.Consumer.objects.filter(user = request.user)
