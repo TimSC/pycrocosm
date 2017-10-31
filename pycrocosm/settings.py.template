@@ -28,7 +28,6 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -103,7 +102,7 @@ DATABASES = {
 		'PASSWORD': 'wGegr5NFTTzZ',
 		'HOST': '127.0.0.1',
 		'PORT': '5432',
-	}
+	},
 }
 
 MAP_DATABASE = {
@@ -172,6 +171,7 @@ OAUTH_PROVIDER_SECRET_SIZE = 1024
 OAUTH_PROVIDER_CONSUMER_KEY_SIZE = 1024
 OAUTH_PROVIDER_OUT_OF_BAND = ["oob", ""]
 OAUTH_PROVIDER_ENABLE_VERIFIER = False
+OAUTH_CALLBACK_VIEW = 'oauth.views.oauth_callback'
 
 # Map server settings
 
