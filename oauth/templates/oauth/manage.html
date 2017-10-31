@@ -41,3 +41,9 @@
 </p></form>
 {% endfor %}
 
+<h3>OAuth 1.0a URLs</h3>
+
+<p><a href="{%url 'oauth_request_token' %}">Request token</a> <a href="{%url 'oauth_user_authorization' %}">Authorize token</a> <a href="{%url 'oauth_access_token' %}">Access token</a></p>
+
+<p><a href="{% url 'frontpage:index' %}">Front page</a></p>
+

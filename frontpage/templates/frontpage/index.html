@@ -2,19 +2,22 @@
 
 <p>This server is current in beta. Please test functionality but any edits will probably be lost eventually.</p>
 
-<p>Api: <a href="{{ apibase|safe }}">{{ apibase }}</a></p>
+<p>Api: <a href="{% url 'api:apibase' %}">{% url 'api:apibase' %}</a></p>
 
 
 {% if user.is_authenticated %}
 
 <p>Hi {{ user.username }}</p>
 
-<p><a href="/accounts/logout/">Log out</a></p>
+<p><a href="{% url 'oauth:oauth_manage' %}">OAuth settings</a></p>
+
+<p><a href="{% url 'accounts:logout' %}">Log out</a></p>
 
 {% else %}
-<p><a href="/register/">Register</a></p>
+<p><a href="{% url register %}">Register</a></p>
 
-<p><a href="/accounts/login/">Log in</a></p>
+<p><a href="{% url 'accounts:login' %}">Log in</a></p>
 {% endif %}
 
-<p><a href="/replication/">Replication data</a></p>
+<p><a href="{% url 'replication:replicate' %}">Replication data</a></p>
+
