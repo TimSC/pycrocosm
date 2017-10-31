@@ -1,0 +1,36 @@
+<h2>OAuth Settings</h2>
+
+{% for err_str in err_strs %}
+<p><strong>{{ err_str }}</strong></p>
+{% endfor %}
+
+<h3>Client applications</h3>
+
+{% for rec in consumers %}
+<p>{{ rec }} 
+{% if rec.user == user %}
+Delete
+{% endif %}
+</p>
+{% endfor %}
+
+<p>Add application</p>
+
+<form method="post">
+{% csrf_token %}
+<table>
+{{ consumer_form }}
+</table>
+<p><input type="submit" value="Add"/></p>
+</form>
+
+<h3>Tokens</h3>
+
+{% for rec in tokens %}
+<p>{{ rec }} 
+{% if rec.user == user %}
+Delete
+{% endif %}
+</p>
+{% endfor %}
+
