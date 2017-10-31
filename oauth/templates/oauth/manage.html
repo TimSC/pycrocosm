@@ -7,30 +7,37 @@
 <h3>Client applications</h3>
 
 {% for rec in consumers %}
-<p>{{ rec }} 
+<form method="POST"><p>{{ rec }} 
 {% if rec.user == user %}
-Delete
+{% csrf_token %}
+<input type="hidden" name="key" value="{{rec.key}}"/>
+<input type="hidden" name="action" value="deleteconsumer"/>
+<input type="submit" value="Delete"/>
 {% endif %}
-</p>
+</p></form>
 {% endfor %}
 
 <p>Add application</p>
 
-<form method="post">
+<form method="POST">
 {% csrf_token %}
 <table>
 {{ consumer_form }}
 </table>
+<input type="hidden" name="action" value="addconsumer"/>
 <p><input type="submit" value="Add"/></p>
 </form>
 
 <h3>Tokens</h3>
 
 {% for rec in tokens %}
-<p>{{ rec }} 
+<form method="POST"><p>{{ rec }} 
 {% if rec.user == user %}
-Delete
+{% csrf_token %}
+<input type="hidden" name="key" value="{{rec.key}}"/>
+<input type="hidden" name="action" value="deletetoken"/>
+<input type="submit" value="Delete"/>
 {% endif %}
-</p>
+</p></form>
 {% endfor %}
 

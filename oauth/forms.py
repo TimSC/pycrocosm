@@ -7,3 +7,9 @@ class AddProviderForm(forms.Form):
 	key = forms.CharField(label='Key', max_length=settings.OAUTH_PROVIDER_CONSUMER_KEY_SIZE, min_length=16)
 	secret = forms.CharField(label='Secret', max_length=settings.OAUTH_PROVIDER_SECRET_SIZE, min_length=16)
 
+class RemoveProviderForm(forms.Form):
+	key = forms.CharField(label='Key', max_length=1024)
+
+class RemoveTokenForm(forms.Form):
+	key = forms.CharField(label='Key', max_length=1024)
+
