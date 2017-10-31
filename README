@@ -43,7 +43,9 @@ Install the rest of the dependencies
 
 Update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY.
 
-   python manage.py migratedb
+   python manage.py makemigrations
+
+   python manage.py migrate
 
    python manage.py runserver
 

@@ -22,6 +22,7 @@ def oauth_authorize(request, token, callback, params):
 		'form': form,
 		'token': token })
 
+@api_view(['GET', 'POST'])
 @permission_classes((IsAuthenticated, ))
 def oauth_callback(request, **args):
 	if 'error' in args:
@@ -29,6 +30,7 @@ def oauth_callback(request, **args):
 
 	return HttpResponse("OAuth token authorized. Please go back to your OAuth client.")
 
+@api_view(['GET', 'POST'])
 @permission_classes((IsAuthenticated, ))
 def manage(request):
 
@@ -53,7 +55,8 @@ def manage(request):
 					errStrs.append(str(err))
 
 	else:
-		consumerForm = forms.AddProviderForm(initial={'key':get_random_string(16)})
+		consumerForm = forms.AddProviderForm(initial={'key':get_random_string(16),
+			'secret':get_random_string(64)})
 
 	publicConsumers = oauth_models.Consumer.objects.filter(user = None)
 	userConsumers = oauth_models.Consumer.objects.filter(user = request.user)
