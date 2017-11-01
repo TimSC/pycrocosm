@@ -264,7 +264,7 @@ class QueryMapTestCase(TestCase):
 		self.assertEqual(ok, True)
 		return relation
 		
-	def delete_object(self, objIn):
+	def delete_object(self, objIn, tIn = None):
 		if isinstance(objIn, pgmap.OsmNode):
 			obj = pgmap.OsmNode()
 		elif isinstance(objIn, pgmap.OsmWay):
@@ -297,14 +297,21 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-		if not ok:
-			t.Abort()
-			print errStr.errStr
+		if tIn is not None:
+			t = tIn
 		else:
-			t.Commit()
+			t = p.GetTransaction(b"EXCLUSIVE")
+
+		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+		
+		if tIn is None:
+			if not ok:
+				t.Abort()
+				print errStr.errStr
+			else:
+				t.Commit()
 		self.assertEqual(ok, True)
+		return ok
 
 	def find_object_ids(self, data):
 		nodeIdSet = set()
@@ -582,14 +589,19 @@ class QueryMapTestCase(TestCase):
 		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
+		
+		for candidateId in candidateIds:
 
-		#TODO Improve check for parents of relation?
-
-		if len(candidateIds) > 0:
+			#Iterate over
 			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
-			relationObjToMod = relationIdDict[candidateIds[0]]
+			relationObjToMod = relationIdDict[candidateId]
 
+			#Skip relations with zero members
 			refTypeStrs = list(relationObjToMod.refTypeStrs)
+			if len(refTypeStrs) == 0:
+				continue
+
+			#Do modification by appending first member as a new last member			
 			refTypeStrs.append(refTypeStrs[0])
 			refIds = list(relationObjToMod.refIds)
 			refIds.append(refIds[0])
@@ -597,8 +609,9 @@ class QueryMapTestCase(TestCase):
 			refRoles.append(refRoles[0])
 			modRelation = self.modify_relation(relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})
 			self.check_relation_in_query(modRelation, self.roi, True)
-		else:
-			print "No free relations in ROI for testing"
+			return #Success!
+		
+		print "No free relations in ROI for testing"
 
 	def test_delete_static_relation(self):
 
@@ -611,16 +624,31 @@ class QueryMapTestCase(TestCase):
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
 
-		#TODO Improve check for parents of relation?
+		t = p.GetTransaction(b"EXCLUSIVE")
 
-		if len(candidateIds) > 0:
+		#Try to find a suitable candidate for deletion
+		for candidateId in candidateIds:
+
+			#Use first object among candidates
 			nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(data)
-			relationObjToDel = relationIdDict[candidateIds[0]]
+			relationObjToDel = relationIdDict[candidateId]
 
-			self.delete_object(relationObjToDel)
+			#Check for parents of relation, skip if found
+			parentData = pgmap.OsmData()
+			t.GetRelationsForObjs(b"relation", [int(candidateId)], parentData)
+			if len(parentData.relations) > 0:
+				continue
+
+			ok = self.delete_object(relationObjToDel, t)
+			if not ok:
+				t.Abort()
+			self.assertEqual(ok, True)
+			t.Commit()
 			self.check_relation_in_query(relationObjToDel, self.roi, False)
-		else:
-			print "No free relations in ROI for testing"
+			return #Success!
+		
+		t.Commit()
+		print "No free relations (with no parent relations) in ROI for testing"
 
 	def tearDown(self):
 		#Swig based transaction object is not freed if an exception is thrown in python view code
