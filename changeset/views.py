@@ -364,7 +364,7 @@ def create(request):
 
 	t = p.GetTransaction(b"EXCLUSIVE")
 
-	changeset.created_timestamp = int(time.time())
+	changeset.open_timestamp = int(time.time())
 
 	cid = t.CreateChangeset(changeset, errStr)
 	if cid == 0:

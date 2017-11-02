@@ -39,7 +39,7 @@ Install the rest of the dependencies
 
    cd ..
 
-   cp pycrocosm/settings.py.template pycrocosm.settings
+   cp pycrocosm/settings.py.template pycrocosm/settings.py
 
 Update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY.
 
