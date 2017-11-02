@@ -332,11 +332,15 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
-	
+
+	#Update diff result	
 	upload_update_diff_result(action, "node", block.nodes, createdNodeIds, responseRoot)
 	upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
 	upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
 	
+	#Update changeset bbox based on edits
+	#TODO
+
 	return True
 
 @csrf_exempt
