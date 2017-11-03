@@ -170,6 +170,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		ret = upload_check_modify(block.relations)
 		if ret is not None: return ret
 
+		#Increment version numbers for modified objects
 		for i in range(block.nodes.size()):
 			block.nodes[i].metaData.version += 1
 		for i in range(block.ways.size()):
@@ -192,22 +193,22 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			return HttpResponseBadRequest("Changeset does not match expected value", content_type="text/plain")
 
 	#Get list of modified objects, check they are unique
-	modNodeIdVers, modWayIdVers, modRelationIdVers = {}, {}, {}
+	modNodeIdSet, modWayIdSet, modRelationIdSet = set(), set(), set()
 	for i in range(block.nodes.size()):
 		node = block.nodes[i]
-		if node.objId in modNodeIdVers:
+		if node.objId in modNodeIdSet:
 			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
-		modNodeIdVers[node.objId] = node.metaData.version
+		modNodeIdSet.add(node.objId)
 	for i in range(block.ways.size()):
 		way = block.ways[i]
-		if way.objId in modWayIdVers:
+		if way.objId in modWayIdSet:
 			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
-		modWayIdVers[way.objId] = way.metaData.version
+		modWayIdSet.add(way.objId)
 	for i in range(block.relations.size()):
 		relation = block.relations[i]
-		if relation.objId in modRelationIdVers:
+		if relation.objId in modRelationIdSet:
 			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
-		modRelationIdVers[relation.objId] = relation.metaData.version
+		modRelationIdSet.add(relation.objId)
 
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = set(), set(), set()
@@ -231,73 +232,77 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			if refTypeStr == "relation":
 				refedRelations.add(refId)
 
-	#Check positive ID objects already exist
+	#Check referenced positive ID objects already exist (to ensure
+	#non existent nodes or ways are not added to ways or relations).
 	posRefedNodes = [objId for objId in refedNodes if objId>0]
 	posRefedWays = [objId for objId in refedWays if objId>0]
 	posRefedRelations = [objId for objId in refedRelations if objId>0]
 
 	foundNodeData = pgmap.OsmData()
-	t.GetObjectsById(b"node", posRefedNodes, foundNodeData);
-	foundNodeIndex = GetOsmDataIndex(foundNodeData)
-	if set(posRefedNodes) != set(foundNodeIndex["node"].keys()):
+	t.GetObjectsById(b"node", posRefedNodes, foundNodeData)
+	foundNodeIndex = GetOsmDataIndex(foundNodeData)["node"]
+	if set(posRefedNodes) != set(foundNodeIndex.keys()):
 		return HttpResponseNotFound("Referenced node(s) not found")
 
 	foundWayData = pgmap.OsmData()
-	t.GetObjectsById(b"way", posRefedWays, foundWayData);
-	foundWayIndex = GetOsmDataIndex(foundWayData)
-	if set(posRefedWays) != set(foundWayIndex["way"].keys()):
+	t.GetObjectsById(b"way", posRefedWays, foundWayData)
+	foundWayIndex = GetOsmDataIndex(foundWayData)["way"]
+	if set(posRefedWays) != set(foundWayIndex.keys()):
 		return HttpResponseNotFound("Referenced way(s) not found")
 
 	foundRelationData = pgmap.OsmData()
-	t.GetObjectsById(b"relation", posRefedRelations, foundRelationData);
-	foundRelationIndex = GetOsmDataIndex(foundRelationData)
-	if set(posRefedRelations) != set(foundRelationIndex["relation"].keys()):
+	t.GetObjectsById(b"relation", posRefedRelations, foundRelationData)
+	foundRelationIndex = GetOsmDataIndex(foundRelationData)["relation"]
+	if set(posRefedRelations) != set(foundRelationIndex.keys()):
 		return HttpResponseNotFound("Referenced relation(s) not found")
 	
 	#Check versions of updated/deleted objects match what we expect
-	for objId in modNodeIdVers:
-		if modNodeIdVers[objId] > 1 and modNodeIdVers[objId] != foundNodeIndex["node"][objId].metaData.version+1:
+	dataIndex = GetOsmDataIndex(block)
+	nodeObjsById, wayObjsById, relationObjsById = dataIndex['node'], dataIndex['way'], dataIndex['relation']
+
+	for objId in nodeObjsById:
+		if nodeObjsById[objId].metaData.version > 1 and nodeObjsById[objId].metaData.version != foundNodeIndex[objId].metaData.version+1:
 			return HttpResponse("Node has wrong version", status=409, content_type="text/plain")
-	for objId in modWayIdVers:
-		if modWayIdVers[objId] > 1 and modWayIdVers[objId] != foundWayIndex["way"][objId].metaData.version+1:
+	for objId in wayObjsById:
+		if wayObjsById[objId].metaData.version > 1 and wayObjsById[objId].metaData.version != foundWayIndex[objId].metaData.version+1:
 			return HttpResponse("Way has wrong version", status=409, content_type="text/plain")
-	for objId in modRelationIdVers:
-		if modRelationIdVers[objId] > 1 and modRelationIdVers[objId] != foundRelationIndex["relation"][objId].metaData.version+1:
+	for objId in relationObjsById:
+		if relationObjsById[objId].metaData.version > 1 and relationObjsById[objId].metaData.version != foundRelationIndex[objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
 	if action == "delete":
 		#Check that deleting objects doesn't break anything
 		parentWayForNodes = pgmap.OsmData()
-		t.GetWaysForNodes(modNodeIdVers.keys(), parentWayForNodes)
+		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
 		parentWayIds = set(GetOsmDataIndex(parentWayForNodes)["way"].keys())
-		potentiallyBreaks = parentWayIds.difference(set(modWayIdVers.keys()))
+		potentiallyBreaks = parentWayIds.difference(set(wayObjsById.keys()))
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"#{} is still used by way #{}.".format("?", pb)
 			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs(b"node", modNodeIdVers.keys(), parentRelationsForNodes);	
+		t.GetRelationsForObjs(b"node", nodeObjsById.keys(), parentRelationsForNodes);	
 		parentRelationIds = set(GetOsmDataIndex(parentRelationsForNodes)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"Node #{} is still used by relation #{}.".format("?", pb)
 			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs(b"way", modWayIdVers.keys(), parentRelationsForWays);	
+		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays);	
 		parentRelationIds = set(GetOsmDataIndex(parentRelationsForWays)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"Way #{} still used by relation #{}.".format("?", pb)
 			return HttpResponse(err, status=412, content_type="text/plain")
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs(b"relation", modRelationIdVers.keys(), parentRelationsForRelations);	
+		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations);	
 		parentRelationIds = set(GetOsmDataIndex(parentRelationsForRelations)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(modRelationIdVers.keys()))
+		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
 		if len(potentiallyBreaks) > 0:
 			pb = potentiallyBreaks.pop()
 			err = b"The relation #{} is used in relation #{}.".format("?", pb)

@@ -7,10 +7,11 @@ from django.urls import reverse
 from django.contrib.auth.models import User
 
 from querymap.views import p
-from querymap.tests import create_node, create_way, DecodeOsmdataResponse, GetObjectIdDicts
+from querymap.tests import create_node, create_way, DecodeOsmdataResponse
 from changeset.tests import CreateTestChangeset
 import gc
 import sys
+from changeset.views import GetOsmDataIndex
 
 # Create your tests here.
 
@@ -84,7 +85,7 @@ class ElementsGetParentsTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osmData = DecodeOsmdataResponse(response.content)
-		nodeIdDict, wayIdDict, relationIdDict = GetObjectIdDicts(osmData)
+		wayIdDict = GetOsmDataIndex(osmData)['way']
 
 		self.assertEqual(len(wayIdDict), 1)
 		self.assertEqual(way.objId in wayIdDict, True)

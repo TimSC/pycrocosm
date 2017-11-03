@@ -11,7 +11,7 @@ import pgmap
 import random
 import sys
 import gc
-from changeset import views as changeset_views
+from changeset.views import GetOsmDataIndex
 
 def DecodeOsmdataResponse(xml):
 	data = pgmap.OsmData()
@@ -335,7 +335,7 @@ class QueryMapTestCase(TestCase):
 
 		data = DecodeOsmdataResponse(response.streaming_content)
 
-		idDicts = changeset_views.GetOsmDataIndex(data)
+		idDicts = GetOsmDataIndex(data)
 		nodeIdDict = idDicts['node']
 		self.assertEqual(node.objId in nodeIdDict, expected)
 
@@ -367,7 +367,7 @@ class QueryMapTestCase(TestCase):
 
 		data = DecodeOsmdataResponse(response.streaming_content)
 
-		idDicts = changeset_views.GetOsmDataIndex(data)
+		idDicts = GetOsmDataIndex(data)
 		nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 		self.assertEqual(way.objId in wayIdDict, expected)
 		
@@ -383,7 +383,7 @@ class QueryMapTestCase(TestCase):
 
 		data = DecodeOsmdataResponse(response.streaming_content)
 
-		idDicts = changeset_views.GetOsmDataIndex(data)
+		idDicts = GetOsmDataIndex(data)
 		nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 		self.assertEqual(relation.objId in relationIdDict, expected)
 		
@@ -421,7 +421,7 @@ class QueryMapTestCase(TestCase):
 		candidateIds = list(nodeIdSet.difference(nodeMems))
 
 		if len(candidateIds) > 0:
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
@@ -442,7 +442,7 @@ class QueryMapTestCase(TestCase):
 		nodeIdSet = list(nodeIdSet)
 
 		if len(nodeIdSet) > 0:
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			nodeObjToModify = nodeIdDict[nodeIdSet[0]]
 
@@ -493,7 +493,7 @@ class QueryMapTestCase(TestCase):
 		candidateIds = list(wayIdSet.difference(wayMems))
 
 		if len(candidateIds) > 0:
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			wayObjToMod = wayIdDict[candidateIds[0]]
 
@@ -516,7 +516,7 @@ class QueryMapTestCase(TestCase):
 		candidateIds = list(wayIdSet.difference(wayMems))
 
 		if len(candidateIds) > 0:
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			wayObjToDelete = wayIdDict[candidateIds[0]]
 
@@ -581,7 +581,7 @@ class QueryMapTestCase(TestCase):
 		for candidateId in candidateIds:
 
 			#Iterate over
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			relationObjToMod = relationIdDict[candidateId]
 
@@ -619,7 +619,7 @@ class QueryMapTestCase(TestCase):
 		for candidateId in candidateIds:
 
 			#Use first object among candidates
-			idDicts = changeset_views.GetOsmDataIndex(data)
+			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			relationObjToDel = relationIdDict[candidateId]
 
