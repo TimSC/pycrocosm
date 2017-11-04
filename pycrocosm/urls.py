@@ -25,6 +25,7 @@ urlpatterns = [
 	url(r'api/0.6/(node|way|relation)/', include('elements.urls')),
 	url(r'api/0.6/(nodes|ways|relations)', include('multifetch.urls')),
 	url(r'api', include('api.urls', namespace='api')),
+	url(r'extra/', include('extra.urls', namespace='extra')),
 	url(r'admin/', admin.site.urls),
 	url(r'accounts/', include('django.contrib.auth.urls', namespace="accounts")),
 	url(r'register/', include('register.urls'), name='register'),

@@ -270,6 +270,14 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if relationObjsById[objId].metaData.version > 1 and relationObjsById[objId].metaData.version != foundRelationIndex[objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
+	if action in ["modify", "delete"]:
+		#Get complete set of query objects for original data
+		existingAffectedObjects = pgmap.OsmData()
+		t.GetAffectedObjects(block, existingAffectedObjects)
+
+	#Get complete set of query objects based on modified objects
+	#TODO
+
 	if action == "delete":
 		#Check that deleting objects doesn't break anything
 		parentWayForNodes = pgmap.OsmData()
