@@ -11,12 +11,12 @@ import io
 # Create your views here.
 
 @api_view(['GET'])
-def getaffected(request):
+def get_affected(request, objType, objIds):
 
 	t = p.GetTransaction(b"ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(b"node", pgmap.seti64([1000594013181]), osmData)
+	t.GetObjectsById(b"node", pgmap.seti64(map(int, objIds.split(","))), osmData)
 
 	affectedData = pgmap.OsmData()
 	t.GetAffectedObjects(osmData, affectedData)

@@ -41,6 +41,7 @@ INSTALLED_APPS = [
 	'frontpage.apps.FrontpageConfig',
 	'replicate.apps.ReplicateConfig',
 	'oauth.apps.OauthConfig',
+	'extra.apps.ExtraConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
