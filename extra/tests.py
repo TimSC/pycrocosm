@@ -27,11 +27,7 @@ class ExtraFunctionsTestCase(TestCase):
 		self.client = Client()
 		self.client.login(username=self.username, password=self.password)
 
-	def test_upload_create_way(self):
-
-		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
-
-		xml = """<osmChange generator="JOSM" version="0.6">
+		self.xmlSimpleWay = """<osmChange generator="JOSM" version="0.6">
 		<create>
 		  <node changeset="{0}" id="-5393" lat="50.79046578105" lon="-1.04971367626" />
 		  <node changeset="{0}" id="-5394" lat="50.81" lon="-1.051" />
@@ -41,9 +37,13 @@ class ExtraFunctionsTestCase(TestCase):
 		   <nd ref="-5394"/>
 		  </way>
 		</create>
-		</osmChange>""".format(cs.objId)
+		</osmChange>"""
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+	def test_upload_create_way_affect_node(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+
+		response = self.client.post(reverse('upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -52,7 +52,6 @@ class ExtraFunctionsTestCase(TestCase):
 		xml = fromstring(response.content)
 		self.assertEqual(len(xml), 3)
 		diffDict = ParseOsmDiffToDict(xml)
-		print diffDict
 
 		response = self.client.get(reverse('extra:getaffected', args=("node", str(diffDict["node"][-5393][0]))))
 		if response.status_code != 200:
@@ -60,8 +59,41 @@ class ExtraFunctionsTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osmData = DecodeOsmdataResponse(response.content)
-		wayIdDict = GetOsmDataIndex(osmData)['way']
-		print len(osmData.nodes), len(osmData.ways), len(osmData.relations)
+		idDict = GetOsmDataIndex(osmData)
+		self.assertEqual(len(idDict["node"]), 2)
+		self.assertEqual(len(idDict["way"]), 1)
+		self.assertEqual(len(idDict["relation"]), 0)
+		self.assertEqual(diffDict["node"][-5393][0] in idDict["node"], True)
+		self.assertEqual(diffDict["node"][-5394][0] in idDict["node"], True)
+		self.assertEqual(diffDict["way"][-434][0] in idDict["way"], True)
+
+	def test_upload_create_way_affect_way(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+
+		response = self.client.post(reverse('upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
+			content_type='text/xml')
+		if response.status_code != 200:
+			print response.content
+		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 3)
+		diffDict = ParseOsmDiffToDict(xml)
+
+		response = self.client.get(reverse('extra:getaffected', args=("way", str(diffDict["way"][-434][0]))))
+		if response.status_code != 200:
+			print response.content
+		self.assertEqual(response.status_code, 200)
+
+		osmData = DecodeOsmdataResponse(response.content)
+		idDict = GetOsmDataIndex(osmData)
+		self.assertEqual(len(idDict["node"]), 2)
+		self.assertEqual(len(idDict["way"]), 1)
+		self.assertEqual(len(idDict["relation"]), 0)
+		self.assertEqual(diffDict["node"][-5393][0] in idDict["node"], True)
+		self.assertEqual(diffDict["node"][-5394][0] in idDict["node"], True)
+		self.assertEqual(diffDict["way"][-434][0] in idDict["way"], True)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
