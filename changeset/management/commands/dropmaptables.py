@@ -10,7 +10,7 @@ class Command(BaseCommand):
 
 	def handle(self, *args, **options):
 		
-		admin = p.GetAdmin(b"EXCLUSIVE")
+		admin = p.GetAdmin()
 
 		errStr = pgmap.PgMapError()
 		ok = admin.DropMapTables(errStr)
