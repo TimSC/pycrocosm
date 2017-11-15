@@ -5,7 +5,7 @@ OSM Map server API 0.6 implemented using Django. It depends on submodule https:/
 Installation
 ------------
 
-Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. You need to configure and initialize the PostGIS database using https://github.com/TimSC/osm2pgcopy (this functionality will eventually be moved into pgmap.)
+Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later.
 
    cd <src>
 
@@ -41,7 +41,9 @@ Install the rest of the dependencies
 
    cp pycrocosm/settings.py.template pycrocosm/settings.py
 
-Update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY.
+At this stage, you need to configure and initialize the PostGIS database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin.
+
+To complete the webserver installation, update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY.
 
    python manage.py makemigrations
 
