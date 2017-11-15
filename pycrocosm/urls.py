@@ -28,7 +28,7 @@ urlpatterns = [
 	url(r'extra/', include('extra.urls', namespace='extra')),
 	url(r'admin/', admin.site.urls),
 	url(r'accounts/', include('django.contrib.auth.urls', namespace="accounts")),
-	url(r'register/', include('register.urls'), name='register'),
+	url(r'register/', include('register.urls', namespace="register")),
 	url(r'replication/', include('replicate.urls', namespace='replication')),
 	url(r'^oauth/request_token$', oauth_views.request_token,      name='oauth_request_token'),
 	url(r'^oauth/authorize$',     oauth_views.user_authorization, name='oauth_user_authorization'),
