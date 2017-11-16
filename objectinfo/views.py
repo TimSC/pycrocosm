@@ -21,3 +21,14 @@ def history(request):
 
 	return render(request, 'objectinfo/history.html', {'changesets': changesetLi})
 
+def changeset(request, changesetId):
+	t = p.GetTransaction(b"ACCESS SHARE")
+
+	changeset = pgmap.PgChangeset()
+	errStr = pgmap.PgMapError()
+	ok = t.GetChangeset(int(changesetId), changeset, errStr)
+
+	t.Commit()
+
+	return render(request, 'objectinfo/changeset.html', {'changeset': changeset})
+

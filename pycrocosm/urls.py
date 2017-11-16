@@ -22,7 +22,7 @@ from objectinfo import views as objectinfo_views
 urlpatterns = [
 	url(r'api/0.6/map', include('querymap.urls')),
 	url(r'api/0.6/user/', include('users.urls')),
-	url(r'api/0.6/changeset', include('changeset.urls')),
+	url(r'api/0.6/changeset', include('changeset.urls', namespace='changeset')),
 	url(r'api/0.6/(node|way|relation)/', include('elements.urls')),
 	url(r'api/0.6/(nodes|ways|relations)', include('multifetch.urls')),
 	url(r'api', include('api.urls', namespace='api')),
@@ -38,6 +38,6 @@ urlpatterns = [
 	url(r'^oauth/access_token$',  oauth_views.access_token,	      name='oauth_access_token'),
 	url(r'oauth/',  include('oauth.urls', namespace="oauth")),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
-	url(r'history', objectinfo_views.history, name='history'),
+	url(r'', include('objectinfo.urls', namespace='objectinfo')),
 ]
 

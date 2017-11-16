@@ -1,21 +1,13 @@
 {% load timestamp_extras %}
 {% for changeset in changesets %}
 
-<h3>Changeset {{ changeset.objId }}</h3>
+<h3>Changeset <a href="{% url 'objectinfo:changeset' changesetId=changeset.objId %}">{{ changeset.objId }}</a></h3>
 
 <p>Created by {{changeset.username}} on {{changeset.open_timestamp | todatetime }}</p>
 
 {% if not changeset.is_open %}
 <p>Closed on {{ changeset.close_timestamp | todatetime }}</p>
 {% endif %}
-
-<ul>
-{% for k, v in changeset.tags.items %}
-
-<li>{{ k }} = {{ v }}</li>
-
-{% endfor %}
-</ul>
 
 {% endfor %}
 
