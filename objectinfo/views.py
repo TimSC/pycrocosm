@@ -26,7 +26,7 @@ def changeset(request, changesetId):
 
 	changeset = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
-	ok = t.GetChangeset(int(changesetId), changeset, errStr)
+	ok = t.GetChangeset(int(changesetId), True, changeset, errStr)
 
 	t.Commit()
 

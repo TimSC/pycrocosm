@@ -153,7 +153,7 @@ class ChangesetTestCase(TestCase):
 
 	def test_create_changeset(self):
 
-		response = self.client.put(reverse('create'), self.createXml, content_type='text/xml')
+		response = self.client.put(reverse('changeset:create'), self.createXml, content_type='text/xml')
 
 		if response.status_code != 200:
 			print response.content
@@ -169,13 +169,13 @@ class ChangesetTestCase(TestCase):
 
 	def test_anon_create_changeset(self):
 		anonClient = Client()
-		response = anonClient.put(reverse('create'), self.createXml, content_type='text/xml')
+		response = anonClient.put(reverse('changeset:create'), self.createXml, content_type='text/xml')
 		if response.status_code != 403:
 			print response.content
 		self.assertEqual(response.status_code, 403)
 
 	def test_create_changeset_unicodetags(self):
-		response = self.client.put(reverse('create'), self.createXmlUnicodeTags, content_type='text/xml')
+		response = self.client.put(reverse('changeset:create'), self.createXmlUnicodeTags, content_type='text/xml')
 
 		if response.status_code != 200:
 			print response.content
@@ -188,7 +188,7 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(cs.tags[b"comment"] == self.unicodeStr.encode("utf-8"), True)
 
 	def test_create_changeset_overlong(self):
-		response = self.client.put(reverse('create'), self.createXmlOverlong, content_type='text/xml')
+		response = self.client.put(reverse('changeset:create'), self.createXmlOverlong, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 400)
 
@@ -198,7 +198,7 @@ class ChangesetTestCase(TestCase):
 
 		anonClient = Client()
 
-		response = anonClient.get(reverse('changeset', args=(cs.objId,)))
+		response = anonClient.get(reverse('changeset:changeset', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 	
 		xml = fromstring(response.content)
@@ -229,13 +229,13 @@ class ChangesetTestCase(TestCase):
 		
 	def test_get_changeset_missing(self):
 		anonClient = Client()
-		response = anonClient.get(reverse('changeset', args=(0,)))
+		response = anonClient.get(reverse('changeset:changeset', args=(0,)))
 		self.assertEqual(response.status_code, 404)
 
 	def test_put_changeset(self):
 		cs = CreateTestChangeset(self.user, tags={"foo": "bar", "man": "child"})
 
-		response = self.client.put(reverse('changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
+		response = self.client.put(reverse('changeset:changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -253,13 +253,13 @@ class ChangesetTestCase(TestCase):
 		cs = CreateTestChangeset(self.user, tags={"foo": "bar", "man": "child"})
 
 		anonClient = Client()
-		response = anonClient.put(reverse('changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
+		response = anonClient.put(reverse('changeset:changeset', args=(cs.objId,)), self.createXml, content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_close_changeset(self):
 		cs = CreateTestChangeset(self.user)
 
-		response = self.client.put(reverse('close', args=(cs.objId,)))
+		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
 		t = p.GetTransaction(b"ACCESS SHARE")
@@ -273,7 +273,7 @@ class ChangesetTestCase(TestCase):
 	def test_close_changeset_double_close(self):
 		cs = CreateTestChangeset(self.user)
 
-		response = self.client.put(reverse('close', args=(cs.objId,)))
+		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
 		t = p.GetTransaction(b"ACCESS SHARE")
@@ -284,7 +284,7 @@ class ChangesetTestCase(TestCase):
 
 		self.assertEqual(cs2.is_open, False)
 
-		response = self.client.put(reverse('close', args=(cs.objId,)))
+		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 409)
 
 		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.objId, 
@@ -294,7 +294,7 @@ class ChangesetTestCase(TestCase):
 		cs = CreateTestChangeset(self.user)
 
 		anonClient = Client()
-		response = anonClient.put(reverse('close', args=(cs.objId,)))
+		response = anonClient.put(reverse('changeset:close', args=(cs.objId,)))
 		if response.status_code != 403:
 			print response.content
 		self.assertEqual(response.status_code, 403)
@@ -305,7 +305,7 @@ class ChangesetTestCase(TestCase):
 	def test_expand_bbox(self):
 		cs = CreateTestChangeset(self.user)
 
-		response = self.client.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
+		response = self.client.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
@@ -335,14 +335,14 @@ class ChangesetTestCase(TestCase):
 		cs = CreateTestChangeset(self.user)
 
 		anonClient = Client()
-		response = anonClient.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
+		response = anonClient.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_expand_bbox_closed(self):
 		cs = CreateTestChangeset(self.user, is_open=False)
 
-		response = self.client.post(reverse('expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
+		response = self.client.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
@@ -393,7 +393,7 @@ class ChangesetUploadTestCase(TestCase):
 		</create>
 		</osmChange>""".format(cs.objId)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -426,7 +426,7 @@ class ChangesetUploadTestCase(TestCase):
 		</modify>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -457,7 +457,7 @@ class ChangesetUploadTestCase(TestCase):
 		</modify>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version+1)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
@@ -474,7 +474,7 @@ class ChangesetUploadTestCase(TestCase):
 		</modify>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
-		response = self.client2.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client2.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
@@ -489,7 +489,7 @@ class ChangesetUploadTestCase(TestCase):
 		</delete>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -515,7 +515,7 @@ class ChangesetUploadTestCase(TestCase):
 		</create>
 		</osmChange>""".format(cs.objId, "x" * settings.MAX_TAG_LENGTH, "y" * settings.MAX_TAG_LENGTH)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -533,7 +533,7 @@ class ChangesetUploadTestCase(TestCase):
 		</create>
 		</osmChange>""".format(cs.objId, "x" * 256, "y" * 256)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 400)
 
@@ -553,7 +553,7 @@ class ChangesetUploadTestCase(TestCase):
 		</create>
 		</osmChange>""".format(cs.objId)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -607,7 +607,7 @@ class ChangesetUploadTestCase(TestCase):
 		</create>
 		</osmChange>""".format(cs.objId, node.objId)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -655,7 +655,7 @@ class ChangesetUploadTestCase(TestCase):
 		</delete>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 412)
 
@@ -673,7 +673,7 @@ class ChangesetUploadTestCase(TestCase):
 		</delete>
 		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		#print response.content
 		self.assertEqual(response.status_code, 412)
@@ -693,7 +693,7 @@ class ChangesetUploadTestCase(TestCase):
 		</delete>
 		</osmChange>""".format(cs.objId, way.objId, way.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		#print response.content
 		self.assertEqual(response.status_code, 412)
@@ -713,7 +713,7 @@ class ChangesetUploadTestCase(TestCase):
 		</delete>
 		</osmChange>""".format(cs.objId, relation.objId, relation.metaData.version)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		#print response.content
 		self.assertEqual(response.status_code, 412)
@@ -742,7 +742,7 @@ class ChangesetUploadTestCase(TestCase):
 		</modify>
 		</osmChange>""".format(cs.objId, way.objId, way.metaData.version, node.objId, node2.objId)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), xml, 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content

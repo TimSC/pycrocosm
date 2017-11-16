@@ -480,7 +480,22 @@ def close(request, changesetId):
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
 def download(request, changesetId):
-	return get(request, changesetId)
+	t = p.GetTransaction(b"ACCESS SHARE")
+	
+	osmChange = pgmap.OsmChange()
+	errStr = pgmap.PgMapError()
+	ret = t.GetOsmChange(int(changesetId), osmChange, errStr)
+	if ret == -1:
+		return HttpResponseNotFound("Changeset not found")
+	if ret == 0:	
+		return HttpResponseServerError(errStr.errStr)
+
+	#print changesetData.data.empty()
+	#pgmap.SaveToOsmXml()
+
+	t.Commit()
+
+	return SerializeOsmChange(osmChange)
 
 @csrf_exempt
 @api_view(['POST'])

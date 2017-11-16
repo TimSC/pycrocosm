@@ -43,7 +43,7 @@ class ExtraFunctionsTestCase(TestCase):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
@@ -71,7 +71,7 @@ class ExtraFunctionsTestCase(TestCase):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
 
-		response = self.client.post(reverse('upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
 			content_type='text/xml')
 		if response.status_code != 200:
 			print response.content
