@@ -17,6 +17,7 @@ from django.conf.urls import include, url
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from oauth_provider import views as oauth_views
+from objectinfo import views as objectinfo_views
 
 urlpatterns = [
 	url(r'api/0.6/map', include('querymap.urls')),
@@ -37,4 +38,6 @@ urlpatterns = [
 	url(r'^oauth/access_token$',  oauth_views.access_token,	      name='oauth_access_token'),
 	url(r'oauth/',  include('oauth.urls', namespace="oauth")),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
+	url(r'history', objectinfo_views.history, name='history'),
 ]
+

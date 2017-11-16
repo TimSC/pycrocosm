@@ -42,6 +42,7 @@ INSTALLED_APPS = [
 	'replicate.apps.ReplicateConfig',
 	'oauth.apps.OauthConfig',
 	'extra.apps.ExtraConfig',
+	'objectinfo.apps.ObjectinfoConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',

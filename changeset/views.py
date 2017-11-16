@@ -398,7 +398,10 @@ def create(request):
 def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	if request.method == 'GET':
+		t = p.GetTransaction(b"ACCESS SHARE")
+	else:
+		t = p.GetTransaction(b"EXCLUSIVE")
 	
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -539,7 +542,7 @@ def list(request):
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction(b"ACCESS SHARE")
 	ok = t.GetChangesets(changesets, errStr)
 
 	t.Commit()
