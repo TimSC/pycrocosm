@@ -14,6 +14,7 @@ import cStringIO
 import datetime
 import pgmap
 import time
+import io
 from querymap.views import p
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 
@@ -484,18 +485,20 @@ def download(request, changesetId):
 	
 	osmChange = pgmap.OsmChange()
 	errStr = pgmap.PgMapError()
-	ret = t.GetOsmChange(int(changesetId), osmChange, errStr)
+	ret = t.GetChangesetOsmChange(int(changesetId), osmChange, errStr)
 	if ret == -1:
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
 		return HttpResponseServerError(errStr.errStr)
 
-	#print changesetData.data.empty()
-	#pgmap.SaveToOsmXml()
-
 	t.Commit()
 
-	return SerializeOsmChange(osmChange)
+	#print changesetData.data.empty()
+	sio = cStringIO.StringIO()
+	outBufWrapped = pgmap.CPyOutbuf(sio)
+	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped)
+
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt
 @api_view(['POST'])
