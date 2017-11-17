@@ -21,8 +21,9 @@ def index(request, objType):
 	except ValueError as err:
 		return HttpResponseBadRequest(err)
 
+	t = p.GetTransaction(b"ACCESS SHARE")
 	osmData = pgmap.OsmData()
-	p.GetObjectsById(objType[:-1].encode("UTF-8"), pgmap.seti64(objIds), osmData);
+	t.GetObjectsById(objType[:-1].encode("UTF-8"), pgmap.seti64(objIds), osmData);
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio)
