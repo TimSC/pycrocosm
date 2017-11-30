@@ -13,7 +13,6 @@ def index(request):
 	errStr = pgmap.PgMapError()
 	value = int(t.GetMetaValue("readonly".encode('utf-8'), errStr))
 	dbStatus = "OK"
-	print value
 	if value != 0:
 		dbStatus = "Read only"
 
