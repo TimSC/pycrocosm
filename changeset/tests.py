@@ -16,7 +16,7 @@ import time
 import datetime
 from querymap.views import p
 from xml.sax.saxutils import escape
-from querymap.tests import create_node, create_way, create_relation
+from querymap.tests import create_node, create_way, create_relation, modify_relation
 from django.conf import settings
 
 def ParseOsmDiffToDict(xml):
@@ -863,8 +863,51 @@ class ChangesetUploadTestCase(TestCase):
 		#print response.content
 		self.assertEqual(response.status_code, 200)
 
+	def test_upload_delete_interdependent_objects(self):
 
-	#TODO What happens when we delete two nodes and their parent way in one delete action?
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+
+		xml = """<osmChange version="0.6" generator="JOSM">
+		<delete>
+		  <way id='{}' version='{}' changeset='{}'/>
+		  <node id='{}' version='{}' changeset='{}'/>
+		  <node id='{}' version='{}' changeset='{}'/>
+		</delete>
+		</osmChange>""".format(way.objId, way.metaData.version, cs.objId,
+			node.objId, node.metaData.version, cs.objId,
+			node2.objId, node2.metaData.version, cs.objId)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
+
+	def test_upload_delete_relations_with_circular_reference(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot")])
+		relation2 = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("relation", relation.objId, "dead")])
+		relation = modify_relation(self.user.id, self.user.username, relation, 
+			[("node", node.objId, "parrot"), ("relation", relation2.objId, "dead")], {})
+
+		xml = """<osmChange version="0.6" generator="JOSM">
+		<delete>
+		  <relation id='{}' version='{}' changeset='{}'/>
+		  <relation id='{}' version='{}' changeset='{}'/>
+		</delete>
+		</osmChange>""".format(relation.objId, relation.metaData.version, cs.objId,
+			relation2.objId, relation2.metaData.version, cs.objId)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)

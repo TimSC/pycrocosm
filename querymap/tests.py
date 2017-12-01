@@ -126,6 +126,39 @@ def create_relation(uid, username, refs, changeset = 1000):
 	relation.objId = createdRelationIds[-1]
 	return relation
 
+def modify_relation(uid, username, relationIn, refsIn, tagsIn):
+	relation = pgmap.OsmRelation()
+	relation.objId = relationIn.objId
+	relation.metaData.version = relationIn.metaData.version + 1
+	relation.metaData.timestamp = 0
+	relation.metaData.changeset = 1000
+	relation.metaData.uid = uid
+	relation.metaData.username = username.encode("UTF-8")
+	relation.metaData.visible = True
+	for k in tagsIn:
+		relation.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
+	for refTypeStr, refId, refRole in refsIn:
+		relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+		relation.refIds.append(refId)
+		relation.refRoles.append(refRole.encode("UTF-8"))
+
+	data = pgmap.OsmData()
+	data.relations.append(relation)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction(b"EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	if not ok:
+		t.Abort()
+		print errStr.errStr
+		return None
+	else:
+		t.Commit()
+	return relation
 
 # Create your tests here.
 
@@ -210,40 +243,6 @@ class QueryMapTestCase(TestCase):
 			t.Commit()
 		self.assertEqual(ok, True)
 		return way
-
-	def modify_relation(self, relationIn, refsIn, tagsIn):
-		relation = pgmap.OsmRelation()
-		relation.objId = relationIn.objId
-		relation.metaData.version = relationIn.metaData.version + 1
-		relation.metaData.timestamp = 0
-		relation.metaData.changeset = 1000
-		relation.metaData.uid = self.user.id
-		relation.metaData.username = self.user.username.encode("UTF-8")
-		relation.metaData.visible = True
-		for k in tagsIn:
-			relation.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
-		for refTypeStr, refId, refRole in refsIn:
-			relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
-			relation.refIds.append(refId)
-			relation.refRoles.append(refRole.encode("UTF-8"))
-
-		data = pgmap.OsmData()
-		data.relations.append(relation)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction(b"EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-		if not ok:
-			t.Abort()
-			print errStr.errStr
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		return relation
 		
 	def delete_object(self, objIn, tIn = None):
 		if isinstance(objIn, pgmap.OsmNode):
@@ -549,9 +548,10 @@ class QueryMapTestCase(TestCase):
 		node3 = create_node(self.user.id, self.user.username, node)
 		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot")])
 
-		modRelation = self.modify_relation(relation, 
+		modRelation = self.modify_relation(self.user.id, self.user.username, relation, 
 			[("node", node.objId, "parrot"), ("node", node2.objId, "dead"), ("node", node3.objId, "")], 
 			{"foo": "bar"})
+		self.assertEqual(modRelation is not None, True)
 		
 		bbox = self.get_bbox_for_nodes([node, node2, node3])
 		self.check_relation_in_query(modRelation, bbox, True)
@@ -596,7 +596,9 @@ class QueryMapTestCase(TestCase):
 			refIds.append(refIds[0])
 			refRoles = list(relationObjToMod.refRoles)
 			refRoles.append(refRoles[0])
-			modRelation = self.modify_relation(relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})
+			modRelation = self.modify_relation(self.user.id, self.user.username, 
+				relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})
+			self.assertEqual(modRelation is not None, True)
 			self.check_relation_in_query(modRelation, self.roi, True)
 			return #Success!
 		

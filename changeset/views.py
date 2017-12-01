@@ -279,11 +279,70 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	if action == "delete":
 
 		#Check that deleting objects doesn't break anything
+
+		parentRelationsForRelations = pgmap.OsmData()
+		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations)
+		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
+		referencedChildren = {}
+		for parentId in parentRelationsForRelationsIndex:
+			if parentId in relationObjsById.keys():
+				continue #This object is being deleted anyway
+			parent = parentRelationsForRelationsIndex[parentId]
+			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+				if refTypeStr != "relation":
+					continue
+				if refId in relationObjsById.keys():
+					referencedChildren[refId] = parent.objId
+		if len(referencedChildren) > 0:
+			if not ifunused:
+				k, v = GetAnyKeyValue(referencedChildren)
+				err = b"The relation #{} is used in relation #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for i in range(len(block.relations)):
+					relation = block.relations[i]
+					if relation.objId in referencedChildren:
+						continue
+					filtered.relations.append(relation)
+				block.relations = filtered.relations
+				relationsObjsById = GetOsmDataIndex(block)['relation']
+
+		parentRelationsForWays = pgmap.OsmData()
+		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays)
+		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
+		referencedChildren = {}
+		for parentId in parentRelationsForWaysIndex:
+			if parentId in relationObjsById.keys():
+				continue #This object is being deleted anyway
+			parent = parentRelationsForWaysIndex[parentId]
+			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+				if refTypeStr != "way":
+					continue
+				if refId in wayObjsById.keys():
+					referencedChildren[refId] = parent.objId
+		if len(referencedChildren) > 0:
+			if not ifunused:
+				k, v = GetAnyKeyValue(referencedChildren)
+				err = b"Way #{} still used by relation #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for i in range(len(block.ways)):
+					way = block.ways[i]
+					if way.objId in referencedChildren:
+						continue
+					filtered.ways.append(way)
+				block.ways = filtered.ways
+				wayObjsById = GetOsmDataIndex(block)['way']
+
 		parentWayForNodes = pgmap.OsmData()
 		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
 		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
 		referencedChildren = {}
 		for parentId in parentWayForNodesIndex:
+			if parentId in wayObjsById.keys():
+				continue #This object is being deleted anyway
 			parent = parentWayForNodesIndex[parentId]
 			for ref in parent.refs:
 				if ref in nodeObjsById.keys():
@@ -329,58 +388,6 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.nodes = filtered.nodes
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
-
-		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays)
-		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
-		referencedChildren = {}
-		for parentId in parentRelationsForWaysIndex:
-			parent = parentRelationsForWaysIndex[parentId]
-			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
-				if refTypeStr != "way":
-					continue
-				if refId in wayObjsById.keys():
-					referencedChildren[refId] = parent.objId
-		if len(referencedChildren) > 0:
-			if not ifunused:
-				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"Way #{} still used by relation #{}.".format(k, v)
-				return HttpResponse(err, status=412, content_type="text/plain")
-			else:
-				filtered = pgmap.OsmData()
-				for i in range(len(block.ways)):
-					way = block.ways[i]
-					if way.objId in referencedChildren:
-						continue
-					filtered.ways.append(way)
-				block.ways = filtered.ways
-				wayObjsById = GetOsmDataIndex(block)['way']
-
-		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations)
-		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
-		referencedChildren = {}
-		for parentId in parentRelationsForRelationsIndex:
-			parent = parentRelationsForRelationsIndex[parentId]
-			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
-				if refTypeStr != "relation":
-					continue
-				if refId in relationObjsById.keys():
-					referencedChildren[refId] = parent.objId
-		if len(referencedChildren) > 0:
-			if not ifunused:
-				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"The relation #{} is used in relation #{}.".format(k, v)
-				return HttpResponse(err, status=412, content_type="text/plain")
-			else:
-				filtered = pgmap.OsmData()
-				for i in range(len(block.relations)):
-					relation = block.relations[i]
-					if relation.objId in referencedChildren:
-						continue
-					filtered.relations.append(relation)
-				block.relations = filtered.relations
-				relationsObjsById = GetOsmDataIndex(block)['relation']
 
 	#Get complete set of query objects based on modified objects
 	#TODO
