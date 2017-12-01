@@ -97,6 +97,11 @@ def GetOsmDataIndex(osmData):
 	out = {'node':nodeDict, 'way':wayDict, 'relation':relationDict}
 	return out
 
+def GetAnyKeyValue(d):
+	for k in d:
+		return k, d[k]
+	return None, None
+
 def upload_check_create(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
@@ -271,24 +276,34 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if relationObjsById[objId].metaData.version > 1 and relationObjsById[objId].metaData.version != foundRelationIndex[objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
-	if action in ["modify", "delete"]:
-		#Get complete set of query objects for original data
-		existingAffectedObjects = pgmap.OsmData()
-		t.GetAffectedObjects(block, existingAffectedObjects)
-
-	#Get complete set of query objects based on modified objects
-	#TODO
-
 	if action == "delete":
 		#Check that deleting objects doesn't break anything
 		parentWayForNodes = pgmap.OsmData()
+		#print "W", nodeObjsById.keys()
 		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
-		parentWayIds = set(GetOsmDataIndex(parentWayForNodes)["way"].keys())
-		potentiallyBreaks = parentWayIds.difference(set(wayObjsById.keys()))
-		if len(potentiallyBreaks) > 0:
-			pb = potentiallyBreaks.pop()
-			err = b"#{} is still used by way #{}.".format("?", pb)
-			return HttpResponse(err, status=412, content_type="text/plain")
+		#print "X", len(parentWayForNodes.ways)
+		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
+		parentWayIds = set(parentWayForNodesIndex.keys())
+		referencedChildren = {}
+		for parent in parentWayForNodes.ways:
+			for ref in parent.refs:
+				#print "ref", ref
+				if ref in nodeObjsById.keys():
+					referencedChildren[ref] = parent.objId
+		#print referencedChildren
+		if len(referencedChildren) > 0:
+			#print "ifunused", ifunused
+			if not ifunused:
+				k, v = GetAnyKeyValue(nodeObjsById.keys())
+				err = b"#{} is still used by way #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for node in block.nodes:
+					if node.objId in referencedChildren:
+						continue
+					filtered.nodes.append(node)
+				block.nodes = filtered.nodes
 
 		parentRelationsForNodes = pgmap.OsmData()
 		t.GetRelationsForObjs(b"node", nodeObjsById.keys(), parentRelationsForNodes);	
@@ -318,6 +333,13 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			return HttpResponse(err, status=412, content_type="text/plain")
 
 		#TODO implement if-unused attribute on delete action
+
+	#Get complete set of query objects based on modified objects
+	#TODO
+	if action in ["modify", "delete"]:
+		#Get complete set of query objects for original data
+		existingAffectedObjects = pgmap.OsmData()
+		t.GetAffectedObjects(block, existingAffectedObjects)
 
 	#Set visiblity flag
 	visible = action != "delete"

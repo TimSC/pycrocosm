@@ -685,7 +685,6 @@ class ChangesetUploadTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
-		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<delete>
@@ -750,6 +749,30 @@ class ChangesetUploadTestCase(TestCase):
 
 		xml = fromstring(response.content)
 		diffDict = ParseOsmDiffToDict(xml)
+
+	def test_upload_delete_node_used_by_way_if_unused(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete if-unused="true">
+		  <way changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, way.objId, way.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
+
+	#TODO Set delete if object is used in relation
+
+	#TODO What happens when we delete two nodes and their parent way in one delete action?
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
