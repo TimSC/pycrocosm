@@ -279,27 +279,24 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	if action == "delete":
 		#Check that deleting objects doesn't break anything
 		parentWayForNodes = pgmap.OsmData()
-		#print "W", nodeObjsById.keys()
 		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
-		#print "X", len(parentWayForNodes.ways)
 		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
 		parentWayIds = set(parentWayForNodesIndex.keys())
 		referencedChildren = {}
-		for parent in parentWayForNodes.ways:
+		for parentId in parentWayForNodesIndex:
+			parent = parentWayForNodesIndex[parentId]
 			for ref in parent.refs:
-				#print "ref", ref
 				if ref in nodeObjsById.keys():
 					referencedChildren[ref] = parent.objId
-		#print referencedChildren
 		if len(referencedChildren) > 0:
-			#print "ifunused", ifunused
 			if not ifunused:
-				k, v = GetAnyKeyValue(nodeObjsById.keys())
+				k, v = GetAnyKeyValue(referencedChildren)
 				err = b"#{} is still used by way #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
 			else:
 				filtered = pgmap.OsmData()
-				for node in block.nodes:
+				for i in range(len(block.nodes)):
+					node = block.nodes[i]
 					if node.objId in referencedChildren:
 						continue
 					filtered.nodes.append(node)

@@ -688,9 +688,9 @@ class ChangesetUploadTestCase(TestCase):
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<delete>
-		  <way changeset="{}" id="{}" version="{}"/>
+		  <node changeset="{}" id="{}" version="{}"/>
 		</delete>
-		</osmChange>""".format(cs.objId, way.objId, way.metaData.version)
+		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
@@ -757,13 +757,12 @@ class ChangesetUploadTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
-		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
 		xml = """<osmChange generator="JOSM" version="0.6">
 		<delete if-unused="true">
-		  <way changeset="{}" id="{}" version="{}"/>
+		  <node changeset="{}" id="{}" version="{}"/>
 		</delete>
-		</osmChange>""".format(cs.objId, way.objId, way.metaData.version)
+		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
