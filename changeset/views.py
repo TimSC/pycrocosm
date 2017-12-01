@@ -277,11 +277,11 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
 	if action == "delete":
+
 		#Check that deleting objects doesn't break anything
 		parentWayForNodes = pgmap.OsmData()
 		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
 		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
-		parentWayIds = set(parentWayForNodesIndex.keys())
 		referencedChildren = {}
 		for parentId in parentWayForNodesIndex:
 			parent = parentWayForNodesIndex[parentId]
@@ -301,35 +301,86 @@ def upload_block(action, block, changesetId, t, responseRoot,
 						continue
 					filtered.nodes.append(node)
 				block.nodes = filtered.nodes
+				nodeObjsById = GetOsmDataIndex(block)['node']
 
 		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs(b"node", nodeObjsById.keys(), parentRelationsForNodes);	
-		parentRelationIds = set(GetOsmDataIndex(parentRelationsForNodes)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
-		if len(potentiallyBreaks) > 0:
-			pb = potentiallyBreaks.pop()
-			err = b"Node #{} is still used by relation #{}.".format("?", pb)
-			return HttpResponse(err, status=412, content_type="text/plain")
+		t.GetRelationsForObjs(b"node", nodeObjsById.keys(), parentRelationsForNodes)
+		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
+		referencedChildren = {}
+		for parentId in parentRelationsForNodesIndex:
+			parent = parentRelationsForNodesIndex[parentId]
+			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+				if refTypeStr != "node":
+					continue
+				if refId in nodeObjsById.keys():
+					referencedChildren[refId] = parent.objId
+		if len(referencedChildren) > 0:
+			if not ifunused:
+				k, v = GetAnyKeyValue(referencedChildren)
+				err = b"Node #{} is still used by relation #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for i in range(len(block.nodes)):
+					node = block.nodes[i]
+					if node.objId in referencedChildren:
+						continue
+					filtered.nodes.append(node)
+				block.nodes = filtered.nodes
+				nodeObjsById = GetOsmDataIndex(block)['node']
+
 
 		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays);	
-		parentRelationIds = set(GetOsmDataIndex(parentRelationsForWays)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
-		if len(potentiallyBreaks) > 0:
-			pb = potentiallyBreaks.pop()
-			err = b"Way #{} still used by relation #{}.".format("?", pb)
-			return HttpResponse(err, status=412, content_type="text/plain")
+		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays)
+		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
+		referencedChildren = {}
+		for parentId in parentRelationsForWaysIndex:
+			parent = parentRelationsForWaysIndex[parentId]
+			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+				if refTypeStr != "way":
+					continue
+				if refId in wayObjsById.keys():
+					referencedChildren[refId] = parent.objId
+		if len(referencedChildren) > 0:
+			if not ifunused:
+				k, v = GetAnyKeyValue(referencedChildren)
+				err = b"Way #{} still used by relation #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for i in range(len(block.ways)):
+					way = block.ways[i]
+					if way.objId in referencedChildren:
+						continue
+					filtered.ways.append(way)
+				block.ways = filtered.ways
+				wayObjsById = GetOsmDataIndex(block)['way']
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations);	
-		parentRelationIds = set(GetOsmDataIndex(parentRelationsForRelations)["relation"].keys())
-		potentiallyBreaks = parentRelationIds.difference(set(relationObjsById.keys()))
-		if len(potentiallyBreaks) > 0:
-			pb = potentiallyBreaks.pop()
-			err = b"The relation #{} is used in relation #{}.".format("?", pb)
-			return HttpResponse(err, status=412, content_type="text/plain")
-
-		#TODO implement if-unused attribute on delete action
+		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations)
+		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
+		referencedChildren = {}
+		for parentId in parentRelationsForRelationsIndex:
+			parent = parentRelationsForRelationsIndex[parentId]
+			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+				if refTypeStr != "relation":
+					continue
+				if refId in relationObjsById.keys():
+					referencedChildren[refId] = parent.objId
+		if len(referencedChildren) > 0:
+			if not ifunused:
+				k, v = GetAnyKeyValue(referencedChildren)
+				err = b"The relation #{} is used in relation #{}.".format(k, v)
+				return HttpResponse(err, status=412, content_type="text/plain")
+			else:
+				filtered = pgmap.OsmData()
+				for i in range(len(block.relations)):
+					relation = block.relations[i]
+					if relation.objId in referencedChildren:
+						continue
+					filtered.relations.append(relation)
+				block.relations = filtered.relations
+				relationsObjsById = GetOsmDataIndex(block)['relation']
 
 	#Get complete set of query objects based on modified objects
 	#TODO

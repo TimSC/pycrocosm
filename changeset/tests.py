@@ -704,6 +704,43 @@ class ChangesetUploadTestCase(TestCase):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
 		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <node changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 412)
+
+	def test_upload_delete_way_used_by_relation(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <way changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, way.objId, node.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 412)
+
+	def test_upload_delete_relation_used_by_relation(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
 		relation2 = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("relation", relation.objId, "dead")])
 
 		xml = """<osmChange generator="JOSM" version="0.6">
@@ -769,7 +806,63 @@ class ChangesetUploadTestCase(TestCase):
 		#print response.content
 		self.assertEqual(response.status_code, 200)
 
-	#TODO Set delete if object is used in relation
+	def test_upload_delete_node_used_by_relation_if_unused(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete if-unused="true">
+		  <node changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
+
+	def test_upload_delete_way_used_by_relation_if_unused(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete if-unused="true">
+		  <way changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, way.objId, way.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
+
+	def test_upload_delete_relation_used_by_relation_if_unused(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+		relation2 = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("relation", relation.objId, "dead")])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete if-unused="true">
+		  <relation changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, relation.objId, relation.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print response.content
+		self.assertEqual(response.status_code, 200)
+
 
 	#TODO What happens when we delete two nodes and their parent way in one delete action?
 
