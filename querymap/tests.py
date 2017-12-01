@@ -548,7 +548,7 @@ class QueryMapTestCase(TestCase):
 		node3 = create_node(self.user.id, self.user.username, node)
 		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot")])
 
-		modRelation = self.modify_relation(self.user.id, self.user.username, relation, 
+		modRelation = modify_relation(self.user.id, self.user.username, relation, 
 			[("node", node.objId, "parrot"), ("node", node2.objId, "dead"), ("node", node3.objId, "")], 
 			{"foo": "bar"})
 		self.assertEqual(modRelation is not None, True)
@@ -596,7 +596,7 @@ class QueryMapTestCase(TestCase):
 			refIds.append(refIds[0])
 			refRoles = list(relationObjToMod.refRoles)
 			refRoles.append(refRoles[0])
-			modRelation = self.modify_relation(self.user.id, self.user.username, 
+			modRelation = modify_relation(self.user.id, self.user.username, 
 				relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})
 			self.assertEqual(modRelation is not None, True)
 			self.check_relation_in_query(modRelation, self.roi, True)
