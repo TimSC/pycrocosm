@@ -14,8 +14,8 @@ server {
     listen [::]:8012 ssl;
 
     root /var/www/pycrocosm;
-    ssl_certificate     sodium.crt;
-    ssl_certificate_key sodium.key;
+    #ssl_certificate     sodium.crt;
+    #ssl_certificate_key sodium.key;
 
     # Add index.php to the list if you are using PHP
     index index.php index.html index.htm index.nginx-debian.html;

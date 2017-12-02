@@ -6,7 +6,7 @@ After=network.target
 User=root
 Group=www-data
 WorkingDirectory=/var/pycrocosm
-ExecStart=/usr/local/bin/uwsgi --ini pycrocosm.ini
+ExecStart=/usr/bin/uwsgi-core --ini pycrocosm.ini
 KillSignal=SIGQUIT
 
 [Install]
