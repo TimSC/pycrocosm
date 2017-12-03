@@ -3,7 +3,11 @@ from __future__ import unicode_literals
 from __future__ import print_function
 
 import xml.etree.ElementTree as ET
-import cStringIO
+import sys
+if sys.version_info.major < 3: 
+	import cStringIO as StringIO
+else:
+	from io import StringIO
 
 from django.shortcuts import render
 from django.http import HttpResponse

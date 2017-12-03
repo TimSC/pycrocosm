@@ -27,11 +27,9 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
 Unhelpfully, django-oauth-plus 2.2.9 (latest at time of writing) is not compatible with Django 1.11.8. (Django 2.0 is not compatible with Python 2). I've also added some fixes for JOSM quirks, so compile it from source:
 
-   wget https://bitbucket.org/TimSCUK/django-oauth-plus/get/pluspr19.tar.gz
+   git clone https://github.com/TimSC/django-oauth-plus-mod
 
-   tar xvf pluspr19.tar.gz
-
-   cd TimSCUK-django-oauth-plus-.... 
+   cd django-oauth-plus-mod
 
    python setup.py install
 

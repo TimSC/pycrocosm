@@ -24,9 +24,9 @@ def Escape(st):
 	return st.replace('"','\\"').replace("'","\\'")
 
 mapDbSettings = settings.MAP_DATABASE
-connectionString = b"dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]), 
-	Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"]))
-p = pgmap.PgMap(connectionString, 
+connectionString = ("dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]), 
+	Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"])))
+p = pgmap.PgMap(connectionString.encode("utf-8"), 
 	str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]), 
 	str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]))
 

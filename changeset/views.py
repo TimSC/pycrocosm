@@ -11,7 +11,11 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
 import xml.etree.ElementTree as ET
-import cStringIO
+import sys
+if sys.version_info.major < 3: 
+	import cStringIO as StringIO
+else:
+	from io import StringIO
 import datetime
 import pgmap
 import time
@@ -76,7 +80,7 @@ def SerializeChangesets(changesetsData, include_discussion=False):
 		root.append(SerializeChangesetToElement(changesetData, include_discussion))
 
 	doc = ET.ElementTree(root)
-	sio = cStringIO.StringIO()
+	sio = StringIO.StringIO()
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -572,7 +576,7 @@ def download(request, changesetId):
 	t.Commit()
 
 	#print (changesetData.data.empty())
-	sio = cStringIO.StringIO()
+	sio = StringIO.StringIO()
 	outBufWrapped = pgmap.CPyOutbuf(sio)
 	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped)
 
@@ -699,7 +703,7 @@ def upload(request, changesetId):
 
 	t.Commit()
 
-	sio = cStringIO.StringIO()
+	sio = StringIO.StringIO()
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

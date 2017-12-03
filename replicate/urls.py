@@ -5,6 +5,7 @@ from django.conf.urls import url
 
 from . import views
 
+app_name = 'replicate'
 urlpatterns = [
 	url(r'^(minute|hour|day)/$', views.catalog, name='catalog'),
 	url(r'^(minute|hour|day)/([0-9]+)/$', views.catalog2, name='catalog2'),

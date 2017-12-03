@@ -33,7 +33,7 @@ class UsersTestCase(TestCase):
 
 
 	def test_get_details(self):
-		response = self.client.get(reverse('details'))
+		response = self.client.get(reverse('users:details'))
 
 		self.assertEqual(response.status_code, 200)
 		
@@ -46,11 +46,11 @@ class UsersTestCase(TestCase):
 
 	def test_get_details_anon(self):
 		anonClient = Client()
-		response = anonClient.get(reverse('details'))
+		response = anonClient.get(reverse('users:details'))
 		self.assertEqual(response.status_code, 403)
 
 	def test_get_preferences(self):
-		response = self.client.get(reverse('preferences'))
+		response = self.client.get(reverse('users:preferences'))
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -66,12 +66,12 @@ class UsersTestCase(TestCase):
 
 	def test_get_preferences_anon(self):
 		anonClient = Client()
-		response = anonClient.get(reverse('preferences'))
+		response = anonClient.get(reverse('users:preferences'))
 		self.assertEqual(response.status_code, 403)
 	
 	def test_put_preferences(self):
 
-		response = self.client.put(reverse('preferences'), self.prefXml, content_type='application/xml')
+		response = self.client.put(reverse('users:preferences'), self.prefXml, content_type='application/xml')
 		self.assertEqual(response.status_code, 200)
 
 		prefs = UserPreference.objects.filter(user=self.user)
@@ -84,11 +84,11 @@ class UsersTestCase(TestCase):
 
 	def test_put_preferences_anon(self):
 		anonClient = Client()
-		response = anonClient.put(reverse('preferences'), self.prefXml, content_type='application/xml')
+		response = anonClient.put(reverse('users:preferences'), self.prefXml, content_type='application/xml')
 		self.assertEqual(response.status_code, 403)
 
 	def test_put_preference_single(self):
-		response = self.client.put(reverse('preferences_put', args=["agree"]), "details", content_type='text/plain')
+		response = self.client.put(reverse('users:preferences_put', args=["agree"]), "details", content_type='text/plain')
 		self.assertEqual(response.status_code, 200)
 
 		prefs = UserPreference.objects.filter(user=self.user)
@@ -101,7 +101,7 @@ class UsersTestCase(TestCase):
 
 	def test_put_preference_single_anon(self):
 		anonClient = Client()
-		response = anonClient.put(reverse('preferences_put', args=["agree"]), "details", content_type='text/plain')
+		response = anonClient.put(reverse('users:preferences_put', args=["agree"]), "details", content_type='text/plain')
 		self.assertEqual(response.status_code, 403)
 
 	def tearDown(self):

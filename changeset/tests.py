@@ -9,7 +9,11 @@ from django.contrib.auth.models import User
 
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse, fromstring
-import StringIO
+import sys
+if sys.version_info.major < 3: 
+	import cStringIO as StringIO
+else:
+	from io import StringIO
 import pgmap
 import gc
 import sys

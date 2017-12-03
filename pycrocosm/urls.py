@@ -35,7 +35,7 @@ urlpatterns = [
 	url(r'admin/', admin.site.urls),
 	url(r'^accounts/passwordsent/$', auth_views.PasswordResetDoneView.as_view(), name='password_reset_done'),
 	url(r'^accounts/passwordchanged/$', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),
-	url(r'accounts/', include('django.contrib.auth.urls', namespace="accounts")),
+	url(r'accounts/', include(('django.contrib.auth.urls', 'accounts'), namespace="accounts")),
 	url(r'register/', include('register.urls', namespace="register")),
 	url(r'replication/', include('replicate.urls', namespace='replication')),
 	url(r'^oauth/request_token$', oauth_views.request_token,      name='oauth_request_token'),
@@ -45,4 +45,5 @@ urlpatterns = [
 	url(r'', include('frontpage.urls', namespace='frontpage')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
 ]
+
 

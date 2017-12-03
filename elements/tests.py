@@ -27,7 +27,7 @@ class ElementsTestCase(TestCase):
 
 	#def test_put_node(self):
 
-	#	response = self.client.put(reverse('element', args=['node', '5']), "", content_type='text/xml')
+	#	response = self.client.put(reverse('elements:element', args=['node', '5']), "", content_type='text/xml')
 
 	#	self.assertEqual(response.status_code, 200)
 
@@ -39,7 +39,7 @@ class ElementsTestCase(TestCase):
 			   <tag k="note" v="Just a node"/>
 			 </node>
 			</osm>""".format(cs.objId)
-		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
+		response = self.client.put(reverse('elements:create', args=['node']), createXml, content_type='text/xml')
 		if response.status_code != 200:
 			print (response.content)
 
@@ -52,7 +52,7 @@ class ElementsTestCase(TestCase):
 			 <node changeset="{}" lat="51.0" lon="2.2">
 			   <tag k="note" v="Just a node"/>
 			</osm>""".format(cs.objId)
-		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
+		response = self.client.put(reverse('elements:create', args=['node']), createXml, content_type='text/xml')
 
 		self.assertEqual(response.status_code, 400)
 
@@ -80,7 +80,7 @@ class ElementsGetParentsTestCase(TestCase):
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
-		response = anonClient.get(reverse('ways_for_node', args=['node', str(node.objId)]))
+		response = anonClient.get(reverse('elements:ways_for_node', args=['node', str(node.objId)]))
 		if response.status_code != 200:
 			print (response.content)
 		self.assertEqual(response.status_code, 200)

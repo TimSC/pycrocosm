@@ -5,6 +5,7 @@ from django.conf.urls import url
 
 from . import views
 
+app_name = 'elements'
 urlpatterns = [
     url(r'([0-9]+)/ways', views.ways_for_node, name='ways_for_node'),
     url(r'([0-9]+)/full', views.full_obj, name='full_obj'),

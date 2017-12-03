@@ -5,6 +5,7 @@ from django.conf.urls import url
 
 from . import views
 
+app_name = 'changeset'
 urlpatterns = [
     url(r'^/create$', views.create, name='create'),
     url(r'^/(?P<changesetId>[0-9]+)/close$', views.close, name='close'),
