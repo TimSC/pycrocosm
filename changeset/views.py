@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import print_function
 
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
@@ -570,7 +571,7 @@ def download(request, changesetId):
 
 	t.Commit()
 
-	#print changesetData.data.empty()
+	#print (changesetData.data.empty())
 	sio = cStringIO.StringIO()
 	outBufWrapped = pgmap.CPyOutbuf(sio)
 	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped)
@@ -693,7 +694,7 @@ def upload(request, changesetId):
 			request.user.id, request.user.username, timestamp,
 			createdNodeIds, createdWayIds, createdRelationIds, ifunused)
 		if ret != True:
-			print ret
+			print (ret)
 			return ret
 
 	t.Commit()

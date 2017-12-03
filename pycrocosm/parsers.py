@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+from __future__ import unicode_literals
+from __future__ import print_function
 from rest_framework.parsers import BaseParser
 from rest_framework.exceptions import ParseError
 from defusedxml.ElementTree import parse

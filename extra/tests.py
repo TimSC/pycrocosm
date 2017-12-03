@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import print_function
 
 from django.test import TestCase
 from django.test import Client
@@ -46,7 +47,7 @@ class ExtraFunctionsTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -55,7 +56,7 @@ class ExtraFunctionsTestCase(TestCase):
 
 		response = self.client.get(reverse('extra:getaffected', args=("node", str(diffDict["node"][-5393][0]))))
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		osmData = DecodeOsmdataResponse(response.content)
@@ -74,7 +75,7 @@ class ExtraFunctionsTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), self.xmlSimpleWay.format(cs.objId), 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -83,7 +84,7 @@ class ExtraFunctionsTestCase(TestCase):
 
 		response = self.client.get(reverse('extra:getaffected', args=("way", str(diffDict["way"][-434][0]))))
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		osmData = DecodeOsmdataResponse(response.content)
@@ -109,6 +110,6 @@ class ExtraFunctionsTestCase(TestCase):
 		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
-			print errStr.errStr
+			print (errStr.errStr)
 		t.Commit()
 

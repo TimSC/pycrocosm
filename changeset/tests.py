@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import print_function
 
 from django.test import TestCase
 from django.test import Client
@@ -145,7 +146,7 @@ class ChangesetTestCase(TestCase):
 		ret = t.GetChangeset(cid, cs2, errStr)
 		t.Commit()
 		if ret == 0:
-			print errStr
+			print (errStr)
 		self.assertEqual(ret != 0, True)
 		if ret == -1:
 			raise KeyError("Changeset not found")
@@ -156,7 +157,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:create'), self.createXml, content_type='text/xml')
 
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
 		
@@ -171,14 +172,14 @@ class ChangesetTestCase(TestCase):
 		anonClient = Client()
 		response = anonClient.put(reverse('changeset:create'), self.createXml, content_type='text/xml')
 		if response.status_code != 403:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 403)
 
 	def test_create_changeset_unicodetags(self):
 		response = self.client.put(reverse('changeset:create'), self.createXmlUnicodeTags, content_type='text/xml')
 
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 		cid = int(response.content)
 		
@@ -296,7 +297,7 @@ class ChangesetTestCase(TestCase):
 		anonClient = Client()
 		response = anonClient.put(reverse('changeset:close', args=(cs.objId,)))
 		if response.status_code != 403:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 403)
 
 		cs2 = self.get_test_changeset(cs.objId)
@@ -363,7 +364,7 @@ class ChangesetTestCase(TestCase):
 		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
-			print errStr.errStr
+			print (errStr.errStr)
 		t.Commit()
 
 class ChangesetUploadTestCase(TestCase):
@@ -396,7 +397,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -429,7 +430,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -492,7 +493,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -518,7 +519,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_create_overlong_tag(self):
@@ -556,7 +557,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -610,7 +611,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -675,7 +676,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_node_used_by_way(self):
@@ -694,7 +695,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_node_used_by_relation(self):
@@ -713,7 +714,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_way_used_by_relation(self):
@@ -732,7 +733,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
 	def test_upload_delete_relation_used_by_relation(self):
@@ -751,7 +752,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
 	def test_upload_multi_action(self):
@@ -781,7 +782,7 @@ class ChangesetUploadTestCase(TestCase):
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		xml = fromstring(response.content)
@@ -803,7 +804,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_delete_node_used_by_relation_if_unused(self):
@@ -822,7 +823,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_delete_way_used_by_relation_if_unused(self):
@@ -841,7 +842,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_delete_relation_used_by_relation_if_unused(self):
@@ -860,7 +861,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_delete_interdependent_objects(self):
@@ -883,7 +884,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def test_upload_delete_relations_with_circular_reference(self):
@@ -906,7 +907,7 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		#print response.content
+		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 	def tearDown(self):
@@ -925,6 +926,6 @@ class ChangesetUploadTestCase(TestCase):
 		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
-			print errStr.errStr
+			print (errStr.errStr)
 		t.Commit()
 

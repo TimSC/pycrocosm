@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import print_function
 
 from django.test import TestCase
 from django.test import Client
@@ -40,7 +41,7 @@ class ElementsTestCase(TestCase):
 			</osm>""".format(cs.objId)
 		response = self.client.put(reverse('create', args=['node']), createXml, content_type='text/xml')
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 
 		self.assertEqual(response.status_code, 200)
 
@@ -81,7 +82,7 @@ class ElementsGetParentsTestCase(TestCase):
 
 		response = anonClient.get(reverse('ways_for_node', args=['node', str(node.objId)]))
 		if response.status_code != 200:
-			print response.content
+			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
 		osmData = DecodeOsmdataResponse(response.content)

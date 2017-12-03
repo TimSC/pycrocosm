@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
+from __future__ import print_function
 
 from django.test import TestCase
 from django.test import Client
@@ -51,7 +52,7 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
-		print errStr.errStr
+		print (errStr.errStr)
 		return None
 	else:
 		t.Commit()
@@ -84,7 +85,7 @@ def create_way(uid, username, refs, changeset = 1000):
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
-		print errStr.errStr
+		print (errStr.errStr)
 		return None
 	else:
 		t.Commit()
@@ -119,7 +120,7 @@ def create_relation(uid, username, refs, changeset = 1000):
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
-		print errStr.errStr
+		print (errStr.errStr)
 		return None
 	else:
 		t.Commit()
@@ -154,7 +155,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
-		print errStr.errStr
+		print (errStr.errStr)
 		return None
 	else:
 		t.Commit()
@@ -176,7 +177,7 @@ class QueryMapTestCase(TestCase):
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			t.Abort()
-			print errStr.errStr
+			print (errStr.errStr)
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
@@ -206,7 +207,7 @@ class QueryMapTestCase(TestCase):
 		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
-			print errStr.errStr
+			print (errStr.errStr)
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
@@ -238,7 +239,7 @@ class QueryMapTestCase(TestCase):
 		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
-			print errStr.errStr
+			print (errStr.errStr)
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
@@ -287,7 +288,7 @@ class QueryMapTestCase(TestCase):
 		if tIn is None:
 			if not ok:
 				t.Abort()
-				print errStr.errStr
+				print (errStr.errStr)
 			else:
 				t.Commit()
 		self.assertEqual(ok, True)
@@ -427,7 +428,7 @@ class QueryMapTestCase(TestCase):
 			self.delete_object(nodeObjToDelete)
 			self.check_node_in_query(nodeObjToDelete, False)
 		else:
-			print "No free nodes in ROI for testing"
+			print ("No free nodes in ROI for testing")
 
 	def test_modify_static_node(self):
 
@@ -450,7 +451,7 @@ class QueryMapTestCase(TestCase):
 			self.check_node_in_query(nodeObjToModify, False)
 
 		else:
-			print "No nodes in ROI for testing"
+			print ("No nodes in ROI for testing")
 
 	def test_query_active_way(self):
 		node = create_node(self.user.id, self.user.username)
@@ -501,7 +502,7 @@ class QueryMapTestCase(TestCase):
 			modWay = self.modify_way(wayObjToMod, refs, {"foo": "bacon"})
 			self.check_way_in_query(modWay, self.roi, True)
 		else:
-			print "No free ways in ROI for testing"
+			print ("No free ways in ROI for testing")
 
 	def test_delete_static_way(self):
 
@@ -522,7 +523,7 @@ class QueryMapTestCase(TestCase):
 			self.delete_object(wayObjToDelete)
 			self.check_way_in_query(wayObjToDelete, self.roi, False)
 		else:
-			print "No free ways in ROI for testing"
+			print ("No free ways in ROI for testing")
 
 	def test_query_active_relation(self):
 		node = create_node(self.user.id, self.user.username)
@@ -602,7 +603,7 @@ class QueryMapTestCase(TestCase):
 			self.check_relation_in_query(modRelation, self.roi, True)
 			return #Success!
 		
-		print "No free relations in ROI for testing"
+		print ("No free relations in ROI for testing")
 
 	def test_delete_static_relation(self):
 
@@ -640,7 +641,7 @@ class QueryMapTestCase(TestCase):
 			return #Success!
 		
 		t.Commit()
-		print "No free relations (with no parent relations) in ROI for testing"
+		print ("No free relations (with no parent relations) in ROI for testing")
 
 	def tearDown(self):
 		#Swig based transaction object is not freed if an exception is thrown in python view code
@@ -656,7 +657,7 @@ class QueryMapTestCase(TestCase):
 		t = p.GetTransaction(b"EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
-			print errStr.errStr
+			print (errStr.errStr)
 		t.Commit()
 		self.assertEqual(ok, True)
 
