@@ -19,9 +19,12 @@ if TEST:
 else:
 	ACTIVE_DB = "PREFIX_MOD"
 
+def Escape(st):
+	return st.replace('"','\\"').replace("'","\\'")
+
 mapDbSettings = settings.MAP_DATABASE
-connectionString = b"dbname={} user={} password='{}' hostaddr={} port={}".format(mapDbSettings["NAME"], 
-	mapDbSettings["USER"], mapDbSettings["PASSWORD"], mapDbSettings["HOST"], mapDbSettings["PORT"])
+connectionString = b"dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]), 
+	Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"]))
 p = pgmap.PgMap(connectionString, 
 	str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]), 
 	str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]))
