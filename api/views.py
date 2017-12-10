@@ -54,7 +54,7 @@ def capabilities(request):
 		blacklist = ET.SubElement(imagery, "blacklist")
 		blacklist.attrib["regex"] = bl
 
-	sio = cStringIO.StringIO()
+	sio = StringIO.StringIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -67,7 +67,7 @@ def permissions(request):
 
 	permissions = ET.SubElement(root, "permissions")
 
-	sio = cStringIO.StringIO()
+	sio = StringIO.StringIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
