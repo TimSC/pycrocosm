@@ -35,8 +35,9 @@ class MapQueryResponse(object):
 		self.sio = io.BytesIO()
 		self.enc = pgmap.PyOsmXmlEncode(self.sio)
 		
-		t = p.GetTransaction(b"ACCESS SHARE")
-		self.mapQuery = t.GetQueryMgr()
+		#Don't let transaction object go out of scope while query is running
+		self.t = p.GetTransaction(b"ACCESS SHARE")
+		self.mapQuery = self.t.GetQueryMgr()
 		if self.mapQuery.Start(bbox, self.enc)<0:
 			raise RuntimeError("Map query failed to start")
 		self.complete = False
