@@ -125,6 +125,15 @@ def upload_check_create(objs):
 
 	return None
 
+def upload_check_way_mems(action, objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if action != "delete" and len(obj.refs) < 2:
+			return HttpResponseBadRequest("Way has too few nodes", content_type="text/plain")
+		if len(obj.refs) > settings.WAYNODES_MAXIMUM:
+			return HttpResponseBadRequest("Way has too many nodes", content_type="text/plain")
+	return None
+
 def upload_check_modify(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
@@ -191,6 +200,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	else:
 		return True #Skip this block
+
+	ret = upload_check_way_mems(action, block.ways)
+	if ret is not None: return ret
 
 	#Check changeset value is consistent
 	for i in range(block.nodes.size()):

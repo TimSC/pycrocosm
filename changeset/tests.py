@@ -19,6 +19,7 @@ import gc
 import sys
 import time
 import datetime
+import random
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation, modify_relation
@@ -578,6 +579,58 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(newWay is not None, True)
 		for ref in list(newWay.refs):
 			self.assertEqual(ref > 0, True)
+
+	def generate_upload_way_with_n_nodes(self, csId, numNodes):
+		nids = range(-5393, -5393-numNodes, -1)
+		xml = ["""<osmChange generator="JOSM" version="0.6">
+		<create>"""]
+		for i in nids:
+			xml.append("""  <node changeset="{0}" id="{1}" lat="{2}" lon="{3}" />\n"""
+				.format(csId, i, 50.79046578105+random.uniform(-1,1), -1.04971367626+random.uniform(-1,1)))
+		xml.append("""  <way changeset="{0}" id="-434">
+		   <tag k="note" v="Just a way"/>""".format(csId))
+		for i in nids:
+			xml.append("""   <nd ref="{0}"/>\n""".format(i))
+		xml.append("""</way>
+		</create>
+		</osmChange>""")
+		return "".join(xml)
+
+	def test_upload_create_way_with_max_nodes(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+		xml = self.generate_upload_way_with_n_nodes(cs.objId, settings.WAYNODES_MAXIMUM)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 200)
+
+	def test_upload_create_way_too_many_nodes(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+		xml = self.generate_upload_way_with_n_nodes(cs.objId, settings.WAYNODES_MAXIMUM+1)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 400)
+
+	def test_upload_create_way_empty(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+		xml = self.generate_upload_way_with_n_nodes(cs.objId, 0)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 400)
+
+	def test_upload_create_way_too_few_nodes(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
+		xml = self.generate_upload_way_with_n_nodes(cs.objId, 1)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 400)
 
 	def test_upload_create_complex(self):
 
