@@ -7,6 +7,7 @@ from django.http import HttpResponse
 from querymap.views import p
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
+from pycrocosm import common
 import pgmap
 import io
 
@@ -24,7 +25,7 @@ def get_affected(request, objType, objIds):
 	t.GetAffectedObjects(osmData, affectedData)
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	affectedData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

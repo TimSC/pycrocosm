@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
+from pycrocosm import common
 import pgmap
 import io
 import random
@@ -33,7 +34,8 @@ p = pgmap.PgMap(connectionString.encode("utf-8"),
 class MapQueryResponse(object):
 	def __init__(self, bbox):
 		self.sio = io.BytesIO()
-		self.enc = pgmap.PyOsmXmlEncode(self.sio)
+		print (type(common.xmlAttribs))
+		self.enc = pgmap.PyOsmXmlEncode(self.sio, common.xmlAttribs)
 		
 		#Don't let transaction object go out of scope while query is running
 		self.t = p.GetTransaction(b"ACCESS SHARE")

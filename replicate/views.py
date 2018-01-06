@@ -6,6 +6,7 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
 from django.conf import settings
 from querymap.views import p
+from pycrocosm import common
 import pgmap
 import io
 import time
@@ -130,7 +131,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmData)
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
 	return sio.getvalue()
 

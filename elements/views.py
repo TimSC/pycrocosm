@@ -12,6 +12,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
 from querymap.views import p
+from pycrocosm import common
 import pgmap
 import io
 import datetime
@@ -85,7 +86,7 @@ def element(request, objType, objId):
 			return HttpResponseNotFound("{} {} not found".format(objType, objId))
 
 		sio = io.BytesIO()
-		enc = pgmap.PyOsmXmlEncode(sio)
+		enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 		osmData.StreamTo(enc)
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -135,7 +136,7 @@ def relations_for_obj(request, objType, objId):
 	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -147,7 +148,7 @@ def ways_for_node(request, objType, objId):
 	t.GetWaysForNodes([int(objId)], osmData);	
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -159,7 +160,7 @@ def full_obj(request, objType, objId):
 	t.GetFullObjectById(objType.encode("UTF-8"), int(objId), osmData)
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

@@ -76,7 +76,10 @@ def SerializeChangesetToElement(changesetData, include_discussion=False):
 def SerializeChangesets(changesetsData, include_discussion=False):
 	root = ET.Element('osm')
 	root.attrib["version"] = str(settings.API_VERSION)
-	root.attrib["generator"] = settings.GENERATOR
+	for key, value in zip(["generator", "copyright", "attribution", "license"], 
+		[settings.GENERATOR, settings.COPYRIGHT, settings.ATTRIBUTION, settings.LICENSE]):
+		if len(value) > 0:
+			root.attrib[key] = value
 
 	for changesetData in changesetsData:
 		root.append(SerializeChangesetToElement(changesetData, include_discussion))
