@@ -79,7 +79,7 @@ def element(request, objType, objId):
 	if request.method == 'GET':
 		osmData = pgmap.OsmData()
 		t = p.GetTransaction(b"ACCESS SHARE")
-		t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData);
+		t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
 
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 			return HttpResponseNotFound("{} {} not found".format(objType, objId))
@@ -155,5 +155,11 @@ def ways_for_node(request, objType, objId):
 def full_obj(request, objType, objId):
 	t = p.GetTransaction(b"ACCESS SHARE")
 
-	return HttpResponse("", content_type='text/xml')
+	osmData = pgmap.OsmData()
+	t.GetFullObjectById(objType.encode("UTF-8"), int(objId), osmData)
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
