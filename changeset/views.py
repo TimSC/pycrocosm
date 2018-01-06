@@ -7,6 +7,8 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFou
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
+from django.contrib.auth.models import User
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
@@ -643,19 +645,31 @@ def expand_bbox(request, changesetId):
 
 @api_view(['GET'])
 def list(request):
-
 	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
-	user = request.GET.get('user', None)
+	user_uid = request.GET.get('user', 0)
 	display_name = request.GET.get('display_name', None)
 	timearg = request.GET.get('time', None)
 	openarg = request.GET.get('open', None)
 	close = request.GET.get('closed', None)
 	changesets = request.GET.get('changesets', None)
 
+	#Check display_name or uid actually exists
+	if display_name is not None:
+		try:
+			user = User.objects.get(username=display_name)
+		except ObjectDoesNotExist:
+			return HttpResponseNotFound("User not found")
+		user_uid = user.id
+	elif user_uid != 0:
+		try:
+			user = User.objects.get(id=user_uid)
+		except ObjectDoesNotExist:
+			return HttpResponseNotFound("User not found")
+
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
 	t = p.GetTransaction(b"ACCESS SHARE")
-	ok = t.GetChangesets(changesets, errStr)
+	ok = t.GetChangesets(changesets, int(user_uid), errStr)
 
 	t.Commit()
 
