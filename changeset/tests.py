@@ -485,7 +485,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(response.status_code, 409)
 
 	def test_upload_delete_single_node(self):
-
+	
 		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
 

@@ -34,7 +34,6 @@ p = pgmap.PgMap(connectionString.encode("utf-8"),
 class MapQueryResponse(object):
 	def __init__(self, bbox):
 		self.sio = io.BytesIO()
-		print (type(common.xmlAttribs))
 		self.enc = pgmap.PyOsmXmlEncode(self.sio, common.xmlAttribs)
 		
 		#Don't let transaction object go out of scope while query is running
