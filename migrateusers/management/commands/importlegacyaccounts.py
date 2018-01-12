@@ -21,7 +21,7 @@ class Command(BaseCommand):
 			self.stdout.write("Importing {}".format(userNode.attrib["display_name"]))
 			try:
 				existingUser = LegacyAccount.objects.get(uid=int(userNode.attrib["id"]))
-			except migrateusers.models.DoesNotExist:
+			except LegacyAccount.DoesNotExist:
 
 				homeNode = userNode.find("home")
 

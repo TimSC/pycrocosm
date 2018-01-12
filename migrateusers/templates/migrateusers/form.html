@@ -1,1 +1,15 @@
-<p>Foobar</p>
+<h3>Claim existing fosm.org account</h3>
+
+{% if errMsg %}
+<p>{{errMsg}}</p>
+{% endif %}
+{% if successMsg %}
+<p>{{successMsg}}</p>
+{% endif %}
+
+<form action="." method="post">
+    {% csrf_token %}
+    {{ form }}
+    <input type="submit" value="Submit" />
+</form>
+
