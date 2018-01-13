@@ -43,6 +43,7 @@ urlpatterns = [
 	url(r'^oauth/access_token$',  oauth_views.access_token,	      name='oauth_access_token'),
 	url(r'oauth/',  include('oauth.urls', namespace="oauth")),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
+	url(r'migrate/', include('migrateusers.urls', namespace='migrateusers')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
 ]
 
