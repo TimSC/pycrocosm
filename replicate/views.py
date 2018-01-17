@@ -126,7 +126,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData()
 	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmData)
 

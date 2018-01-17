@@ -8,7 +8,7 @@ import pgmap
 import datetime
 
 def history(request):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
@@ -23,7 +23,7 @@ def history(request):
 	return render(request, 'objectinfo/history.html', {'changesets': changesetLi})
 
 def changeset(request, changesetId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	changeset = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()

@@ -16,7 +16,7 @@ def index(request):
 	if request.method == 'POST':
 		form = forms.RegisterForm(request.POST)
 		if form.is_valid():
-			t = p.GetTransaction(b"EXCLUSIVE")
+			t = p.GetTransaction("EXCLUSIVE")
 			cid = t.GetAllocatedId(b"uid")
 			userObj = form.save(commit=False)
 			userObj.id = cid

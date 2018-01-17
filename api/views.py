@@ -4,10 +4,6 @@ from __future__ import print_function
 
 import xml.etree.ElementTree as ET
 import sys
-if sys.version_info.major < 3: 
-	import cStringIO as StringIO
-else:
-	from io import StringIO
 
 from django.shortcuts import render
 from django.http import HttpResponse
@@ -54,7 +50,7 @@ def capabilities(request):
 		blacklist = ET.SubElement(imagery, "blacklist")
 		blacklist.attrib["regex"] = bl
 
-	sio = StringIO.StringIO()
+	sio = io.BytesIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -67,7 +63,7 @@ def permissions(request):
 
 	permissions = ET.SubElement(root, "permissions")
 
-	sio = StringIO.StringIO()
+	sio = io.BytesIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

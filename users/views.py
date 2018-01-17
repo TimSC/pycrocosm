@@ -15,11 +15,8 @@ import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
 from rest_framework.parsers import BaseParser
 
+import io
 import sys
-if sys.version_info.major < 3: 
-	import cStringIO as StringIO
-else:
-	import io as StringIO
 
 class DefusedXmlParser(BaseParser):
 	media_type = 'application/xml'
@@ -86,7 +83,8 @@ def details(request):
 	msgSent = ET.SubElement(messages, "sent")
 	msgSent.attrib["count"] = "1"
 
-	sio = StringIO.StringIO()
+	print (ET.dump(root))
+	sio = io.BytesIO()
 	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -112,7 +110,7 @@ def preferences(request):
 			preference.attrib["k"] = pref.key
 			preference.attrib["v"] = pref.value
 
-		sio = StringIO.StringIO()
+		sio = io.BytesIO()
 		doc.write(sio, "UTF-8")
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 

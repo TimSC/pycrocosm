@@ -9,7 +9,7 @@ from querymap.views import p
 # Create your views here.
 
 def index(request):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	value = int(t.GetMetaValue("readonly".encode('utf-8'), errStr))

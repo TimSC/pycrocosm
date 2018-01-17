@@ -48,7 +48,7 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
@@ -81,7 +81,7 @@ def create_way(uid, username, refs, changeset = 1000):
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
@@ -116,7 +116,7 @@ def create_relation(uid, username, refs, changeset = 1000):
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
@@ -151,7 +151,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	createdRelationIds = pgmap.mapi64i64()
 	errStr = pgmap.PgMapError()
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		t.Abort()
@@ -173,7 +173,7 @@ class QueryMapTestCase(TestCase):
 		self.client.login(username=self.username, password=self.password)
 		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			t.Abort()
@@ -203,7 +203,7 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
@@ -235,7 +235,7 @@ class QueryMapTestCase(TestCase):
 		createdRelationIds = pgmap.mapi64i64()
 		errStr = pgmap.PgMapError()
 
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		if not ok:
 			t.Abort()
@@ -281,7 +281,7 @@ class QueryMapTestCase(TestCase):
 		if tIn is not None:
 			t = tIn
 		else:
-			t = p.GetTransaction(b"EXCLUSIVE")
+			t = p.GetTransaction("EXCLUSIVE")
 
 		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 		
@@ -616,7 +616,7 @@ class QueryMapTestCase(TestCase):
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
 
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 
 		#Try to find a suitable candidate for deletion
 		for candidateId in candidateIds:
@@ -654,7 +654,7 @@ class QueryMapTestCase(TestCase):
 		u.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)

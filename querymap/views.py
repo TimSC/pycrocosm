@@ -27,7 +27,7 @@ def Escape(st):
 mapDbSettings = settings.MAP_DATABASE
 connectionString = ("dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]), 
 	Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"])))
-p = pgmap.PgMap(connectionString.encode("utf-8"), 
+p = pgmap.PgMap(connectionString, 
 	str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]), 
 	str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]))
 
@@ -37,7 +37,7 @@ class MapQueryResponse(object):
 		self.enc = pgmap.PyOsmXmlEncode(self.sio, common.xmlAttribs)
 		
 		#Don't let transaction object go out of scope while query is running
-		self.t = p.GetTransaction(b"ACCESS SHARE")
+		self.t = p.GetTransaction("ACCESS SHARE")
 		self.mapQuery = self.t.GetQueryMgr()
 		if self.mapQuery.Start(bbox, self.enc)<0:
 			raise RuntimeError("Map query failed to start")
@@ -76,7 +76,7 @@ def index(request):
 	if bbox is None:
 		return HttpResponseBadRequest("Bbox must be specified as an argument", content_type="text/plain")
 
-	bbox = map(float, bbox.split(","))
+	bbox = list(map(float, bbox.split(",")))
 	if len(bbox) != 4:
 		return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
 

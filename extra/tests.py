@@ -107,7 +107,7 @@ class ExtraFunctionsTestCase(TestCase):
 		gc.collect()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)

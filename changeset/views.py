@@ -14,10 +14,6 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 
 import xml.etree.ElementTree as ET
 import sys
-if sys.version_info.major < 3: 
-	import cStringIO as StringIO
-else:
-	from io import StringIO
 import datetime
 import pgmap
 import time
@@ -85,7 +81,7 @@ def SerializeChangesets(changesetsData, include_discussion=False):
 		root.append(SerializeChangesetToElement(changesetData, include_discussion))
 
 	doc = ET.ElementTree(root)
-	sio = StringIO.StringIO()
+	sio = io.BytesIO()
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -479,7 +475,7 @@ def create(request):
 	changeset.uid = request.user.id
 	changeset.username = request.user.username.encode("utf-8")
 
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 
 	changeset.open_timestamp = int(time.time())
 
@@ -499,9 +495,9 @@ def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
 	if request.method == 'GET':
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 	else:
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 	
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -552,7 +548,7 @@ def changeset(request, changesetId):
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def close(request, changesetId):
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -580,7 +576,7 @@ def close(request, changesetId):
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
 def download(request, changesetId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 	
 	osmChange = pgmap.OsmChange()
 	errStr = pgmap.PgMapError()
@@ -593,7 +589,7 @@ def download(request, changesetId):
 	t.Commit()
 
 	#print (changesetData.data.empty())
-	sio = StringIO.StringIO()
+	sio = io.BytesIO()
 	outBufWrapped = pgmap.CPyOutbuf(sio)
 	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped)
 
@@ -604,7 +600,7 @@ def download(request, changesetId):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -671,7 +667,7 @@ def list(request):
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 	ok = t.GetChangesets(changesets, int(user_uid), errStr)
 
 	t.Commit()
@@ -688,7 +684,7 @@ def list(request):
 def upload(request, changesetId):
 
 	#Check changeset is open and for this user
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -732,7 +728,7 @@ def upload(request, changesetId):
 
 	t.Commit()
 
-	sio = StringIO.StringIO()
+	sio = io.BytesIO()
 	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

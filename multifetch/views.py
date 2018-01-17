@@ -23,7 +23,7 @@ def index(request, objType):
 	except ValueError as err:
 		return HttpResponseBadRequest(err)
 
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType[:-1].encode("UTF-8"), pgmap.seti64(objIds), osmData);
 

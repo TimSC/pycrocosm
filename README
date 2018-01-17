@@ -23,17 +23,7 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
    source pgmapenv/bin/activate
 
-   pip install django==1.11.8
-
-Unhelpfully, django-oauth-plus 2.2.9 (latest at time of writing) is not compatible with Django 1.11.8. (Django 2.0 is not compatible with Python 2). I've also added some fixes for JOSM quirks, so compile it from source:
-
-   git clone https://github.com/TimSC/django-oauth-plus-mod
-
-   cd django-oauth-plus-mod
-
-   python setup.py install
-
-   cd ..
+   pip install django==1.11.8 django-oauth10a-mod
 
 Install the rest of the dependencies
 

@@ -10,10 +10,7 @@ from django.contrib.auth.models import User
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse, fromstring
 import sys
-if sys.version_info.major < 3: 
-	import cStringIO as StringIO
-else:
-	from io import StringIO
+
 import pgmap
 import gc
 import sys
@@ -40,7 +37,7 @@ def ParseOsmDiffToDict(xml):
 	return out
 
 def GetObj(p, objType, objId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData() #Watch out, this goes out of scope!
 	t.GetObjectsById(objType.encode("UTF-8"), [objId], osmData)
 	del t
@@ -65,7 +62,7 @@ def GetObj(p, objType, objId):
 def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
 	if tags is None:
 		tags = {'foo': 'bar'}
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 	cs = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
 	for k in tags:
@@ -145,7 +142,7 @@ class ChangesetTestCase(TestCase):
 			</osm>"""
 
 	def get_test_changeset(self, cid):
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cid, cs2, errStr)
@@ -268,7 +265,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cs.objId, cs2, errStr)
@@ -282,7 +279,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cs.objId, cs2, errStr)
@@ -315,7 +312,7 @@ class ChangesetTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 200)
 
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		t.GetChangeset(cs.objId, cs2, errStr)
@@ -366,7 +363,7 @@ class ChangesetTestCase(TestCase):
 		gc.collect()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)
@@ -980,7 +977,7 @@ class ChangesetUploadTestCase(TestCase):
 		gc.collect()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)

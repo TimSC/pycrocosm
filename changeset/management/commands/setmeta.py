@@ -10,7 +10,7 @@ class Command(BaseCommand):
 		parser.add_argument('value', nargs='+', type=str)
 
 	def handle(self, *args, **options):
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		errStr = pgmap.PgMapError()
 
 		ok = t.SetMetaValue(options['key'][0].encode('utf-8'), 

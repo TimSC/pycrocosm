@@ -16,7 +16,7 @@ import io
 @api_view(['GET'])
 def get_affected(request, objType, objIds):
 
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64(map(int, objIds.split(","))), osmData)
@@ -34,7 +34,7 @@ def get_affected(request, objType, objIds):
 @parser_classes((DefusedXmlParser, ))
 def get_affected_from_upload(request):
 
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	affectedData = pgmap.OsmData()
 	t.GetAffectedObjects(request.data, affectedData)

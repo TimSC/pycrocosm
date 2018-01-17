@@ -79,7 +79,7 @@ def element(request, objType, objId):
 
 	if request.method == 'GET':
 		osmData = pgmap.OsmData()
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
 
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
@@ -91,7 +91,7 @@ def element(request, objType, objId):
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 	if request.method in ['PUT', 'DELETE']:
-		t = p.GetTransaction(b"EXCLUSIVE")
+		t = p.GetTransaction("EXCLUSIVE")
 		action = None
 		if request.method == "PUT": action = "modify"
 		if request.method == "DELETE": action = "delete"
@@ -115,7 +115,7 @@ def element(request, objType, objId):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((OsmDataXmlParser,))
 def create(request, objType):
-	t = p.GetTransaction(b"EXCLUSIVE")
+	t = p.GetTransaction("EXCLUSIVE")
 
 	obj = None
 	if objType == "node": obj = request.data.nodes[0]
@@ -130,7 +130,7 @@ def create(request, objType):
 
 @api_view(['GET'])
 def relations_for_obj(request, objType, objId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
@@ -142,7 +142,7 @@ def relations_for_obj(request, objType, objId):
 
 @api_view(['GET'])
 def ways_for_node(request, objType, objId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetWaysForNodes([int(objId)], osmData);	
@@ -154,7 +154,7 @@ def ways_for_node(request, objType, objId):
 
 @api_view(['GET'])
 def full_obj(request, objType, objId):
-	t = p.GetTransaction(b"ACCESS SHARE")
+	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetFullObjectById(objType.encode("UTF-8"), int(objId), osmData)

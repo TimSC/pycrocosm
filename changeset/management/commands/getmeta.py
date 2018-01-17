@@ -12,7 +12,7 @@ class Command(BaseCommand):
 		parser.add_argument('key', nargs='+', type=str)
 
 	def handle(self, *args, **options):
-		t = p.GetTransaction(b"ACCESS SHARE")
+		t = p.GetTransaction("ACCESS SHARE")
 		errStr = pgmap.PgMapError()
 
 		value = t.GetMetaValue(options['key'][0].encode('utf-8'), 
