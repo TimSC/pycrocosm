@@ -39,7 +39,7 @@ def ParseOsmDiffToDict(xml):
 def GetObj(p, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData() #Watch out, this goes out of scope!
-	t.GetObjectsById(objType.encode("UTF-8"), [objId], osmData)
+	t.GetObjectsById(objType, [objId], osmData)
 	del t
 	objs = None
 	if objType == "node":

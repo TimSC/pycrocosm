@@ -85,7 +85,7 @@ def details(request):
 
 	print (ET.dump(root))
 	sio = io.BytesIO()
-	doc.write(sio, "UTF-8")
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt
@@ -111,7 +111,7 @@ def preferences(request):
 			preference.attrib["v"] = pref.value
 
 		sio = io.BytesIO()
-		doc.write(sio, "UTF-8")
+		doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 	if request.method == 'PUT':

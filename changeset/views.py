@@ -82,7 +82,7 @@ def SerializeChangesets(changesetsData, include_discussion=False):
 
 	doc = ET.ElementTree(root)
 	sio = io.BytesIO()
-	doc.write(sio, "utf-8")
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 def GetOsmDataIndex(osmData):
@@ -299,7 +299,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		#Check that deleting objects doesn't break anything
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", relationObjsById.keys(), parentRelationsForRelations)
+		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
 		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
@@ -729,7 +729,7 @@ def upload(request, changesetId):
 	t.Commit()
 
 	sio = io.BytesIO()
-	doc.write(sio, "utf-8")
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt
