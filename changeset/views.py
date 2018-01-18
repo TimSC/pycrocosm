@@ -82,7 +82,7 @@ def SerializeChangesets(changesetsData, include_discussion=False):
 
 	doc = ET.ElementTree(root)
 	sio = io.BytesIO()
-	doc.write(sio, "utf-8")
+	doc.write(sio, b"utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 def GetOsmDataIndex(osmData):
@@ -729,7 +729,7 @@ def upload(request, changesetId):
 	t.Commit()
 
 	sio = io.BytesIO()
-	doc.write(sio, "utf-8")
+	doc.write(sio, b"utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt

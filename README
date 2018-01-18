@@ -23,11 +23,11 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
    source pgmapenv/bin/activate
 
-   pip install django==1.11.8 django-oauth10a-mod
+   pip install django==1.11.8
 
 Install the rest of the dependencies
 
-   pip install djangorestframework defusedxml psycopg2 oauth2
+   pip install djangorestframework defusedxml psycopg2 django-oauth10a-mod
 
    cd pycrocosm/pgmap/
 

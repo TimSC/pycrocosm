@@ -51,7 +51,7 @@ def capabilities(request):
 		blacklist.attrib["regex"] = bl
 
 	sio = io.BytesIO()
-	doc.write(sio, "UTF-8")
+	doc.write(sio, b"UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @api_view(['GET'])
@@ -64,7 +64,7 @@ def permissions(request):
 	permissions = ET.SubElement(root, "permissions")
 
 	sio = io.BytesIO()
-	doc.write(sio, "UTF-8")
+	doc.write(sio, b"UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @api_view(['GET'])

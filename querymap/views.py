@@ -68,6 +68,9 @@ class MapQueryResponse(object):
 
 		return buff
 
+	def __next__(self):
+		return self.next()
+
 @gzip_page #Control gzip on a per-page basis because of BREACH vun. This page contains no secrets.
 @csrf_exempt #Contain no secrets to avoid BREACH vun (and this page is never POSTed anyway).
 @api_view(['GET'])
@@ -90,6 +93,6 @@ def index(request):
 		response["Error"] = err
 		return response
 
-	return StreamingHttpResponse(MapQueryResponse(bbox), content_type='text/xml')
+	return StreamingHttpResponse(iter(MapQueryResponse(bbox)), content_type='text/xml')
 
 

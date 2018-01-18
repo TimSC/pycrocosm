@@ -19,8 +19,8 @@ def DecodeOsmdataResponse(xml):
 	dec = pgmap.OsmXmlDecodeString()
 	dec.output = data
 	for chunk in xml:
-		dec.DecodeSubString(chunk, len(chunk), False)
-	dec.DecodeSubString(b"", 0, True)
+		dec.DecodeSubString(chunk.decode("UTF-8"), len(chunk), False)
+	dec.DecodeSubString("", 0, True)
 	return data
 
 def create_node(uid, username, nearbyNode = None, changeset = 1000):
@@ -30,9 +30,9 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000):
 	node.metaData.timestamp = 0
 	node.metaData.changeset = changeset
 	node.metaData.uid = uid
-	node.metaData.username = username.encode("UTF-8")
+	node.metaData.username = username
 	node.metaData.visible = True
-	node.tags[b"test"] = b"autumn"
+	node.tags["test"] = "autumn"
 	if nearbyNode is None:
 		node.lat = 43.0 + random.uniform(-1.0, 1.0)
 		node.lon = -70.3 + random.uniform(-1.0, 1.0)
@@ -67,9 +67,9 @@ def create_way(uid, username, refs, changeset = 1000):
 	way.metaData.timestamp = 0
 	way.metaData.changeset = changeset
 	way.metaData.uid = uid
-	way.metaData.username = username.encode("UTF-8")
+	way.metaData.username = username
 	way.metaData.visible = True
-	way.tags[b"test"] = b"spring"
+	way.tags["test"] = "spring"
 	for ref in refs:
 		way.refs.append(ref)
 
@@ -100,13 +100,13 @@ def create_relation(uid, username, refs, changeset = 1000):
 	relation.metaData.timestamp = 0
 	relation.metaData.changeset = changeset
 	relation.metaData.uid = uid
-	relation.metaData.username = username.encode("UTF-8")
+	relation.metaData.username = username
 	relation.metaData.visible = True
-	relation.tags[b"test"] = b"moon"
+	relation.tags["test"] = "moon"
 	for refTypeStr, refId, refRole in refs:
-		relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+		relation.refTypeStrs.append(refTypeStr)
 		relation.refIds.append(refId)
-		relation.refRoles.append(refRole.encode("UTF-8"))
+		relation.refRoles.append(refRole)
 
 	data = pgmap.OsmData()
 	data.relations.append(relation)
@@ -134,14 +134,14 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	relation.metaData.timestamp = 0
 	relation.metaData.changeset = 1000
 	relation.metaData.uid = uid
-	relation.metaData.username = username.encode("UTF-8")
+	relation.metaData.username = username
 	relation.metaData.visible = True
 	for k in tagsIn:
-		relation.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
+		relation.tags[k] = tagsIn[k]
 	for refTypeStr, refId, refRole in refsIn:
-		relation.refTypeStrs.append(refTypeStr.encode("UTF-8"))
+		relation.refTypeStrs.append(refTypeStr)
 		relation.refIds.append(refId)
-		relation.refRoles.append(refRole.encode("UTF-8"))
+		relation.refRoles.append(refRole)
 
 	data = pgmap.OsmData()
 	data.relations.append(relation)
@@ -189,9 +189,9 @@ class QueryMapTestCase(TestCase):
 		node.metaData.timestamp = 0
 		node.metaData.changeset = 1000
 		node.metaData.uid = self.user.id
-		node.metaData.username = self.user.username.encode("UTF-8")
+		node.metaData.username = self.user.username
 		node.metaData.visible = True
-		node.tags[b"test"] = b"winter"
+		node.tags["test"] = "winter"
 		node.lat = nodeIn.lat + 0.1
 		node.lon = nodeIn.lon + 0.2
 
@@ -220,10 +220,10 @@ class QueryMapTestCase(TestCase):
 		way.metaData.timestamp = 0
 		way.metaData.changeset = 1000
 		way.metaData.uid = self.user.id
-		way.metaData.username = self.user.username.encode("UTF-8")
+		way.metaData.username = self.user.username
 		way.metaData.visible = True
 		for k in tagsIn:
-			way.tags[k.encode("UTF-8")] = tagsIn[k].encode("UTF-8")
+			way.tags[k] = tagsIn[k]
 		for ref in refsIn:
 			way.refs.append(ref)
 
@@ -258,7 +258,7 @@ class QueryMapTestCase(TestCase):
 		obj.metaData.timestamp = 0
 		obj.metaData.changeset = 1000
 		obj.metaData.uid = self.user.id
-		obj.metaData.username = self.user.username.encode("UTF-8")
+		obj.metaData.username = self.user.username
 		obj.metaData.visible = False
 		if isinstance(objIn, pgmap.OsmNode):
 			obj.lat = objIn.lat
@@ -628,7 +628,7 @@ class QueryMapTestCase(TestCase):
 
 			#Check for parents of relation, skip if found
 			parentData = pgmap.OsmData()
-			t.GetRelationsForObjs(b"relation", [int(candidateId)], parentData)
+			t.GetRelationsForObjs("relation", [int(candidateId)], parentData)
 			if len(parentData.relations) > 0:
 				continue
 
@@ -644,11 +644,6 @@ class QueryMapTestCase(TestCase):
 		print ("No free relations (with no parent relations) in ROI for testing")
 
 	def tearDown(self):
-		#Swig based transaction object is not freed if an exception is thrown in python view code
-		#Encourage this to happen here.
-		#https://stackoverflow.com/a/8927538/4288232
-		sys.exc_clear()
-		gc.collect()
 
 		u = User.objects.get(username = self.username)
 		u.delete()
