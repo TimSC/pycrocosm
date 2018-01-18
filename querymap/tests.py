@@ -19,7 +19,8 @@ def DecodeOsmdataResponse(xml):
 	dec = pgmap.OsmXmlDecodeString()
 	dec.output = data
 	for chunk in xml:
-		dec.DecodeSubString(chunk.decode("UTF-8"), len(chunk), False)
+		chunkDec = chunk.decode("UTF-8")
+		dec.DecodeSubString(chunkDec, len(chunkDec), False)
 	dec.DecodeSubString("", 0, True)
 	return data
 

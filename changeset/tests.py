@@ -66,8 +66,8 @@ def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
 	cs = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
 	for k in tags:
-		cs.tags[k.encode("utf-8")] = tags[k].encode("utf-8")
-	cs.username = user.username.encode("utf-8")
+		cs.tags[k] = tags[k]
+	cs.username = user.username
 	cs.uid = user.id
 	cs.is_open = is_open
 	cs.open_timestamp = int(time.time())
@@ -165,10 +165,10 @@ class ChangesetTestCase(TestCase):
 		
 		cs = self.get_test_changeset(cid)
 
-		self.assertEqual(b"created_by" in cs.tags, True)
-		self.assertEqual(b"comment" in cs.tags, True)
-		self.assertEqual(cs.tags[b"created_by"] == b"JOSM 1.61", True)
-		self.assertEqual(cs.tags[b"comment"] == b"Just adding some streetnames", True)
+		self.assertEqual("created_by" in cs.tags, True)
+		self.assertEqual("comment" in cs.tags, True)
+		self.assertEqual(cs.tags["created_by"] == "JOSM 1.61", True)
+		self.assertEqual(cs.tags["comment"] == "Just adding some streetnames", True)
 
 	def test_anon_create_changeset(self):
 		anonClient = Client()
@@ -187,8 +187,8 @@ class ChangesetTestCase(TestCase):
 		
 		cs = self.get_test_changeset(cid)
 
-		self.assertEqual(b"comment" in cs.tags, True)
-		self.assertEqual(cs.tags[b"comment"] == self.unicodeStr.encode("utf-8"), True)
+		self.assertEqual("comment" in cs.tags, True)
+		self.assertEqual(cs.tags["comment"] == self.unicodeStr.encode("utf-8"), True)
 
 	def test_create_changeset_overlong(self):
 		response = self.client.put(reverse('changeset:create'), self.createXmlOverlong, content_type='text/xml')
@@ -290,7 +290,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs2.objId, 
+		self.assertEqual(response.content.decode("UTF-8"), "The changeset {} was closed at {}.".format(cs2.objId, 
 			datetime.datetime.fromtimestamp(cs2.close_timestamp).isoformat()))
 
 	def test_close_changeset_anon(self):
@@ -969,12 +969,6 @@ class ChangesetUploadTestCase(TestCase):
 		u.delete()
 		u2 = User.objects.get(username = self.username2)
 		u2.delete()
-
-		#Swig based transaction object is not freed if an exception is thrown in python view code
-		#Encourage this to happen here.
-		#https://stackoverflow.com/a/8927538/4288232
-		sys.exc_clear()
-		gc.collect()
 
 		errStr = pgmap.PgMapError()
 		t = p.GetTransaction("EXCLUSIVE")

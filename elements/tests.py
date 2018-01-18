@@ -60,12 +60,6 @@ class ElementsTestCase(TestCase):
 		u = User.objects.get(username = self.username)
 		u.delete()
 
-		#Swig based transaction object is not freed if an exception is thrown in python view code
-		#Encourage this to happen here.
-		#https://stackoverflow.com/a/8927538/4288232
-		sys.exc_clear()
-		gc.collect()
-
 class ElementsGetParentsTestCase(TestCase):
 	def setUp(self):
 		self.username = "john"
@@ -95,11 +89,4 @@ class ElementsGetParentsTestCase(TestCase):
 
 		u = User.objects.get(username = self.username)
 		u.delete()
-
-		#Swig based transaction object is not freed if an exception is thrown in python view code
-		#Encourage this to happen here.
-		#https://stackoverflow.com/a/8927538/4288232
-		sys.exc_clear()
-		gc.collect()
-
 

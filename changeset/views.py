@@ -82,7 +82,7 @@ def SerializeChangesets(changesetsData, include_discussion=False):
 
 	doc = ET.ElementTree(root)
 	sio = io.BytesIO()
-	doc.write(sio, b"utf-8")
+	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 def GetOsmDataIndex(osmData):
@@ -263,19 +263,19 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	posRefedRelations = [objId for objId in refedRelations if objId>0]
 
 	foundNodeData = pgmap.OsmData()
-	t.GetObjectsById(b"node", posRefedNodes, foundNodeData)
+	t.GetObjectsById("node", posRefedNodes, foundNodeData)
 	foundNodeIndex = GetOsmDataIndex(foundNodeData)["node"]
 	if set(posRefedNodes) != set(foundNodeIndex.keys()):
 		return HttpResponseNotFound("Referenced node(s) not found")
 
 	foundWayData = pgmap.OsmData()
-	t.GetObjectsById(b"way", posRefedWays, foundWayData)
+	t.GetObjectsById("way", posRefedWays, foundWayData)
 	foundWayIndex = GetOsmDataIndex(foundWayData)["way"]
 	if set(posRefedWays) != set(foundWayIndex.keys()):
 		return HttpResponseNotFound("Referenced way(s) not found")
 
 	foundRelationData = pgmap.OsmData()
-	t.GetObjectsById(b"relation", posRefedRelations, foundRelationData)
+	t.GetObjectsById("relation", posRefedRelations, foundRelationData)
 	foundRelationIndex = GetOsmDataIndex(foundRelationData)["relation"]
 	if set(posRefedRelations) != set(foundRelationIndex.keys()):
 		return HttpResponseNotFound("Referenced relation(s) not found")
@@ -299,7 +299,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		#Check that deleting objects doesn't break anything
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs(b"relation", relationObjsById.keys(), parentRelationsForRelations)
+		t.GetRelationsForObjs("relation", relationObjsById.keys(), parentRelationsForRelations)
 		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
@@ -314,7 +314,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if len(referencedChildren) > 0:
 			if not ifunused:
 				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"The relation #{} is used in relation #{}.".format(k, v)
+				err = "The relation #{} is used in relation #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
 			else:
 				filtered = pgmap.OsmData()
@@ -327,7 +327,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				relationsObjsById = GetOsmDataIndex(block)['relation']
 
 		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs(b"way", wayObjsById.keys(), parentRelationsForWays)
+		t.GetRelationsForObjs("way", wayObjsById.keys(), parentRelationsForWays)
 		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForWaysIndex:
@@ -342,7 +342,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if len(referencedChildren) > 0:
 			if not ifunused:
 				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"Way #{} still used by relation #{}.".format(k, v)
+				err = "Way #{} still used by relation #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
 			else:
 				filtered = pgmap.OsmData()
@@ -368,7 +368,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if len(referencedChildren) > 0:
 			if not ifunused:
 				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"#{} is still used by way #{}.".format(k, v)
+				err = "#{} is still used by way #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
 			else:
 				filtered = pgmap.OsmData()
@@ -381,7 +381,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
 		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs(b"node", nodeObjsById.keys(), parentRelationsForNodes)
+		t.GetRelationsForObjs("node", nodeObjsById.keys(), parentRelationsForNodes)
 		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
@@ -394,7 +394,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if len(referencedChildren) > 0:
 			if not ifunused:
 				k, v = GetAnyKeyValue(referencedChildren)
-				err = b"Node #{} is still used by relation #{}.".format(k, v)
+				err = "Node #{} is still used by relation #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
 			else:
 				filtered = pgmap.OsmData()
@@ -426,15 +426,15 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#Set user info
 	for i in range(block.nodes.size()):
 		block.nodes[i].metaData.uid = uid
-		block.nodes[i].metaData.username = username.encode("UTF-8")
+		block.nodes[i].metaData.username = username
 		block.nodes[i].metaData.timestamp = int(timestamp)
 	for i in range(block.ways.size()):
 		block.ways[i].metaData.uid = uid
-		block.ways[i].metaData.username = username.encode("UTF-8")
+		block.ways[i].metaData.username = username
 		block.ways[i].metaData.timestamp = int(timestamp)
 	for i in range(block.relations.size()):
 		block.relations[i].metaData.uid = uid
-		block.relations[i].metaData.username = username.encode("UTF-8")
+		block.relations[i].metaData.username = username
 		block.relations[i].metaData.timestamp = int(timestamp)
 
 	errStr = pgmap.PgMapError()
@@ -729,7 +729,7 @@ def upload(request, changesetId):
 	t.Commit()
 
 	sio = io.BytesIO()
-	doc.write(sio, b"utf-8")
+	doc.write(sio, "utf-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt

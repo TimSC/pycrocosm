@@ -22,8 +22,8 @@ class OsmDataXmlParser(BaseParser):
 			inputXml = stream.read(pageSize)
 			if len(inputXml) == 0:
 				break
-			dec.DecodeSubString(inputXml, len(inputXml), False)
-		dec.DecodeSubString("".encode("UTF-8"), 0, True)
+			dec.DecodeSubString(inputXml.decode("UTF-8"), len(inputXml), False)
+		dec.DecodeSubString("", 0, True)
 		if not dec.parseCompletedOk:
 			raise ParseError(detail=dec.errString)
 		return data
@@ -39,8 +39,8 @@ class OsmChangeXmlParser(BaseParser):
 			inputXml = stream.read(pageSize)
 			if len(inputXml) == 0:
 				break
-			dec.DecodeSubString(inputXml, len(inputXml), False)
-		dec.DecodeSubString("".encode("UTF-8"), 0, True)
+			dec.DecodeSubString(inputXml.decode("UTF-8"), len(inputXml), False)
+		dec.DecodeSubString("", 0, True)
 		if not dec.parseCompletedOk:
 			raise ParseError(detail=dec.errString)
 		return data
