@@ -1,10 +1,10 @@
 <h3>Claim existing fosm.org account</h3>
 
 {% if errMsg %}
-<p>{{errMsg}}</p>
+<p>{{errMsg|safe}}</p>
 {% endif %}
 {% if successMsg %}
-<p>{{successMsg}}</p>
+<p>{{successMsg|safe}}</p>
 {% endif %}
 
 <form action="." method="post">
