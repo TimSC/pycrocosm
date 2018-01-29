@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils.dateparse import parse_datetime
 from migrateusers.models import LegacyAccount
 import xml.etree.ElementTree as ET
+import common
 
 class Command(BaseCommand):
 	help = 'Import legacy accounts into django database tables'
@@ -29,7 +30,7 @@ class Command(BaseCommand):
 					username = userNode.attrib["display_name"],
 					email = userNode.attrib["email"],
 					hashed_password = userNode.attrib["sha256pw"],
-					created_at = int(parse_datetime(userNode.attrib["account_created"]).strftime("%s")),
+					created_at = common.get_utc_posix_timestamp(parse_datetime(userNode.attrib["account_created"])),
 					lat = float(homeNode.attrib["lat"]),
 					lon = float(homeNode.attrib["lon"]),
 					zoom = float(homeNode.attrib["zoom"]),

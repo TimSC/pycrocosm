@@ -108,7 +108,7 @@ def historic_map(request):
 	print (dt)
 	if dt is None:
 		return HttpResponseBadRequest("datetime must be specified as an argument", content_type="text/plain")
-	dt2 = int(parse_datetime(dt).strftime('%s'))
+	dt2 = int(round(common.get_utc_posix_timestamp(parse_datetime(dt))))
 
 	bbox = list(map(float, bbox.split(",")))
 	if len(bbox) != 4:
