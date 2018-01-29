@@ -4,6 +4,7 @@ from __future__ import print_function
 
 import xml.etree.ElementTree as ET
 import sys
+import io
 
 from django.shortcuts import render
 from django.http import HttpResponse
