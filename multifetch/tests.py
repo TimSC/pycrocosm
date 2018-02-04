@@ -56,7 +56,7 @@ class MultifetchTestCase(TestCase):
 		response = self.client.get(reverse('multifetch:multifetch', args=("nodes",))+"?nodes={},{}".format(node1Id, node2Id))
 		self.assertEqual(response.status_code, 200)
 
-		data = DecodeOsmdataResponse(response.content)
+		data = DecodeOsmdataResponse([response.content])
 
 		idDicts = GetOsmDataIndex(data)
 		self.assertEqual(node1Id in idDicts['node'], True)
@@ -103,7 +103,7 @@ class MultifetchTestCase(TestCase):
 		response = self.client.get(reverse('multifetch:multifetch', args=("ways",))+"?ways={},{}".format(way1Id, way2Id))
 		self.assertEqual(response.status_code, 200)
 
-		data = DecodeOsmdataResponse(response.content)
+		data = DecodeOsmdataResponse([response.content])
 
 		idDicts = GetOsmDataIndex(data)
 		self.assertEqual(way1Id in idDicts['way'], True)

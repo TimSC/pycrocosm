@@ -17,6 +17,7 @@ import sys
 import time
 import datetime
 import random
+from changeset import views
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation, modify_relation
@@ -188,7 +189,7 @@ class ChangesetTestCase(TestCase):
 		cs = self.get_test_changeset(cid)
 
 		self.assertEqual("comment" in cs.tags, True)
-		self.assertEqual(cs.tags["comment"] == self.unicodeStr.encode("utf-8"), True)
+		self.assertEqual(views.DecodeIfNotUnicode(cs.tags["comment"]) == self.unicodeStr, True)
 
 	def test_create_changeset_overlong(self):
 		response = self.client.put(reverse('changeset:create'), self.createXmlOverlong, content_type='text/xml')
@@ -349,18 +350,12 @@ class ChangesetTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, b"The changeset {} was closed at {}.".format(cs.objId, 
-			datetime.datetime.fromtimestamp(cs.close_timestamp).isoformat()))
+		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.objId, 
+			datetime.datetime.fromtimestamp(cs.close_timestamp).isoformat()).encode(str("utf-8")))
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()
-
-		#Swig based transaction object is not freed if an exception is thrown in python view code
-		#Encourage this to happen here.
-		#https://stackoverflow.com/a/8927538/4288232
-		sys.exc_clear()
-		gc.collect()
 
 		errStr = pgmap.PgMapError()
 		t = p.GetTransaction("EXCLUSIVE")

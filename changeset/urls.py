@@ -16,5 +16,5 @@ urlpatterns = [
     url(r'^/(?P<changesetId>[0-9]+)/subscribe$', views.subscribe, name='subscribe'),
     url(r'^/(?P<changesetId>[0-9]+)/unsubscribe$', views.unsubscribe, name='unsubscribe'),
     url(r'^/(?P<changesetId>[0-9]+)$', views.changeset, name='changeset'),
-    url(r'^s$', views.list, name='list'),
+    url(r'^s$', views.list_changesets, name='list'),
 ]

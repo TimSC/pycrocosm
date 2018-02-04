@@ -26,9 +26,3 @@ def get_utc_posix_timestamp(dt):
 	else:
 		return (dt - datetime.datetime(1970, 1, 1, tzinfo=pytz.utc)).total_seconds()
 
-def CastToPgmapSeti64(data):
-	if PY3:
-		return pgmap.seti64(data)
-	else:
-		return pgmap.seti64(list(data))
-

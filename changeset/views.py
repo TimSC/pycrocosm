@@ -22,6 +22,7 @@ from pycrocosm import common
 from querymap.views import p
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 from migrateusers.models import LegacyAccount
+PY3 = sys.version_info > (3, 0)
 
 # Create your views here.
 
@@ -33,12 +34,21 @@ def CheckTags(tags):
 			return False
 	return True
 
+def DecodeIfNotUnicode(s):
+	if PY3:
+		unicodeType = str
+	else:
+		unicodeType = unicode
+	if isinstance(s, unicodeType):
+		return s
+	return s.decode('utf-8')
+
 def SerializeChangesetToElement(changesetData, include_discussion=False):
 
 	changeset = ET.Element("changeset")
 	changeset.attrib["id"] = str(changesetData.objId)
 	if len(changesetData.username) > 0:
-		changeset.attrib["user"] = str(changesetData.username)
+		changeset.attrib["user"] = DecodeIfNotUnicode(changesetData.username)
 	if changesetData.uid != 0:
 		changeset.attrib["uid"] = str(changesetData.uid)
 	if changesetData.open_timestamp != 0:
@@ -54,8 +64,8 @@ def SerializeChangesetToElement(changesetData, include_discussion=False):
 
 	for tagKey in changesetData.tags:
 		tag = ET.SubElement(changeset, "tag")
-		tag.attrib["k"] = tagKey.decode("utf-8")
-		tag.attrib["v"] = changesetData.tags[tagKey].decode("utf-8")
+		tag.attrib["k"] = DecodeIfNotUnicode(tagKey)
+		tag.attrib["v"] = DecodeIfNotUnicode(changesetData.tags[tagKey])
 
 	if include_discussion:
 
@@ -301,7 +311,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		#Check that deleting objects doesn't break anything
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", common.CastToPgmapSeti64(relationObjsById.keys()), parentRelationsForRelations)
+		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
 		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
@@ -329,7 +339,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				relationsObjsById = GetOsmDataIndex(block)['relation']
 
 		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs("way", common.CastToPgmapSeti64(wayObjsById.keys()), parentRelationsForWays)
+		t.GetRelationsForObjs("way", list(wayObjsById.keys()), parentRelationsForWays)
 		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForWaysIndex:
@@ -357,7 +367,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				wayObjsById = GetOsmDataIndex(block)['way']
 
 		parentWayForNodes = pgmap.OsmData()
-		t.GetWaysForNodes(nodeObjsById.keys(), parentWayForNodes)
+		t.GetWaysForNodes(list(nodeObjsById.keys()), parentWayForNodes)
 		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
 		referencedChildren = {}
 		for parentId in parentWayForNodesIndex:
@@ -383,7 +393,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
 		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs("node", common.CastToPgmapSeti64(nodeObjsById.keys()), parentRelationsForNodes)
+		t.GetRelationsForObjs("node", list(nodeObjsById.keys()), parentRelationsForNodes)
 		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
@@ -473,9 +483,9 @@ def create(request):
 		return HttpResponseBadRequest("Invalid tags")
 
 	for tag in unicodeTags:
-		changeset.tags[tag.encode("utf-8")] = unicodeTags[tag].encode("utf-8")
+		changeset.tags[tag] = unicodeTags[tag]
 	changeset.uid = request.user.id
-	changeset.username = request.user.username.encode("utf-8")
+	changeset.username = request.user.username
 
 	t = p.GetTransaction("EXCLUSIVE")
 
@@ -535,7 +545,7 @@ def changeset(request, changesetId):
 
 		changesetData.tags = pgmap.mapstringstring()
 		for tag in unicodeTags:
-			changesetData.tags[tag.encode("utf-8")] = unicodeTags[tag].encode("utf-8")
+			changesetData.tags[tag] = unicodeTags[tag]
 
 		ok = t.UpdateChangeset(changesetData, errStr)
 		if not ok:
@@ -645,7 +655,7 @@ def expand_bbox(request, changesetId):
 	return SerializeChangesets([changesetData])
 
 @api_view(['GET'])
-def list(request):
+def list_changesets(request):
 	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
 	user_uid = int(request.GET.get('user', 0))
 	display_name = request.GET.get('display_name', None)
