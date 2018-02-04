@@ -349,7 +349,7 @@ class ChangesetTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.objId, 
+		self.assertEqual(response.content, b"The changeset {} was closed at {}.".format(cs.objId, 
 			datetime.datetime.fromtimestamp(cs.close_timestamp).isoformat()))
 
 	def tearDown(self):

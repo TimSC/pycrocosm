@@ -20,7 +20,8 @@ def DecodeOsmdataResponse(xml):
 	dec.output = data
 
 	for chunk in xml:
-		dec.DecodeSubString(chunk, len(chunk), False)
+		chunkDec = chunk.decode('utf-8')
+		dec.DecodeSubString(chunkDec, len(chunkDec), False)
 
 	dec.DecodeSubString("", 0, True)
 	return data

@@ -23,7 +23,7 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
    source pgmapenv/bin/activate
 
-   pip install django==1.11.8
+   pip install django==1.11.10
 
 Install the rest of the dependencies
 
