@@ -12,7 +12,7 @@ def index(request):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
-	value = int(t.GetMetaValue("readonly".encode('utf-8'), errStr))
+	value = int(t.GetMetaValue("readonly", errStr))
 	dbStatus = "OK"
 	if value != 0:
 		dbStatus = "Read only"

@@ -32,7 +32,7 @@ def catalog(request, timebase):
 		elapsedUnits = elapsed / 60 / 60 / 24
 
 	val1 = elapsedUnits / 1000 
-	val2 = val1 / 1000
+	val2 = int(val1 / 1000)
 
 	out = []
 	for i in range(val2+1):
@@ -64,7 +64,7 @@ def catalog2(request, timebase, cat1):
 	if timebase == "day":
 		elapsedInPageUnits = elapsedInPage / 60 / 60 / 24
 
-	val1 = elapsedInPageUnits / 1000 
+	val1 = int(elapsedInPageUnits / 1000)
 	if val1 > 999: val1 = 999
 
 	out = []
@@ -97,6 +97,7 @@ def catalog3(request, timebase, cat1, cat2):
 		val1 = elapsedInPage / 60 / 60
 	if timebase == "day":
 		val1 = elapsedInPage / 60 / 60 / 24
+	val1 = int(val1)
 	if val1 > 999: val1 = 999
 
 	out = []

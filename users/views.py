@@ -139,10 +139,10 @@ def preferences_put(request, key):
 
 	try:
 		existing = UserPreference.objects.get(user=request.user, key=key)
-		existing.value = request.data
+		existing.value = request.data.decode("utf-8")
 		existing.save()
 	except UserPreference.DoesNotExist:
-		UserPreference.objects.create(user=request.user, key=key, value=request.data)
+		UserPreference.objects.create(user=request.user, key=key, value=request.data.decode("utf-8"))
 
 	return HttpResponse("", content_type='text/plain')
 
