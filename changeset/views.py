@@ -18,6 +18,7 @@ import datetime
 import pgmap
 import time
 import io
+from pycrocosm import common
 from querymap.views import p
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 from migrateusers.models import LegacyAccount
@@ -300,7 +301,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		#Check that deleting objects doesn't break anything
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", pgmap.seti64(list(relationObjsById.keys())), parentRelationsForRelations)
+		t.GetRelationsForObjs("relation", common.CastToPgmapSeti64(relationObjsById.keys()), parentRelationsForRelations)
 		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
@@ -328,7 +329,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				relationsObjsById = GetOsmDataIndex(block)['relation']
 
 		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs("way", pgmap.seti64(list(wayObjsById.keys())), parentRelationsForWays)
+		t.GetRelationsForObjs("way", common.CastToPgmapSeti64(wayObjsById.keys()), parentRelationsForWays)
 		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForWaysIndex:
@@ -382,7 +383,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
 		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs("node", pgmap.seti64(list(nodeObjsById.keys())), parentRelationsForNodes)
+		t.GetRelationsForObjs("node", common.CastToPgmapSeti64(nodeObjsById.keys()), parentRelationsForNodes)
 		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:

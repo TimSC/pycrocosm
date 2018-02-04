@@ -19,7 +19,7 @@ def get_affected(request, objType, objIds):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64(map(int, objIds.split(","))), osmData)
+	t.GetObjectsById(objType.encode("UTF-8"), common.CastToPgmapSeti64(map(int, objIds.split(","))), osmData)
 
 	affectedData = pgmap.OsmData()
 	t.GetAffectedObjects(osmData, affectedData)

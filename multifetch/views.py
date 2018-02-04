@@ -25,7 +25,7 @@ def index(request, objType):
 
 	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType[:-1].encode("UTF-8"), pgmap.seti64(objIds), osmData);
+	t.GetObjectsById(objType[:-1], common.CastToPgmapSeti64(objIds), osmData);
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
