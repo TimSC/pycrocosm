@@ -9,10 +9,11 @@ import datetime
 
 def history(request):
 	t = p.GetTransaction("ACCESS SHARE")
+	uid = 0 #Corresponds to null user ID for no filtering
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
-	ok = t.GetChangesets(changesets, errStr)
+	ok = t.GetChangesets(changesets, uid, errStr)
 
 	t.Commit()
 
