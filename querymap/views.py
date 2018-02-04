@@ -56,12 +56,15 @@ class MapQueryResponse(object):
 		if ret < 0:
 			raise RuntimeError("Map query error")
 		if ret == 1:
-			#Add random whitespace to the end to confuse BREACH attacks
 			self.complete = True
-			whitespace = []
-			for i in range(random.randint(0, 256)):
-				whitespace.append(random.choice((b'\n',b' ',b'\t')))
-			return self.sio.getvalue() + b"".join(whitespace)
+			if settings.ENABLE_ANTI_BREACH_PADDING:
+				#Add random whitespace to the end to confuse BREACH attacks				
+				whitespace = []
+				for i in range(random.randint(0, 256)):
+					whitespace.append(random.choice((b'\n',b' ',b'\t')))
+				return self.sio.getvalue() + b"".join(whitespace)
+			else:
+				return self.sio.getvalue()
 
 		buff = self.sio.getvalue()
 		self.sio = io.BytesIO() #Reset buffer 

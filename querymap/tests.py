@@ -329,14 +329,20 @@ class QueryMapTestCase(TestCase):
 
 		return nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems
 
-	def check_node_in_query(self, node, expected=True):
+	def check_node_in_query(self, node, expected=True, verbose=False):
 
 		anonClient = Client()
 		bbox = [node.lon-0.0001, node.lat-0.0001, node.lon+0.0001, node.lat+0.0001]
 		response = anonClient.get(reverse('querymap:querymap') + "?bbox={},{},{},{}".format(*bbox))
 		self.assertEqual(response.status_code, 200)
 
-		data = DecodeOsmdataResponse(response.streaming_content)
+		xml = list(response.streaming_content)
+		if verbose:
+			print ("check_node_in_query", node.objId, "(expected", expected,")")
+			for chunk in xml:
+				print (chunk.decode(str("utf-8")), end='')
+			print ('')
+		data = DecodeOsmdataResponse(xml)
 
 		idDicts = GetOsmDataIndex(data)
 		nodeIdDict = idDicts['node']
@@ -442,12 +448,12 @@ class QueryMapTestCase(TestCase):
 
 		data = DecodeOsmdataResponse(response.streaming_content)
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
-		nodeIdSet = list(nodeIdSet)
+		candidateIds = list(nodeIdSet.difference(nodeMems))
 
-		if len(nodeIdSet) > 0:
+		if len(candidateIds) > 0:
 			idDicts = GetOsmDataIndex(data)
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
-			nodeObjToModify = nodeIdDict[nodeIdSet[0]]
+			nodeObjToModify = nodeIdDict[candidateIds[0]]
 
 			modNode = self.modify_node(nodeObjToModify, 1)
 			self.check_node_in_query(modNode, True)
