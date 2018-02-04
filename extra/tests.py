@@ -59,7 +59,7 @@ class ExtraFunctionsTestCase(TestCase):
 			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
-		osmData = DecodeOsmdataResponse(response.content)
+		osmData = DecodeOsmdataResponse([response.content])
 		idDict = GetOsmDataIndex(osmData)
 		self.assertEqual(len(idDict["node"]), 2)
 		self.assertEqual(len(idDict["way"]), 1)
@@ -87,7 +87,7 @@ class ExtraFunctionsTestCase(TestCase):
 			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
-		osmData = DecodeOsmdataResponse(response.content)
+		osmData = DecodeOsmdataResponse([response.content])
 		idDict = GetOsmDataIndex(osmData)
 		self.assertEqual(len(idDict["node"]), 2)
 		self.assertEqual(len(idDict["way"]), 1)

@@ -79,7 +79,7 @@ class ElementsGetParentsTestCase(TestCase):
 			print (response.content)
 		self.assertEqual(response.status_code, 200)
 
-		osmData = DecodeOsmdataResponse(response.content)
+		osmData = DecodeOsmdataResponse([response.content])
 		wayIdDict = GetOsmDataIndex(osmData)['way']
 
 		self.assertEqual(len(wayIdDict), 1)
