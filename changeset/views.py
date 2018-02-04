@@ -299,7 +299,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		#Check that deleting objects doesn't break anything
 
 		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
+		t.GetRelationsForObjs("relation", pgmap.seti64(relationObjsById.keys()), parentRelationsForRelations)
 		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
