@@ -20,6 +20,7 @@ import time
 import io
 from querymap.views import p
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
+from migrateusers.models import LegacyAccount
 
 # Create your views here.
 
@@ -645,25 +646,24 @@ def expand_bbox(request, changesetId):
 @api_view(['GET'])
 def list(request):
 	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
-	user_uid = request.GET.get('user', 0)
+	user_uid = int(request.GET.get('user', 0))
 	display_name = request.GET.get('display_name', None)
 	timearg = request.GET.get('time', None)
 	openarg = request.GET.get('open', None)
 	close = request.GET.get('closed', None)
-	changesets = request.GET.get('changesets', None)
+	changesetsToGet = request.GET.get('changesets', None)
 
 	#Check display_name or uid actually exists
 	if display_name is not None:
 		try:
 			user = User.objects.get(username=display_name)
+			user_uid = user.id
 		except ObjectDoesNotExist:
-			return HttpResponseNotFound("User not found")
-		user_uid = user.id
-	elif user_uid != 0:
-		try:
-			user = User.objects.get(id=user_uid)
-		except ObjectDoesNotExist:
-			return HttpResponseNotFound("User not found")
+			try:
+				user = LegacyAccount.objects.get(username=display_name)
+				user_uid = user.uid			
+			except ObjectDoesNotExist:
+				return HttpResponseNotFound("User not found")
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
