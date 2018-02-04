@@ -56,8 +56,12 @@ class MapQueryResponse(object):
 		if ret < 0:
 			raise RuntimeError("Map query error")
 		if ret == 1:
+			#Finish the query.
 			self.complete = True
-			if settings.ENABLE_ANTI_BREACH_PADDING:
+			abp = False
+			if hasattr(settings, 'ENABLE_ANTI_BREACH_PADDING'):
+				abp = settings.ENABLE_ANTI_BREACH_PADDING
+			if abp:
 				#Add random whitespace to the end to confuse BREACH attacks				
 				whitespace = []
 				for i in range(random.randint(0, 256)):
