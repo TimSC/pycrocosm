@@ -43,6 +43,7 @@ INSTALLED_APPS = [
 	'oauth.apps.OauthConfig',
 	'extra.apps.ExtraConfig',
 	'objectinfo.apps.ObjectinfoConfig',
+	'migrateusers.apps.MigrateusersConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
