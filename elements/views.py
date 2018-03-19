@@ -157,7 +157,33 @@ def full_obj(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	t.GetFullObjectById(objType.encode("UTF-8"), int(objId), osmData)
+	t.GetFullObjectById(objType, int(objId), osmData)
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def object_version(request, objType, objId, objVer):
+	t = p.GetTransaction("ACCESS SHARE")
+
+	osmData = pgmap.OsmData()
+	idVerPair = pgmap.pairi64i64(long(objId), long(objVer))
+	t.GetObjectsByIdVer(objType, [idVerPair], osmData)
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def object_history(request, objType, objId):
+	t = p.GetTransaction("ACCESS SHARE")
+
+	osmData = pgmap.OsmData()
+	#TODO function not implemented:
+	t.GetObjectHistoryById(objType, int(objId), osmData)
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
