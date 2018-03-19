@@ -169,7 +169,7 @@ def object_version(request, objType, objId, objVer):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	idVerPair = pgmap.pairi64i64(long(objId), long(objVer))
+	idVerPair = pgmap.pairi64i64(int(objId), int(objVer))
 	t.GetObjectsByIdVer(objType, [idVerPair], osmData)
 
 	sio = io.BytesIO()
@@ -182,8 +182,7 @@ def object_history(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
-	#TODO function not implemented:
-	t.GetObjectHistoryById(objType, int(objId), osmData)
+	t.GetObjectsHistoryById(objType, [int(objId)], osmData)
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
