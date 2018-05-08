@@ -107,5 +107,9 @@ Connect using a browser: http://localhost:8010
 
 TODO It might be safer to not run the service as root!
 
+Set server to read only mode: 
+
+    python manage.py setmeta readonly 1
+
 All done!
 
