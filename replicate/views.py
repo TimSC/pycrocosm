@@ -32,10 +32,10 @@ def catalog(request, timebase):
 		elapsedUnits = elapsed / 60 / 60 / 24
 
 	val1 = elapsedUnits / 1000 
-	val2 = int(val1 / 1000)
+	val2 = int(val1 / 1000)+settings.REPLICATE_OFFSET
 
 	out = []
-	for i in range(val2+1):
+	for i in range(settings.REPLICATE_OFFSET, val2+1):
 		out.append("<a href='{0:03d}/'>{0:03d}</a><br/>".format(i))
 
 	return HttpResponse(out)
@@ -52,7 +52,7 @@ def catalog2(request, timebase, cat1):
 	if timebase == "day":
 		pageStep = 60000000 * 60 * 24
 
-	pageStartTimestamp = int(cat1) * pageStep + epochts
+	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
@@ -86,7 +86,7 @@ def catalog3(request, timebase, cat1, cat2):
 		pageStep = 60000000 * 60 * 24
 	pageStep2 = pageStep / 1000
 
-	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + epochts
+	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
@@ -122,7 +122,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	pageStep2 = pageStep / 1000
 	pageStep3 = pageStep2 / 1000
 
-	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
+	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
@@ -165,7 +165,7 @@ def state(request, timebase, cat1, cat2, cat3):
 	pageStep2 = pageStep / 1000
 	pageStep3 = pageStep2 / 1000
 
-	pageStartTimestamp = int(cat1) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
+	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")

@@ -197,6 +197,7 @@ POLICY_IMAGERY_BLACKLIST = [".*\.google(apis)?\..*/(vt|kh)[\?/].*([xyz]=.*){3}.*
 	"http://xdworld\.vworld\.kr:8080/.*", ".*\.here\.com[/:].*"]
 
 REPLICATE_EPOCH = datetime.datetime(2012, 9, 12)
+REPLICATE_OFFSET = 200
 MAX_TAG_LENGTH = 255
 ENABLE_ANTI_BREACH_PADDING = False #Add random whitespace to the end to confuse BREACH attacks
 
