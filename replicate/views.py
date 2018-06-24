@@ -178,3 +178,30 @@ def state(request, timebase, cat1, cat2, cat3):
 
 	return HttpResponse(out, content_type='text/plain')
 
+def TimestampToPath(ts, timebase):
+	
+	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	ts2 = ts - epochts
+	
+	if timebase == "minute":
+		pageStep3 = 60
+	if timebase == "hour":
+		pageStep3 = 60 * 60
+	if timebase == "day":
+		pageStep3 = 60 * 60 * 24
+
+	pageStep2 = pageStep3 * 1000
+	pageStep = pageStep2 * 1000
+
+	a = ts2 % pageStep3
+	ts2 -= a #Discard seconds
+	b = ts2 % pageStep2
+	cat3 = b / pageStep3 + 1
+	ts2 -= b # Remove 1000 minutes blocks
+	c = ts2 % pageStep
+	cat2 = c / pageStep2
+	ts2 -= c # Remove 1,000,000 minutes blocks
+	cat1 = ts2 / pageStep + settings.REPLICATE_OFFSET
+
+	return (cat1, cat2, cat3)
+

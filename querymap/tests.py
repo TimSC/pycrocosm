@@ -12,6 +12,7 @@ import pgmap
 import random
 import sys
 import gc
+import time
 from changeset.views import GetOsmDataIndex
 
 def DecodeOsmdataResponse(xml):
@@ -26,11 +27,14 @@ def DecodeOsmdataResponse(xml):
 	dec.DecodeSubString("", 0, True)
 	return data
 
-def create_node(uid, username, nearbyNode = None, changeset = 1000):
+def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = None):
 	node = pgmap.OsmNode()
 	node.objId = -1
 	node.metaData.version = 1
-	node.metaData.timestamp = 0
+	if timestamp is None:
+		node.metaData.timestamp = int(time.time())
+	else:
+		node.metaData.timestamp = int(timestamp)
 	node.metaData.changeset = changeset
 	node.metaData.uid = uid
 	node.metaData.username = username
@@ -67,7 +71,7 @@ def create_way(uid, username, refs, changeset = 1000):
 	way = pgmap.OsmWay()
 	way.objId = -1
 	way.metaData.version = 1
-	way.metaData.timestamp = 0
+	way.metaData.timestamp = int(time.time())
 	way.metaData.changeset = changeset
 	way.metaData.uid = uid
 	way.metaData.username = username
@@ -100,7 +104,7 @@ def create_relation(uid, username, refs, changeset = 1000):
 	relation = pgmap.OsmRelation()
 	relation.objId = -1
 	relation.metaData.version = 1
-	relation.metaData.timestamp = 0
+	relation.metaData.timestamp = int(time.time())
 	relation.metaData.changeset = changeset
 	relation.metaData.uid = uid
 	relation.metaData.username = username
@@ -134,7 +138,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	relation = pgmap.OsmRelation()
 	relation.objId = relationIn.objId
 	relation.metaData.version = relationIn.metaData.version + 1
-	relation.metaData.timestamp = 0
+	relation.metaData.timestamp = int(time.time())
 	relation.metaData.changeset = 1000
 	relation.metaData.uid = uid
 	relation.metaData.username = username
@@ -164,6 +168,116 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 		t.Commit()
 	return relation
 
+def modify_node(nodeIn, nodeCurrentVer, user):
+	node = pgmap.OsmNode()
+	node.objId = nodeIn.objId
+	node.metaData.version = nodeCurrentVer + 1
+	node.metaData.timestamp = int(time.time())
+	node.metaData.changeset = 1000
+	node.metaData.uid = user.id
+	node.metaData.username = user.username
+	node.metaData.visible = True
+	node.tags["test"] = "winter"
+	node.lat = nodeIn.lat + 0.1
+	node.lon = nodeIn.lon + 0.2
+
+	data = pgmap.OsmData()
+	data.nodes.append(node)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction("EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	if not ok:
+		t.Abort()
+		print (errStr.errStr)
+	else:
+		t.Commit()
+	return ok, node
+
+def modify_way(wayIn, refsIn, tagsIn, user):
+	way = pgmap.OsmWay()
+	way.objId = wayIn.objId
+	way.metaData.version = wayIn.metaData.version + 1
+	way.metaData.timestamp = int(time.time())
+	way.metaData.changeset = 1000
+	way.metaData.uid = user.id
+	way.metaData.username = user.username
+	way.metaData.visible = True
+	for k in tagsIn:
+		way.tags[k] = tagsIn[k]
+	for ref in refsIn:
+		way.refs.append(ref)
+
+	data = pgmap.OsmData()
+	data.ways.append(way)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	t = p.GetTransaction("EXCLUSIVE")
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	if not ok:
+		t.Abort()
+		print (errStr.errStr)
+	else:
+		t.Commit()
+	return ok, way
+	
+def delete_object(objIn, user, tIn = None):
+	if isinstance(objIn, pgmap.OsmNode):
+		obj = pgmap.OsmNode()
+	elif isinstance(objIn, pgmap.OsmWay):
+		obj = pgmap.OsmWay()
+	elif isinstance(objIn, pgmap.OsmRelation):
+		obj = pgmap.OsmRelation()
+
+	obj.objId = objIn.objId
+	obj.metaData.version = objIn.metaData.version + 1
+	obj.metaData.timestamp = int(time.time())
+	obj.metaData.changeset = 1000
+	obj.metaData.uid = user.id
+	obj.metaData.username = user.username
+	obj.metaData.visible = False
+	if isinstance(objIn, pgmap.OsmNode):
+		obj.lat = objIn.lat
+		obj.lon = objIn.lon
+
+	data = pgmap.OsmData()
+
+	if isinstance(objIn, pgmap.OsmNode):
+		data.nodes.append(obj)
+	elif isinstance(objIn, pgmap.OsmWay):
+		data.ways.append(obj)
+	elif isinstance(objIn, pgmap.OsmRelation):
+		data.relations.append(obj)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+	errStr = pgmap.PgMapError()
+
+	if tIn is not None:
+		t = tIn
+	else:
+		t = p.GetTransaction("EXCLUSIVE")
+
+	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	
+	if tIn is None:
+		if not ok:
+			t.Abort()
+			print (errStr.errStr)
+		else:
+			t.Commit()
+	return ok
+
+
 # Create your tests here.
 
 class QueryMapTestCase(TestCase):
@@ -184,118 +298,6 @@ class QueryMapTestCase(TestCase):
 		else:
 			t.Commit()
 		self.assertEqual(ok, True)
-
-	def modify_node(self, nodeIn, nodeCurrentVer):
-		node = pgmap.OsmNode()
-		node.objId = nodeIn.objId
-		node.metaData.version = nodeCurrentVer + 1
-		node.metaData.timestamp = 0
-		node.metaData.changeset = 1000
-		node.metaData.uid = self.user.id
-		node.metaData.username = self.user.username
-		node.metaData.visible = True
-		node.tags["test"] = "winter"
-		node.lat = nodeIn.lat + 0.1
-		node.lon = nodeIn.lon + 0.2
-
-		data = pgmap.OsmData()
-		data.nodes.append(node)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction("EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-		if not ok:
-			t.Abort()
-			print (errStr.errStr)
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		return node
-
-	def modify_way(self, wayIn, refsIn, tagsIn):
-		way = pgmap.OsmWay()
-		way.objId = wayIn.objId
-		way.metaData.version = wayIn.metaData.version + 1
-		way.metaData.timestamp = 0
-		way.metaData.changeset = 1000
-		way.metaData.uid = self.user.id
-		way.metaData.username = self.user.username
-		way.metaData.visible = True
-		for k in tagsIn:
-			way.tags[k] = tagsIn[k]
-		for ref in refsIn:
-			way.refs.append(ref)
-
-		data = pgmap.OsmData()
-		data.ways.append(way)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		t = p.GetTransaction("EXCLUSIVE")
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-		if not ok:
-			t.Abort()
-			print (errStr.errStr)
-		else:
-			t.Commit()
-		self.assertEqual(ok, True)
-		return way
-		
-	def delete_object(self, objIn, tIn = None):
-		if isinstance(objIn, pgmap.OsmNode):
-			obj = pgmap.OsmNode()
-		elif isinstance(objIn, pgmap.OsmWay):
-			obj = pgmap.OsmWay()
-		elif isinstance(objIn, pgmap.OsmRelation):
-			obj = pgmap.OsmRelation()
-
-		obj.objId = objIn.objId
-		obj.metaData.version = objIn.metaData.version + 1
-		obj.metaData.timestamp = 0
-		obj.metaData.changeset = 1000
-		obj.metaData.uid = self.user.id
-		obj.metaData.username = self.user.username
-		obj.metaData.visible = False
-		if isinstance(objIn, pgmap.OsmNode):
-			obj.lat = objIn.lat
-			obj.lon = objIn.lon
-
-		data = pgmap.OsmData()
-
-		if isinstance(objIn, pgmap.OsmNode):
-			data.nodes.append(obj)
-		elif isinstance(objIn, pgmap.OsmWay):
-			data.ways.append(obj)
-		elif isinstance(objIn, pgmap.OsmRelation):
-			data.relations.append(obj)
-
-		createdNodeIds = pgmap.mapi64i64()
-		createdWayIds = pgmap.mapi64i64()
-		createdRelationIds = pgmap.mapi64i64()
-		errStr = pgmap.PgMapError()
-
-		if tIn is not None:
-			t = tIn
-		else:
-			t = p.GetTransaction("EXCLUSIVE")
-
-		ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-		
-		if tIn is None:
-			if not ok:
-				t.Abort()
-				print (errStr.errStr)
-			else:
-				t.Commit()
-		self.assertEqual(ok, True)
-		return ok
 
 	def find_object_ids(self, data):
 		nodeIdSet = set()
@@ -408,14 +410,16 @@ class QueryMapTestCase(TestCase):
 	def test_modify_active_node(self):
 		node = create_node(self.user.id, self.user.username)
 
-		modNode = self.modify_node(node, 1)
+		ok, modNode = modify_node(node, 1, self.user)
+		self.assertEqual(ok, True)
 		self.check_node_in_query(modNode, True)
 		self.check_node_in_query(node, False)
 
 	def test_delete_active_node(self):
 		node = create_node(self.user.id, self.user.username)
 
-		self.delete_object(node)
+		ok = delete_object(node, self.user)
+		self.assertEqual(ok, True)
 		self.check_node_in_query(node, False)
 
 	def test_delete_static_node(self):
@@ -434,7 +438,8 @@ class QueryMapTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			nodeObjToDelete = nodeIdDict[candidateIds[0]]
 
-			self.delete_object(nodeObjToDelete)
+			ok = delete_object(nodeObjToDelete, self.user)
+			self.assertEqual(ok, True)	
 			self.check_node_in_query(nodeObjToDelete, False)
 		else:
 			print ("No free nodes in ROI for testing")
@@ -455,7 +460,8 @@ class QueryMapTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			nodeObjToModify = nodeIdDict[candidateIds[0]]
 
-			modNode = self.modify_node(nodeObjToModify, 1)
+			ok, modNode = modify_node(nodeObjToModify, 1, self.user)
+			self.assertEqual(ok, True)
 			self.check_node_in_query(modNode, True)
 			self.check_node_in_query(nodeObjToModify, False)
 
@@ -475,8 +481,9 @@ class QueryMapTestCase(TestCase):
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
-		modWay = self.modify_way(way, [node.objId, node2.objId, node.objId], {"foo": "eggs"})
-		
+		ok, modWay = modify_way(way, [node.objId, node2.objId, node.objId], {"foo": "eggs"}, self.user)
+		self.assertEqual(ok, True)
+
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(modWay, bbox, True)
 
@@ -485,8 +492,9 @@ class QueryMapTestCase(TestCase):
 		node2 = create_node(self.user.id, self.user.username, node)
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 
-		self.delete_object(way)
-		
+		ok = delete_object(way, self.user)
+		self.assertEqual(ok, True)
+	
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_way_in_query(way, bbox, False)
 
@@ -508,7 +516,8 @@ class QueryMapTestCase(TestCase):
 
 			refs = list(wayObjToMod.refs)
 			refs.append(refs[0])
-			modWay = self.modify_way(wayObjToMod, refs, {"foo": "bacon"})
+			ok, modWay = modify_way(wayObjToMod, refs, {"foo": "bacon"}, self.user)
+			self.assertEqual(ok, True)
 			self.check_way_in_query(modWay, self.roi, True)
 		else:
 			print ("No free ways in ROI for testing")
@@ -529,7 +538,8 @@ class QueryMapTestCase(TestCase):
 			nodeIdDict, wayIdDict, relationIdDict = idDicts['node'], idDicts['way'], idDicts['relation']
 			wayObjToDelete = wayIdDict[candidateIds[0]]
 
-			self.delete_object(wayObjToDelete)
+			ok = delete_object(wayObjToDelete, self.user)
+			self.assertEqual(ok, True)
 			self.check_way_in_query(wayObjToDelete, self.roi, False)
 		else:
 			print ("No free ways in ROI for testing")
@@ -572,7 +582,8 @@ class QueryMapTestCase(TestCase):
 		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
 		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("way", way.objId, "dead")])
 
-		self.delete_object(relation)
+		ok = delete_object(relation, self.user)
+		self.assertEqual(ok, True)
 		
 		bbox = self.get_bbox_for_nodes([node, node2])
 		self.check_relation_in_query(way, bbox, False)
@@ -641,7 +652,7 @@ class QueryMapTestCase(TestCase):
 			if len(parentData.relations) > 0:
 				continue
 
-			ok = self.delete_object(relationObjToDel, t)
+			ok = delete_object(relationObjToDel, self.user, t)
 			if not ok:
 				t.Abort()
 			self.assertEqual(ok, True)
