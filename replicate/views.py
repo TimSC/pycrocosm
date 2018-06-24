@@ -128,12 +128,11 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 		return HttpResponseNotFound("Page does not exist")
 
 	t = p.GetTransaction("ACCESS SHARE")
-	osmData = pgmap.OsmData()
-	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmData)
+	osmc = pgmap.OsmChange()
+	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmc)
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
+	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio))
 	return sio.getvalue()
 
 def diff(request, timebase, cat1, cat2, cat3):

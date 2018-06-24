@@ -14,7 +14,7 @@ import querymap.tests as qmt
 import pgmap
 import random
 import sys
-import gc
+import io
 import time
 import datetime
 from changeset.views import GetOsmDataIndex
@@ -54,5 +54,6 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 		print (response.content)
 
-		
+		osc = pgmap.OsmChange()
+		pgmap.LoadFromOsmChangeXml(response.content, osc)
 
