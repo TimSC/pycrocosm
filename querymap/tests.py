@@ -66,12 +66,15 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = 
 	node.objId = createdNodeIds[-1]
 	return node
 
-def create_way(uid, username, refs, changeset = 1000):
+def create_way(uid, username, refs, changeset = 1000, timestamp = None):
 
 	way = pgmap.OsmWay()
 	way.objId = -1
 	way.metaData.version = 1
-	way.metaData.timestamp = int(time.time())
+	if timestamp is None:
+		way.metaData.timestamp = int(time.time())
+	else:
+		way.metaData.timestamp = int(timestamp)
 	way.metaData.changeset = changeset
 	way.metaData.uid = uid
 	way.metaData.username = username
@@ -99,12 +102,15 @@ def create_way(uid, username, refs, changeset = 1000):
 	way.objId = createdWayIds[-1]
 	return way
 
-def create_relation(uid, username, refs, changeset = 1000):
+def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 
 	relation = pgmap.OsmRelation()
 	relation.objId = -1
 	relation.metaData.version = 1
-	relation.metaData.timestamp = int(time.time())
+	if timestamp is None:
+		relation.metaData.timestamp = int(time.time())
+	else:
+		relation.metaData.timestamp = int(timestamp)
 	relation.metaData.changeset = changeset
 	relation.metaData.uid = uid
 	relation.metaData.username = username
@@ -168,11 +174,14 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 		t.Commit()
 	return relation
 
-def modify_node(nodeIn, nodeCurrentVer, user):
+def modify_node(nodeIn, nodeCurrentVer, user, timestamp = None):
 	node = pgmap.OsmNode()
 	node.objId = nodeIn.objId
 	node.metaData.version = nodeCurrentVer + 1
-	node.metaData.timestamp = int(time.time())
+	if timestamp is None:
+		node.metaData.timestamp = int(time.time())
+	else:
+		node.metaData.timestamp = int(timestamp)
 	node.metaData.changeset = 1000
 	node.metaData.uid = user.id
 	node.metaData.username = user.username
@@ -198,11 +207,14 @@ def modify_node(nodeIn, nodeCurrentVer, user):
 		t.Commit()
 	return ok, node
 
-def modify_way(wayIn, refsIn, tagsIn, user):
+def modify_way(wayIn, refsIn, tagsIn, user, timestamp = None):
 	way = pgmap.OsmWay()
 	way.objId = wayIn.objId
 	way.metaData.version = wayIn.metaData.version + 1
-	way.metaData.timestamp = int(time.time())
+	if timestamp is None:
+		way.metaData.timestamp = int(time.time())
+	else:
+		way.metaData.timestamp = int(timestamp)
 	way.metaData.changeset = 1000
 	way.metaData.uid = user.id
 	way.metaData.username = user.username
@@ -229,7 +241,7 @@ def modify_way(wayIn, refsIn, tagsIn, user):
 		t.Commit()
 	return ok, way
 	
-def delete_object(objIn, user, tIn = None):
+def delete_object(objIn, user, tIn = None, timestamp = None):
 	if isinstance(objIn, pgmap.OsmNode):
 		obj = pgmap.OsmNode()
 	elif isinstance(objIn, pgmap.OsmWay):
@@ -239,7 +251,10 @@ def delete_object(objIn, user, tIn = None):
 
 	obj.objId = objIn.objId
 	obj.metaData.version = objIn.metaData.version + 1
-	obj.metaData.timestamp = int(time.time())
+	if timestamp is None:
+		obj.metaData.timestamp = int(time.time())
+	else:
+		obj.metaData.timestamp = int(timestamp)
 	obj.metaData.changeset = 1000
 	obj.metaData.uid = user.id
 	obj.metaData.username = user.username
