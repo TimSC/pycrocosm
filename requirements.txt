@@ -1,5 +1,5 @@
 djangorestframework 
 defusedxml 
-psycopg2 
+psycopg2-binary
 django-oauth10a-mod
 

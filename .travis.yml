@@ -20,7 +20,7 @@ before_script:
   - sudo service postgresql restart
   - cd pgmap
   - python setup.py build
-  - sudo python setup.py install
+  - pip install .
   - cp config.cfg.template config.cfg
   - cd ..
   - cp pycrocosm/settings.py.template pycrocosm/settings.py
