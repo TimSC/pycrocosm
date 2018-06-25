@@ -17,14 +17,13 @@ install:
 before_script:
   - sudo apt update
   - sudo apt install -y libpqxx-dev rapidjson-dev libexpat1-dev python-pip swig libboost-filesystem-dev libboost-program-options-dev postgis postgresql-9.5-postgis-2.2
+  - sudo service postgresql restart
   - cd pgmap
   - python setup.py build
   - sudo python setup.py install
-  - make -j4
   - cp config.cfg.template config.cfg
   - cd ..
   - cp pycrocosm/settings.py.template pycrocosm/settings.py
-
 script:
   - python manage.py test
 
