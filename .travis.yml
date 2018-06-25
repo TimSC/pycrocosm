@@ -26,8 +26,9 @@ before_script:
 #  - sudo make install
 #  - cd ../..
   - cd pgmap
+  - python setup.py build
   - sudo python setup.py install
-  - make
+  - make -j4
   - cd ..
 
 script:
