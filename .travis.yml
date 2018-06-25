@@ -22,7 +22,7 @@ install:
 
 before_script:
   - sudo apt -qq update
-  - sudo apt install -y libpqxx-dev rapidjson-dev libexpat1-dev python-pip swig libboost-filesystem-dev libboost-program-options-dev postgis
+  - sudo apt install -y libpqxx-dev libexpat1-dev python-pip swig libboost-filesystem-dev libboost-program-options-dev postgis
   - sudo service postgresql restart
 
   - wget https://github.com/Tencent/rapidjson/archive/v1.1.0.tar.gz
