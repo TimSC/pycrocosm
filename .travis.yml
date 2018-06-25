@@ -13,6 +13,8 @@ install:
   - pip install -r requirements.txt
 
 before_script:
+  - uname -a
+  - cat /etc/issue
   - sudo apt update
   - sudo apt install -y libpqxx-dev rapidjson-dev libexpat1-dev python-pip swig3.0 libboost-filesystem-dev libboost-program-options-dev
   - cd pgmap
