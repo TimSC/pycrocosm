@@ -21,7 +21,9 @@ before_script:
   - cd pgmap
   - python setup.py build
   - pip install .
-  - cp config.cfg.template config.cfg
+  - sudo chmod o+rw .
+  - make quickinit
+  - sudo -u postgres ./quickinit
   - cd ..
   - cp pycrocosm/settings.py.template pycrocosm/settings.py
 script:
