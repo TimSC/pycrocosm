@@ -1,6 +1,6 @@
 #Based on https://micropyramid.com/blog/setting-up-travis-ci-for-django-project/
 sudo: required
-dist: trusty
+dist: xenial
 language: python
 python:
   - "2.7"
