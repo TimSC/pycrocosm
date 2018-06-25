@@ -1,0 +1,5 @@
+djangorestframework 
+defusedxml 
+psycopg2 
+django-oauth10a-mod
+

@@ -27,7 +27,7 @@ Installation is described for Linux Mint 18.2, but should work on similar system
 
 Install the rest of the dependencies
 
-   pip install djangorestframework defusedxml psycopg2 django-oauth10a-mod
+   pip install -r requirements.txt
 
    cd pycrocosm/pgmap/
 
