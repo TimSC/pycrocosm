@@ -13,10 +13,12 @@ install:
   - pip install -r requirements.txt
 
 before_script:
-  - sudo apt install libpqxx-dev rapidjson-dev libexpat1-dev python-pip swig3.0 libboost-filesystem-dev libboost-program-options-dev
+  - sudo apt update
+  - sudo apt install -y libpqxx-dev rapidjson-dev libexpat1-dev python-pip swig3.0 libboost-filesystem-dev libboost-program-options-dev
+  - cd pgmap
   - python setup.py install
-  - 
-#  - mysql -e 'create database test;' -u root
+  - make
+  - cd ..
 
 script:
   - python manage.py test
