@@ -50,7 +50,7 @@ Create a database to contain Django specific tables:
 
    CREATE DATABASE db_settings;
 
-   GRANT ALL PRIVILEGES ON DATABASE db_map to pycrocosm;
+   GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;
 
 Use Ctrl-D (repeatedly) to exit back to your normal user. Django needs to know the actual database settings. Set the appropriate values in settings.py, particularly the section under DATABASES and MAP_DATABASE:
 

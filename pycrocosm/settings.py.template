@@ -101,22 +101,22 @@ DATABASES = {
 		#'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
 		'ENGINE': 'django.db.backends.postgresql',
 		'NAME': 'db_settings',
-		'USER': 'microcosm',
-		'PASSWORD': 'wGegr5NFTTzZ',
-		'HOST': '127.0.0.1',
+		'USER': 'microcosm', #SCRIPT_REPLACE_dbuser
+		'PASSWORD': 'wGegr5NFTTzZ', #SCRIPT_REPLACE_dbpass
+		'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
 		'PORT': '5432',
 	},
 }
 
 MAP_DATABASE = {
-	'NAME': 'db_map',
-	'USER': 'microcosm',
-	'PASSWORD': 'wGegr5NFTTzZ',
-	'HOST': '127.0.0.1',
+	'NAME': 'db_map', #SCRIPT_REPLACE_dbname
+	'USER': 'microcosm', #SCRIPT_REPLACE_dbuser
+	'PASSWORD': 'wGegr5NFTTzZ', #SCRIPT_REPLACE_dbpass
+	'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
 	'PORT': '5432',
-	'PREFIX': "portsmouth_",
-	'PREFIX_TEST': "portsmouth_test_",
-	'PREFIX_MOD': "portsmouth_mod_",
+	'PREFIX': "portsmouth_", #SCRIPT_REPLACE_dbtableprefix
+	'PREFIX_TEST': "portsmouth_test_", #SCRIPT_REPLACE_dbtabletestprefix
+	'PREFIX_MOD': "portsmouth_mod_", #SCRIPT_REPLACE_dbtablemodifyprefix
 }
 
 # Password validation

@@ -3,7 +3,6 @@
 from __future__ import unicode_literals
 
 from django.conf import settings
-import django.contrib.postgres.fields.jsonb
 from django.db import migrations, models
 import django.db.models.deletion
 
@@ -25,7 +24,7 @@ class Migration(migrations.Migration):
                 ('max_lat', models.FloatField(default=0.0)),
                 ('min_lon', models.FloatField(default=0.0)),
                 ('max_lon', models.FloatField(default=0.0)),
-                ('tags', django.contrib.postgres.fields.jsonb.JSONField(default={})),
+                ('tags', models.FloatField(default=0.0)), #This was jsonb but use float for compatibility (usused anyway)
                 ('open_datetime', models.DateTimeField(auto_now=True)),
                 ('close_datetime', models.DateTimeField()),
                 ('user', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, to=settings.AUTH_USER_MODEL)),
