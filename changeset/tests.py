@@ -959,6 +959,55 @@ class ChangesetUploadTestCase(TestCase):
 		#print (response.content)
 		self.assertEqual(response.status_code, 200)
 
+	def test_upload_create_node_way_version_one(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		xml = """<osmChange version="0.6" generator="acme osm editor">
+			<create>
+				<node id="-1" changeset="{0}" version="1" lat="-33.9133123" lon="151.1173123" />
+				<node id="-2" changeset="{0}" version="1" lat="-33.9233321" lon="151.1173321" />
+				<way id="-3" changeset="{0}" version="1">
+				    <nd ref="-1"/>
+				    <nd ref="-2"/>
+				</way>
+			</create>
+		</osmChange>""".format(cs.objId)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		if response.status_code != 200:
+			print (response.content)
+		self.assertEqual(response.status_code, 200)
+
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 3)
+		diffDict = ParseOsmDiffToDict(xml)
+
+		self.assertEqual(-1 in diffDict["node"], True)
+		self.assertEqual(-2 in diffDict["node"], True)
+		self.assertEqual(-3 in diffDict["way"], True)
+
+		self.assertEqual(diffDict["node"][-1][1], 1)
+		self.assertEqual(diffDict["node"][-2][1], 1)
+		self.assertEqual(diffDict["way"][-3][1], 1)
+
+	def test_upload_create_wrong_version(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		xml = """<osmChange version="0.6" generator="acme osm editor">
+			<create>
+				<node id="-1" changeset="{0}" version="2" lat="-33.9133123" lon="151.1173123" />
+			</create>
+		</osmChange>""".format(cs.objId)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		if response.status_code != 400:
+			print (response.content)
+		self.assertEqual(response.status_code, 400)
+
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()

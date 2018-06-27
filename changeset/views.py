@@ -125,8 +125,8 @@ def upload_check_create(objs):
 		obj = objs[i]
 		if obj.objId > 0:
 			return HttpResponseBadRequest("Created object IDs must be zero or negative", content_type="text/plain")
-		if obj.metaData.version != 0:
-			return HttpResponseBadRequest("Version for created objects must be null or zero", content_type="text/plain")
+		if obj.metaData.version != 0 and obj.metaData.version != 1:
+			return HttpResponseBadRequest("Version for created objects must be null, zero or one", content_type="text/plain")
 		if isinstance(obj, pgmap.OsmNode):
 			if obj.lat < -90.0 or obj.lat > 90 or obj.lon < -180.0 or obj.lon > 180.0:
 				return HttpResponseBadRequest("Node outside valid range", content_type="text/plain")
