@@ -1,3 +1,4 @@
+[![CircleCI](https://circleci.com/gh/TimSC/pycrocosm.svg?style=svg)](https://circleci.com/gh/TimSC/pycrocosm)
 # pycrocosm
 
 OSM Map server API 0.6 implemented using Django. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database.
