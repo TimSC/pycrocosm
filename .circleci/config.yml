@@ -23,7 +23,7 @@ jobs:
           name: Install apt packages
           command: |
             sudo apt -qq update
-            sudo apt install -y libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev
+            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev
 
       - run:
           name: Install swig from source
