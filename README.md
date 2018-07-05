@@ -1,4 +1,5 @@
 [![CircleCI](https://circleci.com/gh/TimSC/pycrocosm.svg?style=svg)](https://circleci.com/gh/TimSC/pycrocosm)
+
 # pycrocosm
 
 OSM Map server API 0.6 implemented using Django. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database.
@@ -8,35 +9,33 @@ Installation
 
 Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. 
 
-   cd /var
+    cd /var
 
-   sudo apt install git virtualenv python-pip swig g++ python-dev python-pip libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
+    sudo apt install git virtualenv python-pip swig g++ python-dev python-pip libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
 
-   sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
+    sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
 
-   sudo chown www-data:www-data -R pycrocosm
+    sudo chown www-data:www-data -R pycrocosm
 
-   sudo chmod g+rwx -R pycrocosm
+    sudo chmod g+rwx -R pycrocosm
 
-   cd pycrocosm
+    cd pycrocosm
 
-   virtualenv --python=/usr/bin/python pgmapenv
+    virtualenv --python=/usr/bin/python pgmapenv
 
-   source pgmapenv/bin/activate
-
-   pip install django==1.11.10
+    source pgmapenv/bin/activate
 
 Install the rest of the dependencies
 
-   pip install djangorestframework defusedxml psycopg2 django-oauth10a-mod
+    pip install -r requirements.txt
 
-   cd pycrocosm/pgmap/
+    cd pycrocosm/pgmap/
 
-   make
+    make
 
-   python setup.py install
+    python setup.py install
 
-   cd ..
+    cd ..
 
 At this stage, you need to configure and initialize the PostGIS database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database and import some data.
 
@@ -45,25 +44,25 @@ Finishing Django site install
 
 Create a database to contain Django specific tables:
 
-   sudo su postgres
+    sudo su postgres
 
-   psql
+    psql
 
-   CREATE DATABASE db_settings;
+    CREATE DATABASE db_settings;
 
-   GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;
+    GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;
 
 Use Ctrl-D (repeatedly) to exit back to your normal user. Django needs to know the actual database settings. Set the appropriate values in settings.py, particularly the section under DATABASES and MAP_DATABASE:
 
-   cp pycrocosm/settings.py.template pycrocosm/settings.py
+    cp pycrocosm/settings.py.template pycrocosm/settings.py
 
-   nano pycrocosm/settings.py
+    nano pycrocosm/settings.py
 
 To complete the webserver installation, update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY. Create the Django specific tables:
 
-   python manage.py migrate
+    python manage.py migrate
 
-   python manage.py runserver
+    python manage.py runserver
 
 Connect to http://127.0.0.1:8000/ using a web browser and hope for the best.
 
@@ -72,37 +71,37 @@ nginx configuration
 
 For nginx/systemd based linux:
 
-   sudo apt install nginx uwsgi uwsgi-plugin-python
+    sudo apt install nginx uwsgi uwsgi-plugin-python
 
-   sudo cp /var/pycrocosm/nginx/pycrocosm /etc/nginx/sites-available
+    sudo cp /var/pycrocosm/nginx/pycrocosm /etc/nginx/sites-available
 
-   sudo ln -s /etc/nginx/sites-available/pycrocosm /etc/nginx/sites-enabled/pycrocosm
+    sudo ln -s /etc/nginx/sites-available/pycrocosm /etc/nginx/sites-enabled/pycrocosm
 
-   sudo service nginx restart
+    sudo service nginx restart
 
 This gets nginx listen on socket /run/pycrocosm.sock for a wsgi server. Then update /var/pycrocosm/pycrocosm.ini with your install and virtualenv path.
 
-   sudo cp nginx/pycrocosm.service /etc/systemd/system
+    sudo cp nginx/pycrocosm.service /etc/systemd/system
 
 Check things look ok in pycrocosm.service:
 
-   sudo nano /etc/systemd/system/pycrocosm.service
+    sudo nano /etc/systemd/system/pycrocosm.service
 
 Start the service:
 
-   sudo service pycrocosm start
+    sudo service pycrocosm start
 
 Check it is running:
 
-   sudo service pycrocosm status
+    sudo service pycrocosm status
 
 If not, check the logs:
 
-   sudo journalctl -u pycrocosm.service
+    sudo journalctl -u pycrocosm.service
 
 Enable the service to start on boot:
 
-   sudo systemctl enable mysite.service
+    sudo systemctl enable mysite.service
 
 Connect using a browser: http://localhost:8010
 
@@ -110,7 +109,7 @@ TODO It might be safer to not run the service as root!
 
 Set server to read only mode: 
 
-    python manage.py setmeta readonly 1
+     python manage.py setmeta readonly 1
 
 All done!
 
