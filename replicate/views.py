@@ -25,14 +25,14 @@ def catalog(request, timebase):
 	if elapsed < 0: elapsed = 0
 	
 	if timebase == "minute":
-		elapsedUnits = elapsed / 60
+		elapsedUnits = elapsed // 60
 	if timebase == "hour":
-		elapsedUnits = elapsed / 60 / 60
+		elapsedUnits = elapsed // 60 // 60
 	if timebase == "day":
-		elapsedUnits = elapsed / 60 / 60 / 24
+		elapsedUnits = elapsed // 60 // 60 // 24
 
-	val1 = elapsedUnits / 1000 
-	val2 = int(val1 / 1000)+settings.REPLICATE_OFFSET
+	val1 = elapsedUnits // 1000 
+	val2 = int(val1 // 1000)+settings.REPLICATE_OFFSET
 
 	out = []
 	for i in range(settings.REPLICATE_OFFSET, val2+1):
@@ -58,13 +58,13 @@ def catalog2(request, timebase, cat1):
 		return HttpResponseNotFound("Page does not exist")
 	
 	if timebase == "minute":
-		elapsedInPageUnits = elapsedInPage / 60
+		elapsedInPageUnits = elapsedInPage // 60
 	if timebase == "hour":
-		elapsedInPageUnits = elapsedInPage / 60 / 60
+		elapsedInPageUnits = elapsedInPage // 60 // 60
 	if timebase == "day":
-		elapsedInPageUnits = elapsedInPage / 60 / 60 / 24
+		elapsedInPageUnits = elapsedInPage // 60 // 60 // 24
 
-	val1 = int(elapsedInPageUnits / 1000)
+	val1 = int(elapsedInPageUnits // 1000)
 	if val1 > 999: val1 = 999
 
 	out = []
@@ -84,7 +84,7 @@ def catalog3(request, timebase, cat1, cat2):
 		pageStep = 60000000 * 60
 	if timebase == "day":
 		pageStep = 60000000 * 60 * 24
-	pageStep2 = pageStep / 1000
+	pageStep2 = pageStep // 1000
 
 	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
@@ -92,11 +92,11 @@ def catalog3(request, timebase, cat1, cat2):
 		return HttpResponseNotFound("Page does not exist")
 	
 	if timebase == "minute":
-		val1 = elapsedInPage / 60
+		val1 = elapsedInPage // 60
 	if timebase == "hour":
-		val1 = elapsedInPage / 60 / 60
+		val1 = elapsedInPage // 60 // 60
 	if timebase == "day":
-		val1 = elapsedInPage / 60 / 60 / 24
+		val1 = elapsedInPage // 60 // 60 // 24
 	val1 = int(val1)
 	if val1 > 999: val1 = 999
 
@@ -119,8 +119,8 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	if timebase == "day":
 		pageStep = 60000000 * 60 * 24
 
-	pageStep2 = pageStep / 1000
-	pageStep3 = pageStep2 / 1000
+	pageStep2 = pageStep // 1000
+	pageStep3 = pageStep2 // 1000
 
 	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
@@ -161,8 +161,8 @@ def state(request, timebase, cat1, cat2, cat3):
 	if timebase == "day":
 		pageStep = 60000000 * 60 * 24
 
-	pageStep2 = pageStep / 1000
-	pageStep3 = pageStep2 / 1000
+	pageStep2 = pageStep // 1000
+	pageStep3 = pageStep2 // 1000
 
 	pageStartTimestamp = (int(cat1)-settings.REPLICATE_OFFSET) * pageStep + int(cat2) * pageStep2 + int(cat3) * pageStep3 + epochts
 	elapsedInPage = timenow - pageStartTimestamp
@@ -195,12 +195,12 @@ def TimestampToPath(ts, timebase):
 	a = ts2 % pageStep3
 	ts2 -= a #Discard seconds
 	b = ts2 % pageStep2
-	cat3 = b / pageStep3 + 1
+	cat3 = b // pageStep3 + 1
 	ts2 -= b # Remove 1000 minutes blocks
 	c = ts2 % pageStep
-	cat2 = c / pageStep2
+	cat2 = c // pageStep2
 	ts2 -= c # Remove 1,000,000 minutes blocks
-	cat1 = ts2 / pageStep + settings.REPLICATE_OFFSET
+	cat1 = ts2 // pageStep + settings.REPLICATE_OFFSET
 
 	return (cat1, cat2, cat3)
 

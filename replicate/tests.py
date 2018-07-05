@@ -83,7 +83,7 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osc = pgmap.OsmChange()
-		pgmap.LoadFromOsmChangeXml(response.content, osc)
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
@@ -105,7 +105,7 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osc = pgmap.OsmChange()
-		pgmap.LoadFromOsmChangeXml(response.content, osc)
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
@@ -127,7 +127,7 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osc = pgmap.OsmChange()
-		pgmap.LoadFromOsmChangeXml(response.content, osc)
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
@@ -149,7 +149,7 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osc = pgmap.OsmChange()
-		pgmap.LoadFromOsmChangeXml(response.content, osc)
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
@@ -176,7 +176,7 @@ class ReplicateTestCase(TestCase):
 		self.assertEqual(response.status_code, 200)
 
 		osc = pgmap.OsmChange()
-		pgmap.LoadFromOsmChangeXml(response.content, osc)
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
