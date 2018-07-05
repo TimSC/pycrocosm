@@ -7,11 +7,13 @@ OSM Map server API 0.6 implemented using Django. It depends on submodule https:/
 Installation
 ------------
 
+### Python 2 installation
+
 Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. 
 
     cd /var
 
-    sudo apt install git virtualenv python-pip swig g++ python-dev python-pip libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
+    sudo apt install git virtualenv python-pip swig3 g++ python-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
 
     sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
 
@@ -33,7 +35,41 @@ Install the rest of the dependencies
 
     make
 
-    python setup.py install
+    pip install .
+
+    cd ..
+
+At this stage, you need to configure and initialize the PostGIS database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database and import some data.
+
+### Python 3 Installation
+
+Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. 
+
+    cd /var
+
+    sudo apt install git virtualenv python3-pip swig3 g++ python3-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
+
+    sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
+
+    sudo chown www-data:www-data -R pycrocosm
+
+    sudo chmod g+rwx -R pycrocosm
+
+    cd pycrocosm
+
+    virtualenv --python=/usr/bin/python3 pgmapenv3
+
+    source pgmapenv3/bin/activate
+
+Install the rest of the dependencies
+
+    pip3 install -r requirements.txt
+
+    cd pycrocosm/pgmap/
+
+    make
+
+    pip3 install .
 
     cd ..
 
