@@ -44,6 +44,7 @@ INSTALLED_APPS = [
 	'extra.apps.ExtraConfig',
 	'objectinfo.apps.ObjectinfoConfig',
 	'migrateusers.apps.MigrateusersConfig',
+	'overpass.apps.OverpassConfig',
 	'django.contrib.admin',
 	'django.contrib.auth',
 	'django.contrib.contenttypes',
