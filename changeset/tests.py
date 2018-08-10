@@ -21,6 +21,7 @@ from changeset import views
 from querymap.views import p
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation, modify_relation
+from changeset.management.commands import closeoldchangesets
 from django.conf import settings
 
 def ParseOsmDiffToDict(xml):
@@ -1063,4 +1064,84 @@ class ChangesetUploadTestCase(TestCase):
 		if not ok:
 			print (errStr.errStr)
 		t.Commit()
+
+class ChangesetAutoCloseTestCase(TestCase):
+
+	def setUp(self):
+		self.username = "john"
+		self.password = "glass onion"
+		self.email = 'jlennon@beatles.com'
+		self.user = User.objects.create_user(self.username, self.email, self.password)
+		self.client = Client()
+		self.client.login(username=self.username, password=self.password)
+
+		self.username2 = "ringo"
+		self.password2 = "penny lane"
+		self.email2 = 'rstarr@beatles.com'
+		self.user2 = User.objects.create_user(self.username2, self.email2, self.password2)
+		self.client2 = Client()
+		self.client2.login(username=self.username2, password=self.password2)
+
+	def test_changeset_auto_close_active(self):
+		teststr = u"Съешь же ещё этих мягких французских булок да выпей чаю"
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=True, open_timestamp=int(time.time())-60)
+		cs2 = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=False, open_timestamp=int(time.time())-120)
+
+		cs3 = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=True, open_timestamp=int(time.time())-(36*60*60))
+		cs4 = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=False, open_timestamp=int(time.time())-(36*60*60))
+
+		cmd = closeoldchangesets.Command()
+		cmd.handle([], {})
+
+		anonClient = Client()
+
+		response = anonClient.get(reverse('changeset:changeset', args=(cs.objId,)))
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+		self.assertEqual(int(csout.attrib["id"]) == cs.objId, True)
+		self.assertEqual(csout.attrib["open"], "true")
+
+		response = anonClient.get(reverse('changeset:changeset', args=(cs2.objId,)))
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+		self.assertEqual(int(csout.attrib["id"]) == cs2.objId, True)
+		self.assertEqual(csout.attrib["open"], "false")
+
+		response = anonClient.get(reverse('changeset:changeset', args=(cs3.objId,)))
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+		self.assertEqual(int(csout.attrib["id"]) == cs3.objId, True)
+		self.assertEqual(csout.attrib["open"], "false")
+
+		response = anonClient.get(reverse('changeset:changeset', args=(cs4.objId,)))
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		self.assertEqual(xml.tag, "osm")
+		csout = xml.find("changeset")
+		self.assertEqual(int(csout.attrib["id"]) == cs4.objId, True)
+		self.assertEqual(csout.attrib["open"], "false")
+
+	def tearDown(self):
+		u = User.objects.get(username = self.username)
+		u.delete()
+		u2 = User.objects.get(username = self.username2)
+		u2.delete()
+
+		errStr = pgmap.PgMapError()
+		t = p.GetTransaction("EXCLUSIVE")
+		ok = t.ResetActiveTables(errStr)
+		if not ok:
+			print (errStr.errStr)
+		t.Commit()
+
 
