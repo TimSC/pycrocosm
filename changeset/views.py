@@ -660,8 +660,8 @@ def list_changesets(request):
 	user_uid = int(request.GET.get('user', 0))
 	display_name = request.GET.get('display_name', None)
 	timearg = request.GET.get('time', None)
-	openarg = request.GET.get('open', None)
-	close = request.GET.get('closed', None)
+	isOpenOnly = request.GET.get('open', 'false') == 'true'
+	isClosedOnly = request.GET.get('closed', 'false') == 'true'
 	changesetsToGet = request.GET.get('changesets', None)
 
 	#Check display_name or uid actually exists
@@ -676,10 +676,20 @@ def list_changesets(request):
 			except ObjectDoesNotExist:
 				return HttpResponseNotFound("User not found")
 
+	closedAfter = -1
+	openedBefore = -1
+	if timearg is not None:
+		timeargSplit = timearg.split(",")
+		if len(timeargSplit) >= 1:
+			closedAfter = int(timeargSplit[0])
+		if len(timeargSplit) >= 2:
+			openedBefore = int(timeargSplit[1])
+
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
 	t = p.GetTransaction("ACCESS SHARE")
-	ok = t.GetChangesets(changesets, int(user_uid), errStr)
+	ok = t.GetChangesets(changesets, int(user_uid), closedAfter, openedBefore, 
+		isOpenOnly, isClosedOnly, errStr)
 
 	t.Commit()
 

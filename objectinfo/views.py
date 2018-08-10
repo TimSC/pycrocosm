@@ -13,7 +13,9 @@ def history(request):
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
-	ok = t.GetChangesets(changesets, uid, errStr)
+	isOpenOnly = False
+	isClosedOnly = False
+	ok = t.GetChangesets(changesets, uid, -1, -1, isOpenOnly, isClosedOnly, errStr)
 
 	t.Commit()
 
