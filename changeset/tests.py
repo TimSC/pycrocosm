@@ -60,7 +60,7 @@ def GetObj(p, objType, objId):
 		return pgmap.OsmRelation(objs[0])
 	return None
 
-def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
+def CreateTestChangeset(user, tags=None, is_open=True, bbox=None, open_timestamp=None, close_timestamp=None):
 	if tags is None:
 		tags = {'foo': 'bar'}
 	t = p.GetTransaction("EXCLUSIVE")
@@ -71,9 +71,15 @@ def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
 	cs.username = user.username
 	cs.uid = user.id
 	cs.is_open = is_open
-	cs.open_timestamp = int(time.time())
+	if open_timestamp is None:
+		cs.open_timestamp = int(time.time())
+	else:
+		cs.open_timestamp = int(open_timestamp)
 	if not is_open:
-		cs.close_timestamp = int(time.time())
+		if close_timestamp is None:
+			cs.close_timestamp = int(time.time())
+		else:
+			cs.close_timestamp = int(close_timestamp)
 	if bbox is not None:
 		cs.bbox_set=True
 		cs.x1=bbox[0]
@@ -85,6 +91,16 @@ def CreateTestChangeset(user, tags=None, is_open=True, bbox=None):
 	t.Commit()
 	del t
 	return cs
+
+def CheckChangesetListContainsId(obj, xml, csId, expected):
+	obj.assertEqual(xml.tag, "osm")
+	found = False
+	for cs in xml:
+		obj.assertEqual(cs.tag, "changeset")
+		if int(cs.attrib["id"]) == csId:
+			found = True
+			break
+	obj.assertEqual(found, expected)
 
 # Create your tests here.
 # alter user microcosm with createdb;
@@ -1007,6 +1023,33 @@ class ChangesetUploadTestCase(TestCase):
 		if response.status_code != 400:
 			print (response.content)
 		self.assertEqual(response.status_code, 400)
+
+	def test_get_changeset_list(self):
+		teststr = u"Съешь же ещё этих мягких французских булок да выпей чаю"
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=True, open_timestamp=int(time.time())-60)
+		cs2 = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr}, bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372),
+			is_open=False, open_timestamp=int(time.time())-120)
+
+		anonClient = Client()
+
+		response = anonClient.get(reverse('changeset:list'))
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		CheckChangesetListContainsId(self, xml, cs.objId, True)
+		CheckChangesetListContainsId(self, xml, cs2.objId, True)
+
+		response = anonClient.get(reverse('changeset:list')+"?open=true")
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		CheckChangesetListContainsId(self, xml, cs.objId, True)
+		CheckChangesetListContainsId(self, xml, cs2.objId, False)
+
+		response = anonClient.get(reverse('changeset:list')+"?closed=true")
+		self.assertEqual(response.status_code, 200)	
+		xml = fromstring(response.content)
+		CheckChangesetListContainsId(self, xml, cs.objId, False)
+		CheckChangesetListContainsId(self, xml, cs2.objId, True)
 
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
