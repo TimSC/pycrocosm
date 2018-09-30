@@ -13,5 +13,6 @@ urlpatterns = [
 	url(r'^(minute|hour|day)/([0-9]+)/([0-9]+)/([0-9]+).state.txt$', views.state, name='diffstate'),
 	url(r'^(minute|hour|day)/([0-9]+)/([0-9]+)/([0-9]+).osc.gz$', views.diffgz, name='diffdatagz'),
 	url(r'^(minute|hour|day)/([0-9]+)/([0-9]+)/([0-9]+).osc$', views.diff, name='diffdata'),
+    url(r'^diff$', views.customdiff, name='customdiff'),
     url(r'^$', views.index, name='replicate'),
 ]

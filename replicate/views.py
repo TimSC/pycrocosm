@@ -3,8 +3,9 @@ from __future__ import unicode_literals
 from __future__ import print_function
 
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound
+from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest
 from django.conf import settings
+from django.utils.dateparse import parse_datetime, parse_date
 from querymap.views import p
 from pycrocosm import common
 import pgmap
@@ -203,4 +204,43 @@ def TimestampToPath(ts, timebase):
 	cat1 = ts2 // pageStep + settings.REPLICATE_OFFSET
 
 	return (cat1, cat2, cat3)
+
+def customdiff(request):
+	#This is a non-standard (pycrocosm specific) API call to get diffs of custom time ranges.
+
+	startTsArg = request.GET.get('start', None) #Normally ISO 8601
+	endTsArg = request.GET.get('end', None) #Normally ISO 8601
+	compress = request.GET.get('compress', 'no')
+	if startTsArg is None:
+		return HttpResponseBadRequest("start argument not set")
+	if endTsArg is None:
+		return HttpResponseBadRequest("end argument not set")
+	startTs=parse_datetime(startTsArg)
+	if startTs is None:
+		startTs=parse_date(startTsArg)
+	endTs=parse_datetime(endTsArg)
+	if endTs is None:
+		endTs=parse_date(endTsArg)
+	if startTs is None:
+		return HttpResponseBadRequest("start argument not understood")
+	if endTs is None:
+		return HttpResponseBadRequest("end argument not understood")
+	if endTs < startTs:
+		return HttpResponseBadRequest("end cannot be before start")
+
+	t = p.GetTransaction("ACCESS SHARE")
+	osmc = pgmap.OsmChange()
+	t.GetReplicateDiff(int(time.mktime(startTs.timetuple())), int(time.mktime(endTs.timetuple())), osmc)
+
+	sio = io.BytesIO()
+	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio))
+
+	if compress == 'no':
+		return HttpResponse(sio.getvalue(), content_type='text/xml')
+	if compress == 'gz':
+		comp = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+		gzip_data = comp.compress(sio.getvalue()) + comp.flush()
+		return HttpResponse(gzip_data, content_type='application/x-gzip')
+
+	return HttpResponseBadRequest("compression argument not understood")
 
