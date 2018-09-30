@@ -222,9 +222,9 @@ def customdiff(request):
 	if endTs is None:
 		endTs=parse_date(endTsArg)
 	if startTs is None:
-		return HttpResponseBadRequest("start argument not understood")
+		return HttpResponseBadRequest("start argument not understood (should be ISO 8601 date or datetime)")
 	if endTs is None:
-		return HttpResponseBadRequest("end argument not understood")
+		return HttpResponseBadRequest("end argument not understood (should be ISO 8601 date or datetime)")
 	if endTs < startTs:
 		return HttpResponseBadRequest("end cannot be before start")
 
