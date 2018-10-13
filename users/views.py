@@ -146,3 +146,7 @@ def preferences_put(request, key):
 
 	return HttpResponse("", content_type='text/plain')
 
+@api_view(['GET', 'POST'])
+def not_implemented(request):
+	return HttpResponse("Not implemented", status=501)
+
