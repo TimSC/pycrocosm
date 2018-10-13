@@ -1,4 +1,4 @@
-django==1.11; python_version < '3.0'
+django>=1.11.16; python_version < '3.0'
 django; python_version >= '3.0'
 djangorestframework 
 defusedxml 
