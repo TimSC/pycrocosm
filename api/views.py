@@ -72,3 +72,7 @@ def permissions(request):
 def apibase(request):
 	return HttpResponse("API root", content_type='text/plain')
 
+@api_view(['GET'])
+def not_implemented(request):
+	return HttpResponse("Not implemented", status=501)
+
