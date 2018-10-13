@@ -17,6 +17,7 @@ import sys
 import io
 import time
 import datetime
+import zlib
 from changeset.views import GetOsmDataIndex
 
 def CreateIndexOsmChange(osc):
@@ -76,6 +77,7 @@ class ReplicateTestCase(TestCase):
 		node = qmt.create_node(self.user.id, self.user.username, timestamp = ts)
 		cat = rv.TimestampToPath(node.metaData.timestamp, "minute")
 
+		#Check minutely diff
 		anonClient = Client()
 		response = anonClient.get(reverse('replicate:diffdata', args=['minute', str(cat[0]), str(cat[1]), str(cat[2])]))
 		if response.status_code != 200:
@@ -84,6 +86,48 @@ class ReplicateTestCase(TestCase):
 
 		osc = pgmap.OsmChange()
 		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
+
+		oscIndex = CreateIndexOsmChange(osc)
+
+		self.assertEqual(node.objId in oscIndex["node"], True)
+		self.assertEqual(oscIndex["node"][node.objId][0][0], "create")
+
+	def test_create_node_diff_custom_range(self):
+		ts = time.time() - 60
+		node = qmt.create_node(self.user.id, self.user.username, timestamp = ts)
+
+		#Check custom time range diff
+		anonClient = Client()
+		startTs = datetime.datetime.utcfromtimestamp(ts-5).isoformat()
+		endTs = datetime.datetime.utcfromtimestamp(ts+5).isoformat()
+		response = anonClient.get(reverse('replicate:customdiff')+'?start={}&end={}'.format(startTs, endTs))
+		if response.status_code != 200:
+			print (response.content)
+		self.assertEqual(response.status_code, 200)
+
+		osc = pgmap.OsmChange()
+		pgmap.LoadFromOsmChangeXml(response.content.decode("utf-8"), osc)
+
+		oscIndex = CreateIndexOsmChange(osc)
+
+		self.assertEqual(node.objId in oscIndex["node"], True)
+		self.assertEqual(oscIndex["node"][node.objId][0][0], "create")
+
+	def test_create_node_diff_custom_range_compressed(self):
+		ts = time.time() - 60
+		node = qmt.create_node(self.user.id, self.user.username, timestamp = ts)
+
+		#Check custom time range diff
+		anonClient = Client()
+		startTs = datetime.datetime.utcfromtimestamp(ts-5).isoformat()
+		endTs = datetime.datetime.utcfromtimestamp(ts+5).isoformat()
+		response = anonClient.get(reverse('replicate:customdiff')+'?start={}&end={}&compress=gz'.format(startTs, endTs))
+		if response.status_code != 200:
+			print (response.content)
+		self.assertEqual(response.status_code, 200)
+
+		osc = pgmap.OsmChange()
+		pgmap.LoadFromOsmChangeXml(zlib.decompress(response.content, zlib.MAX_WBITS|16).decode("utf-8"), osc)
 
 		oscIndex = CreateIndexOsmChange(osc)
 
