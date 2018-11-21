@@ -132,6 +132,13 @@ def create(request, objType):
 def relations_for_obj(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 
+	#Check reference object exists
+	osmData = pgmap.OsmData()
+	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
+
+	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
 	osmData = pgmap.OsmData()
 	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
 
@@ -143,6 +150,13 @@ def relations_for_obj(request, objType, objId):
 @api_view(['GET'])
 def ways_for_node(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
+
+	#Check reference object exists
+	osmData = pgmap.OsmData()
+	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
+
+	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
 
 	osmData = pgmap.OsmData()
 	t.GetWaysForNodes([int(objId)], osmData);	
@@ -159,6 +173,9 @@ def full_obj(request, objType, objId):
 	osmData = pgmap.OsmData()
 	t.GetFullObjectById(objType, int(objId), osmData)
 
+	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
@@ -172,6 +189,9 @@ def object_version(request, objType, objId, objVer):
 	idVerPair = pgmap.pairi64i64(int(objId), int(objVer))
 	t.GetObjectsByIdVer(objType, [idVerPair], osmData)
 
+	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+		return HttpResponseNotFound("{} {} {} not found".format(objType, objId, objVer))
+
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
@@ -183,6 +203,9 @@ def object_history(request, objType, objId):
 
 	osmData = pgmap.OsmData()
 	t.GetObjectsHistoryById(objType, [int(objId)], osmData)
+
+	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
