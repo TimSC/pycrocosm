@@ -136,8 +136,7 @@ def relations_for_obj(request, objType, objId):
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
 
-	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
-		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+	# From the 0.6 spec: "There is no error if the element does not exist."
 
 	osmData = pgmap.OsmData()
 	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
@@ -155,8 +154,7 @@ def ways_for_node(request, objType, objId):
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
 
-	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
-		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+	# From the 0.6 spec: "There is no error if the element does not exist."
 
 	osmData = pgmap.OsmData()
 	t.GetWaysForNodes([int(objId)], osmData);	
@@ -174,7 +172,15 @@ def full_obj(request, objType, objId):
 	t.GetFullObjectById(objType, int(objId), osmData)
 
 	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
-		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
+		# No live version found. Check to see if this ever existed.
+		t.GetObjectsHistoryById(objType, [int(objId)], osmData)
+
+		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+			return HttpResponseNotFound("{} {} not found".format(objType, objId))
+		else:
+			# The object once existed, therefore it was deleted.
+			return HttpResponse("Gone", status=410, content_type="text/plain")
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
