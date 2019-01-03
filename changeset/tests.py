@@ -428,6 +428,14 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(dbNode.metaData.uid, self.user.id)
 		self.assertEqual(abs(dbNode.metaData.timestamp - time.time())<60, True)
 
+		# Check xml download is reasonable
+		response2 = self.client.get(reverse('changeset:download', args=(cs.objId,)))
+		xml2 = fromstring(response2.content)
+		for ch in xml2:
+			self.assertEqual(ch.tag, "create")
+			for ch2 in ch:
+				self.assertEqual(ch2.tag, "node")
+
 	def test_upload_modify_single_node(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
@@ -458,6 +466,14 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(abs(dbNode.lat-50.80)<1e-6, True)
 		self.assertEqual(abs(dbNode.lon+1.05)<1e-6, True)
 		self.assertEqual(len(dbNode.tags), 1)
+
+		# Check xml download is reasonable
+		response2 = self.client.get(reverse('changeset:download', args=(cs.objId,)))
+		xml2 = fromstring(response2.content)
+		for ch in xml2:
+			self.assertEqual(ch.tag, "modify")
+			for ch2 in ch:
+				self.assertEqual(ch2.tag, "node")
 
 	def test_upload_modify_single_node_wrong_version(self):
 
@@ -517,6 +533,14 @@ class ChangesetUploadTestCase(TestCase):
 
 		dbNode = GetObj(p, "node", node.objId)
 		self.assertEqual(dbNode is None, True)
+
+		# Check xml download is reasonable
+		response2 = self.client.get(reverse('changeset:download', args=(cs.objId,)))
+		xml2 = fromstring(response2.content)
+		for ch in xml2:
+			self.assertEqual(ch.tag, "delete")
+			for ch2 in ch:
+				self.assertEqual(ch2.tag, "node")
 
 	def test_upload_create_long_tag(self):
 
