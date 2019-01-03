@@ -603,7 +603,7 @@ def download(request, changesetId):
 	#print (changesetData.data.empty())
 	sio = io.BytesIO()
 	outBufWrapped = pgmap.CPyOutbuf(sio)
-	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped)
+	pgmap.SaveToOsmChangeXml(osmChange, True, outBufWrapped)
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 

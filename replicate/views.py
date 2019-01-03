@@ -133,7 +133,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmc)
 
 	sio = io.BytesIO()
-	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio))
+	pgmap.SaveToOsmChangeXml(osmc, False, pgmap.CPyOutbuf(sio))
 	return sio.getvalue()
 
 def diff(request, timebase, cat1, cat2, cat3):
@@ -233,7 +233,7 @@ def customdiff(request):
 	t.GetReplicateDiff(int(time.mktime(startTs.timetuple())), int(time.mktime(endTs.timetuple())), osmc)
 
 	sio = io.BytesIO()
-	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio))
+	pgmap.SaveToOsmChangeXml(osmc, False, pgmap.CPyOutbuf(sio))
 
 	if compress == 'no':
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
