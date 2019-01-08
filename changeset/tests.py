@@ -20,7 +20,7 @@ import random
 from changeset import views
 from querymap.views import p
 from xml.sax.saxutils import escape
-from querymap.tests import create_node, create_way, create_relation, modify_relation
+from querymap.tests import create_node, create_way, create_relation, modify_node, modify_way, modify_relation
 from changeset.management.commands import closeoldchangesets
 from django.conf import settings
 
@@ -509,7 +509,7 @@ class ChangesetUploadTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 409)
 
-	def test_upload_delete_single_node(self):
+	def test_upload_delete_undelete_single_node(self):
 	
 		cs = CreateTestChangeset(self.user, tags={"foo": "interstellar"}, is_open=True)
 		node = create_node(self.user.id, self.user.username)
@@ -541,6 +541,10 @@ class ChangesetUploadTestCase(TestCase):
 			self.assertEqual(ch.tag, "delete")
 			for ch2 in ch:
 				self.assertEqual(ch2.tag, "node")
+
+		# Undelete node by uploading new version
+		ok, node = modify_node(node, node.metaData.version+1, self.user)
+		self.assertEqual(ok, True)
 
 	def test_upload_create_long_tag(self):
 
@@ -807,6 +811,27 @@ class ChangesetUploadTestCase(TestCase):
 		#print (response.content)
 		self.assertEqual(response.status_code, 412)
 
+	def test_upload_delete_undelete_way(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <way changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, way.objId, node.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		#print (response.content)
+		self.assertEqual(response.status_code, 200)
+
+		ok, way = modify_way(way, [node.objId, node2.objId], {}, self.user)
+		self.assertEqual(ok, True)
+
 	def test_upload_delete_way_used_by_relation(self):
 		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
 
@@ -825,6 +850,27 @@ class ChangesetUploadTestCase(TestCase):
 			content_type='text/xml')
 		#print (response.content)
 		self.assertEqual(response.status_code, 412)
+
+	def test_upload_delete_undelete_relation(self):
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		refs = [("node", node.objId, "parrot"), ("node", node2.objId, "dead")]
+		relation = create_relation(self.user.id, self.user.username, refs)
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<delete>
+		  <relation changeset="{}" id="{}" version="{}"/>
+		</delete>
+		</osmChange>""".format(cs.objId, relation.objId, relation.metaData.version)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 200)
+
+		relation = modify_relation(self.user.id, self.user.username, relation, refs, {})
+		self.assertNotEqual(relation, None)
 
 	def test_upload_delete_relation_used_by_relation(self):
 		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
