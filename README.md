@@ -147,5 +147,13 @@ Set server to read only mode:
 
      python manage.py setmeta readonly 1
 
+
+Highly loaded servers
+---------------------
+
+Highly loaded Linux servers should consider increasing net.core.somaxconn to about 1024. This prevents errors such as "(11: Resource temporarily unavailable) while connecting to upstream". https://blog.narrativ.com/uwsgi-and-nginx-connection-queues-43eaba95047e Running scripts that repeatedly and rapidly access the API can trigger this problem.
+
+Add net.core.somaxconn=1024 to /etc/sysctl.conf for it to become permanent, then reboot. https://serverfault.com/a/271386/375337
+
 All done!
 
