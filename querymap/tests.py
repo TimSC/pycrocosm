@@ -678,6 +678,30 @@ class QueryMapTestCase(TestCase):
 		t.Commit()
 		print ("No free relations (with no parent relations) in ROI for testing")
 
+	def test_invalid_bbox_lon_too_low(self):
+		anonClient = Client()
+		bbox = [-200.0, 50.0, -199.9, 50.1]
+		response = anonClient.get(reverse('querymap:querymap') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 400)		
+
+	def test_invalid_bbox_lat_too_high(self):
+		anonClient = Client()
+		bbox = [-13.6759186,90.0,-13.6958313,90.1]
+		response = anonClient.get(reverse('querymap:querymap') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 400)		
+
+	def test_invalid_bbox_lon_reversed(self):
+		anonClient = Client()
+		bbox = [-13.6759186,57.5906073,-13.6958313,57.5998066]
+		response = anonClient.get(reverse('querymap:querymap') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 400)		
+
+	def test_invalid_bbox_lat_reversed(self):
+		anonClient = Client()
+		bbox = [-13.6958313,57.5998066,-13.6759186,57.5906073]
+		response = anonClient.get(reverse('querymap:querymap') + "?bbox={},{},{},{}".format(*bbox))
+		self.assertEqual(response.status_code, 400)		
+
 	def tearDown(self):
 
 		u = User.objects.get(username = self.username)

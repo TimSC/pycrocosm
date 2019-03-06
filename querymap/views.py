@@ -95,6 +95,18 @@ def index(request):
 	dLon = bbox[2] - bbox[0]
 	dLat = bbox[3] - bbox[1]
 	area = dLon * dLat
+
+	if (bbox[0] < -180.0 or bbox[0] > 180.0 or
+		bbox[1] < -90.0 or bbox[1] > 90.0 or
+		bbox[2] < -180.0 or bbox[2] > 180.0 or
+		bbox[3] < -90.0 or bbox[3] > 90.0 or
+		bbox[0] > bbox[2] or bbox[1] > bbox[3]):
+
+		err = "The latitudes must be between -90 and 90, longitudes between -180 and 180 and the minima must be less than the maxima."
+		response = HttpResponseBadRequest(err, content_type="text/plain")
+		response["Error"] = err
+		return response
+
 	if area > settings.AREA_MAXIMUM:
 		err = "The maximum bbox size is {}, and your request was too large. Either request a smaller area, or use planet.osm".format(settings.AREA_MAXIMUM)
 		response = HttpResponseBadRequest(err, content_type="text/plain")
