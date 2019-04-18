@@ -31,7 +31,6 @@ urlpatterns = [
 	url(r'api/0.6/(nodes|ways|relations)', include('multifetch.urls', namespace='multifetch')),
 	url(r'api/0.6/', include('querymap.urls')),
 	url(r'api', include('api.urls', namespace='api')),
-	url(r'extra/', include('extra.urls', namespace='extra')),
 	url(r'admin/', admin.site.urls),
 	url(r'^accounts/passwordsent/$', auth_views.PasswordResetDoneView.as_view(), name='password_reset_done'),
 	url(r'^accounts/passwordchanged/$', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),
