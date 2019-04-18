@@ -418,14 +418,6 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.nodes = filtered.nodes
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
-
-	#Get complete set of query objects based on modified objects
-	#TODO
-	if action in ["modify", "delete"]:
-		#Get complete set of query objects for original data
-		existingAffectedObjects = pgmap.OsmData()
-		t.GetAffectedObjects(block, existingAffectedObjects)
-
 	#Set visiblity flag
 	visible = action != "delete"
 	for i in range(block.nodes.size()):
