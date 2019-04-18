@@ -444,7 +444,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	errStr = pgmap.PgMapError()
 
 	if action in ["modify", "delete"]:
-		ok = t.LogWayShapes(block, int(timestamp), errStr)
+		touchedWayIds = pgmap.seti64()
+		ok = t.LogWayShapes(block, int(timestamp), touchedWayIds, errStr)
 		if not ok:
 			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
