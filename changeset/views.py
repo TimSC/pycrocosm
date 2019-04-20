@@ -443,10 +443,11 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	errStr = pgmap.PgMapError()
 
+	# Store pre-edit shapes in the shape log
 	if action in ["modify", "delete"]:
 		touchedNodeIds = pgmap.seti64()
 		touchedWayIds = pgmap.seti64()
-		ok = t.LogWayShapes(block, int(timestamp),
+		ok = t.LogWayShapes(block.GetNodeIds(), block.GetWayIds(), int(timestamp),
 			touchedWayIds, errStr)
 		if not ok:
 			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
@@ -456,6 +457,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if not ok:
 			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
+	#Write object changes to database
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
@@ -465,8 +467,19 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
 	upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
 	
-	#Update changeset bbox based on edits
-	#TODO
+	#Update changeset bbox based on edits (post-edit)
+	if action in ["create", "modify"]:
+		touchedNodeIds = pgmap.seti64()
+		touchedWayIds = pgmap.seti64()
+		ok = t.UpdateWayShapes(block.GetNodeIds(), block.GetWayIds(),
+			touchedWayIds, errStr)
+		if not ok:
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+
+		ok = t.UpdateRelationShapes(block.GetNodeIds(),
+			touchedWayIds, block.GetRelationIds(), errStr)
+		if not ok:
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
 	return True
 
