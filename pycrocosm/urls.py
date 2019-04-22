@@ -44,6 +44,6 @@ urlpatterns = [
 	url(r'', include('frontpage.urls', namespace='frontpage')),
 	url(r'migrate/', include('migrateusers.urls', namespace='migrateusers')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
+	url(r'overpass/', include('overpass.urls', namespace='overpass')),
 ]
-
 
