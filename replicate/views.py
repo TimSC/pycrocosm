@@ -128,7 +128,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = p.GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
 	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmc)
 
@@ -228,7 +228,7 @@ def customdiff(request):
 	if endTs < startTs:
 		return HttpResponseBadRequest("end cannot be before start")
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = p.GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
 	t.GetReplicateDiff(int(time.mktime(startTs.timetuple())), int(time.mktime(endTs.timetuple())), osmc)
 
