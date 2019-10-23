@@ -80,7 +80,7 @@ def element(request, objType, objId):
 	if request.method == 'GET':
 		osmData = pgmap.OsmData()
 		t = p.GetTransaction("ACCESS SHARE")
-		t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
+		t.GetObjectsById(objType, pgmap.seti64([int(objId)]), osmData)
 
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 			return HttpResponseNotFound("{} {} not found".format(objType, objId))
@@ -134,12 +134,12 @@ def relations_for_obj(request, objType, objId):
 
 	#Check reference object exists
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
+	t.GetObjectsById(objType, pgmap.seti64([int(objId)]), osmData)
 
 	# From the 0.6 spec: "There is no error if the element does not exist."
 
 	osmData = pgmap.OsmData()
-	t.GetRelationsForObjs(objType.encode("UTF-8"), [int(objId)], osmData)
+	t.GetRelationsForObjs(objType, [int(objId)], osmData)
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
@@ -152,7 +152,7 @@ def ways_for_node(request, objType, objId):
 
 	#Check reference object exists
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType.encode("UTF-8"), pgmap.seti64([int(objId)]), osmData)
+	t.GetObjectsById(objType, pgmap.seti64([int(objId)]), osmData)
 
 	# From the 0.6 spec: "There is no error if the element does not exist."
 
