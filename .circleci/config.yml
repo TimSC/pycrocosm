@@ -23,7 +23,7 @@ jobs:
           name: Install apt packages
           command: |
             sudo apt -qq update
-            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev
+            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev
 
       - run:
           name: Install swig from source
@@ -51,6 +51,10 @@ jobs:
           name: Build pgmap
           command: |
             cd pgmap
+            cd cppo5m
+            protoc -I=proto proto/osmformat.proto --cpp_out=pbf
+            protoc -I=proto proto/fileformat.proto --cpp_out=pbf
+            cd ..
             python setup.py build
             pip install .
             make quickinit
