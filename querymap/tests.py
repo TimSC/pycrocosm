@@ -25,6 +25,8 @@ def DecodeOsmdataResponse(xml):
 		dec.DecodeSubString(chunkDec, len(chunkDec), False)
 
 	dec.DecodeSubString("", 0, True)
+	dec.DecodeFinish()
+	dec.output = None
 	return data
 
 def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = None):

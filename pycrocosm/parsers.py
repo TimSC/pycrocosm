@@ -24,8 +24,11 @@ class OsmDataXmlParser(BaseParser):
 				break
 			dec.DecodeSubString(inputXml.decode("UTF-8"), len(inputXml), False)
 		dec.DecodeSubString("", 0, True)
+		dec.DecodeFinish()
+		dec.output = None
 		if not dec.parseCompletedOk:
 			raise ParseError(detail=dec.errString)
+		del dec
 		return data
 
 class OsmChangeXmlParser(BaseParser):
@@ -41,7 +44,10 @@ class OsmChangeXmlParser(BaseParser):
 				break
 			dec.DecodeSubString(inputXml.decode("UTF-8"), len(inputXml), False)
 		dec.DecodeSubString("", 0, True)
+		dec.DecodeFinish()
+		dec.output = None
 		if not dec.parseCompletedOk:
 			raise ParseError(detail=dec.errString)
+		del dec
 		return data
 
