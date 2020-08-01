@@ -101,22 +101,22 @@ DATABASES = {
 		#'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
 		'ENGINE': 'django.db.backends.postgresql',
 		'NAME': 'db_settings',
-		'USER': 'microcosm', #SCRIPT_REPLACE_dbuser
-		'PASSWORD': 'wGegr5NFTTzZ', #SCRIPT_REPLACE_dbpass
-		'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
+		'USER': os.environ.get('DJANGO_DB_USER', default='pycrocosm'), #SCRIPT_REPLACE_dbuser
+		'PASSWORD': os.environ.get('DJANGO_DB_PASSWORD', default='password'), #SCRIPT_REPLACE_dbpass
+		'HOST': os.environ.get('DJANGO_DB_HOST', default='127.0.0.1'), #SCRIPT_REPLACE_dbhost
 		'PORT': '5432',
 	},
 }
 
 MAP_DATABASE = {
 	'NAME': 'db_map', #SCRIPT_REPLACE_dbname
-	'USER': 'microcosm', #SCRIPT_REPLACE_dbuser
-	'PASSWORD': 'wGegr5NFTTzZ', #SCRIPT_REPLACE_dbpass
-	'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
+	'USER': os.environ.get('DJANGO_DB_USER', default='pycrocosm'), #SCRIPT_REPLACE_dbuser
+	'PASSWORD': os.environ.get('DJANGO_DB_PASSWORD', default='password'), #SCRIPT_REPLACE_dbpass
+	'HOST': os.environ.get('DJANGO_DB_HOST', default='127.0.0.1'), #SCRIPT_REPLACE_dbhost
 	'PORT': '5432',
-	'PREFIX': "portsmouth_", #SCRIPT_REPLACE_dbtableprefix
-	'PREFIX_TEST': "portsmouth_test_", #SCRIPT_REPLACE_dbtabletestprefix
-	'PREFIX_MOD': "portsmouth_mod_", #SCRIPT_REPLACE_dbtablemodifyprefix
+	'PREFIX': "planet_static_", #SCRIPT_REPLACE_dbtableprefix
+	'PREFIX_TEST': "planet_mod_", #SCRIPT_REPLACE_dbtabletestprefix
+	'PREFIX_MOD': "planet_test_", #SCRIPT_REPLACE_dbtablemodifyprefix
 }
 
 # Password validation

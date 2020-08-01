@@ -1,3 +1,4 @@
+# Based on https://testdriven.io/blog/dockerizing-django-with-postgres-gunicorn-and-nginx/
 # pull official base image
 FROM ubuntu:20.04
 
@@ -13,10 +14,6 @@ RUN apt install -y python3-pip protobuf-compiler
 # set work directory
 WORKDIR /usr/src/app
 
-RUN pip3 install --upgrade pip
-COPY ./requirements.txt .
-RUN pip3 install -r requirements.txt
-
 COPY ./pgmap pgmap
 
 WORKDIR /usr/src/app/pgmap/cppo5m
@@ -30,6 +27,10 @@ RUN python3 setup.py build
 RUN python3 setup.py install
 
 WORKDIR /usr/src/app
+
+RUN pip3 install --upgrade pip
+COPY ./requirements.txt .
+RUN pip3 install -r requirements.txt
 
 # set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
