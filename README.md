@@ -9,11 +9,11 @@ Installation
 
 ### Python 2 installation
 
-Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. 
+Installation is described for Linux Mint 20.0, but should work on similar systems like Debian, Ubuntu Focal or later. 
 
     cd /var
 
-    sudo apt install git virtualenv python-pip swig3 g++ python-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
+    sudo apt install git virtualenv python-pip swig4 g++ python-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
 
     sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
 
