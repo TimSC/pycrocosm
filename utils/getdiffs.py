@@ -13,7 +13,7 @@ if __name__=="__main__":
 	while cursorDate < today:
 
 		print (cursorDate)
-		outFina = "{}-{}-{}.osc.gz"
+		outFina = "{}-{}-{}.osc.gz".format(cursorDate.year, cursorDate.month, cursorDate.day)
 		outFinaFull = os.path.join(outFolder, outFina)
 		cursorNext = cursorDate + datetime.timedelta(1)
 
@@ -22,7 +22,7 @@ if __name__=="__main__":
 			continue #Already downloaded
 
 		#Request diff
-		url = "http://api.fosm.org/replication/diff?start={}-{}-{}&end={}-{}-{}".format(cursorDate.year, cursorDate.month, cursorDate.day, 
+		url = "https://api.fosm.org/replication/diff?start={}-{}-{}&end={}-{}-{}".format(cursorDate.year, cursorDate.month, cursorDate.day, 
 			cursorNext.year, cursorNext.month, cursorNext.day)
 		print (url)
 
