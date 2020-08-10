@@ -13,8 +13,8 @@ class Command(BaseCommand):
 		t = p.GetTransaction("EXCLUSIVE")
 		errStr = pgmap.PgMapError()
 
-		ok = t.SetMetaValue(options['key'][0].encode('utf-8'), 
-			options['value'][0].encode('utf-8'), 
+		ok = t.SetMetaValue(options['key'][0], 
+			options['value'][0], 
 			errStr)
 		if not ok:
 			t.Abort()

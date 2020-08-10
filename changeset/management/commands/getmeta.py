@@ -15,7 +15,7 @@ class Command(BaseCommand):
 		t = p.GetTransaction("ACCESS SHARE")
 		errStr = pgmap.PgMapError()
 
-		value = t.GetMetaValue(options['key'][0].encode('utf-8'), 
+		value = t.GetMetaValue(options['key'][0], 
 			errStr)
 
 		t.Commit()
