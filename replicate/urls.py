@@ -7,6 +7,7 @@ from . import views
 
 app_name = 'replicate'
 urlpatterns = [
+    url(r'^now$', views.timenow, name='timenow'),
 	url(r'^(minute|hour|day)/$', views.catalog, name='catalog'),
 	url(r'^(minute|hour|day)/([0-9]+)/$', views.catalog2, name='catalog2'),
 	url(r'^(minute|hour|day)/([0-9]+)/([0-9]+)/$', views.catalog3, name='catalog3'),
