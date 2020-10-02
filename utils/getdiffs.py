@@ -13,7 +13,7 @@ if __name__=="__main__":
 	while cursorDate < today:
 
 		print (cursorDate)
-		outFina = "{}-{}-{}.osc.gz".format(cursorDate.year, cursorDate.month, cursorDate.day)
+		outFina = "{:04d}-{:02d}-{:02d}.osc.gz".format(cursorDate.year, cursorDate.month, cursorDate.day)
 		outFinaFull = os.path.join(outFolder, outFina)
 		cursorNext = cursorDate + datetime.timedelta(1)
 
