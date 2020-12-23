@@ -172,6 +172,7 @@ def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
 		if action == "create":
 			comment.attrib["new_id"] = str(createdIds[obj.objId])
 			comment.attrib["new_version"] = str(obj.metaData.version)
+			obj.objId = createdIds[obj.objId]
 		if action == "modify":
 			comment.attrib["new_id"] = str(obj.objId)
 			comment.attrib["new_version"] = str(obj.metaData.version)
@@ -423,8 +424,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#TODO
 	if action in ["modify", "delete"]:
 		#Get complete set of query objects for original data
-		existingAffectedObjects = pgmap.OsmData()
-		t.GetAffectedObjects(block, existingAffectedObjects)
+		affectedParents = pgmap.OsmData()
+		t.GetAffectedParents(block, affectedParents)
 
 	#Set visiblity flag
 	visible = action != "delete"
@@ -459,6 +460,28 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
 	upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
 	
+	affectedWayIds = pgmap.seti64()
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		affectedWayIds.add(way.objId)
+
+	if action in ["modify", "delete"]:
+		#Ensure active tables have copies of any affected parents
+		unusedNodeIds = pgmap.mapi64i64()
+		unusedWayIds = pgmap.mapi64i64()
+		unusedRelationIds = pgmap.mapi64i64()
+
+		ok = t.StoreObjects(affectedParents, unusedNodeIds, unusedWayIds, unusedRelationIds, False, errStr)
+		if not ok:
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+
+		#Update bbox of any affected parents
+		for i in range(affectedParents.ways.size()):
+			way = affectedParents.ways[i]
+			affectedWayIds.add(way.objId)
+
+	t.UpdateWayBboxesById(affectedWayIds, False, False, errStr);
+
 	#Update changeset bbox based on edits
 	#TODO
 
