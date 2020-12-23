@@ -218,3 +218,18 @@ def object_history(request, objType, objId):
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+@api_view(['GET'])
+def object_history(request, objType, objId):
+	t = p.GetTransaction("ACCESS SHARE")
+
+	osmData = pgmap.OsmData()
+	t.GetObjectBboxes(objType, [int(objId)])
+
+	#if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
+	#	return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	osmData.StreamTo(enc)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
