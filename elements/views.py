@@ -222,14 +222,28 @@ def object_history(request, objType, objId):
 def object_history(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 
-	osmData = pgmap.OsmData()
-	t.GetObjectBboxes(objType, [int(objId)])
+	bboxes = pgmap.mapi64vectord()
+	t.GetObjectBboxes(objType, [int(objId)], bboxes)
 
-	#if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
-	#	return HttpResponseNotFound("{} {} not found".format(objType, objId))
+	if len(bboxes) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
+	responseRoot = ET.Element('bbox')
+	doc = ET.ElementTree(responseRoot)
+	responseRoot.attrib["version"] = str(settings.API_VERSION)
+	responseRoot.attrib["generator"] = settings.GENERATOR
+
+	for objIdRet in bboxes:
+		bbox = bboxes[objIdRet]
+		elObj = ET.SubElement(responseRoot, objType)
+		elObj.attrib["id"] = objId
+		elObj.attrib["minlon"] = str(bbox[1])
+		elObj.attrib["minlat"] = str(bbox[0])
+		elObj.attrib["maxlon"] = str(bbox[3])
+		elObj.attrib["maxlat"] = str(bbox[2])
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
