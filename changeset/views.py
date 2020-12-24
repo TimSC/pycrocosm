@@ -464,6 +464,10 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	for i in range(block.ways.size()):
 		way = block.ways[i]
 		affectedWayIds.add(way.objId)
+	affectedRelIds = pgmap.seti64()
+	for i in range(block.relations.size()):
+		rel = block.relation[i]
+		affectedRelIds.add(rel.objId)
 
 	if action in ["modify", "delete"]:
 		#Ensure active tables have copies of any affected parents
@@ -480,7 +484,13 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			way = affectedParents.ways[i]
 			affectedWayIds.add(way.objId)
 
-	t.UpdateWayBboxesById(affectedWayIds, False, False, errStr);
+		for i in range(affectedParents.relations.size()):
+			rel = affectedParents.relations[i]
+			affectedRelIds.add(rel.objId)
+
+	t.UpdateObjectBboxesById("way", affectedWayIds, False, False, errStr);
+
+	t.UpdateObjectBboxesById("relation", affectedRelIds, False, False, errStr);
 
 	#Update changeset bbox based on edits
 	#TODO
