@@ -26,11 +26,6 @@ jobs:
             sudo apt install -y git cmake python3.8-dev libpqxx-dev libexpat1-dev python3-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev swig rapidjson-dev libprotobuf-dev protobuf-compiler
 
       - run:
-          name: Install postgis
-          command: |
-            sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
-
-      - run:
           name: Build pgmap
           command: |
             cd pgmap
@@ -44,11 +39,20 @@ jobs:
             cd ..
 
       - run:
+          name: Install postgis
+          command: |
+            sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
+
+	  - run:
+		  name: Wait for Postgres to start
+		  command: dockerize -wait tcp://localhost:5432 -timeout 1m
+
+      - run:
           name: Initialize map database
           command: |
             cd pgmap
             sudo chmod a+rw .
-            sudo -u postgres ./quickinit
+            sudo ./quickinit
             cd ..
 
       - run:
