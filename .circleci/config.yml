@@ -43,9 +43,9 @@ jobs:
           command: |
             sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
 
-	  - run:
-		  name: Wait for Postgres to start
-		  command: dockerize -wait tcp://localhost:5432 -timeout 1m
+      - run:
+          name: Wait for Postgres to start
+          command: dockerize -wait tcp://localhost:5432 -timeout 1m
 
       - run:
           name: Initialize map database
