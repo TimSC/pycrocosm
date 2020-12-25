@@ -2,11 +2,11 @@
 #
 # Check https://circleci.com/docs/2.0/language-python/ for more details
 #
-version: 2
+version: 2.1
 jobs:
   build:
     machine:
-      image: cimg/base:2020.12-20.04
+      image: cimg/python:2020.12-20.04
 
     working_directory: ~/repo
 
