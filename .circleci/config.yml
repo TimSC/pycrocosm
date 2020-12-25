@@ -6,7 +6,7 @@ version: 2
 jobs:
   build:
     machine:
-      image: cimg/base:2020.01
+      image: cimg/base:2020.12-20.04
 
     working_directory: ~/repo
 
@@ -23,17 +23,7 @@ jobs:
           name: Install apt packages
           command: |
             sudo apt -qq update
-            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev
-
-      - run:
-          name: Install swig from source
-          command: |
-            wget http://prdownloads.sourceforge.net/swig/swig-3.0.12.tar.gz
-            tar -zxf swig-3.0.12.tar.gz
-            cd swig-3.0.12
-            ./configure && make
-            sudo make install
-            cd ..
+            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev swig
 
       - run:
           name: Install rapidjson from source
@@ -63,7 +53,7 @@ jobs:
       - run:
           name: Install postgis
           command: |
-            sudo apt install -y postgresql postgis postgresql-9.3-postgis-2.1 postgresql-9.3-postgis-scripts postgresql-9.3-postgis-2.1-scripts
+            sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
 
       - run:
           name: Initialize map database
