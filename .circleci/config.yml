@@ -7,6 +7,9 @@ jobs:
   build:
     docker:
       - image: cimg/base:2020.12
+        environment:
+          PGUSER: root
+          POSTGRES_USER: postgres
 
     working_directory: ~/repo
 
@@ -45,14 +48,16 @@ jobs:
 
       - run:
           name: Wait for Postgres to start
-          command: dockerize -wait tcp://localhost:5432 -timeout 1m
+          command: |
+            sudo service postgresql start
+            dockerize -wait tcp://localhost:5432 -timeout 1m
 
       - run:
           name: Initialize map database
           command: |
             cd pgmap
             sudo chmod a+rw .
-            sudo ./quickinit
+            sudo su postgres -c "./quickinit"
             cd ..
 
       - run:
