@@ -6,7 +6,7 @@ version: 2.1
 jobs:
   build:
     machine:
-      image: cimg/python:2020.12-20.04
+      image: cimg/base:2020.12
 
     working_directory: ~/repo
 
