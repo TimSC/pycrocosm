@@ -3,7 +3,7 @@ from __future__ import unicode_literals
 from __future__ import print_function
 
 from django.shortcuts import render
-from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest
+from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest, JsonResponse
 from django.conf import settings
 from django.utils.dateparse import parse_datetime, parse_date
 from querymap.views import p
@@ -207,26 +207,36 @@ def TimestampToPath(ts, timebase):
 
 def customdiff(request):
 	#This is a non-standard (pycrocosm specific) API call to get diffs of custom time ranges.
+	now = datetime.datetime.now(datetime.timezone.utc)
 
 	startTsArg = request.GET.get('start', None) #Normally ISO 8601
 	endTsArg = request.GET.get('end', None) #Normally ISO 8601
 	compress = request.GET.get('compress', 'no')
+
 	if startTsArg is None:
 		return HttpResponseBadRequest("start argument not set")
-	if endTsArg is None:
-		return HttpResponseBadRequest("end argument not set")
 	startTs=parse_datetime(startTsArg)
 	if startTs is None:
 		startTs=parse_date(startTsArg)
+
+	if endTsArg is None:
+		return HttpResponseBadRequest("end argument not set")
 	endTs=parse_datetime(endTsArg)
 	if endTs is None:
-		endTs=parse_date(endTsArg)
+		endTs=parse_date(endTsArg)		
+
 	if startTs is None:
 		return HttpResponseBadRequest("start argument not understood (should be ISO 8601 date or datetime)")
 	if endTs is None:
 		return HttpResponseBadRequest("end argument not understood (should be ISO 8601 date or datetime)")
+
+	startTs = startTs.replace(tzinfo=datetime.timezone.utc)
+	endTs = endTs.replace(tzinfo=datetime.timezone.utc)
+
 	if endTs < startTs:
 		return HttpResponseBadRequest("end cannot be before start")
+	if endTs > now:
+		return HttpResponseBadRequest("end cannot be in the future")
 
 	t = p.GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
@@ -243,4 +253,10 @@ def customdiff(request):
 		return HttpResponse(gzip_data, content_type='application/x-gzip')
 
 	return HttpResponseBadRequest("compression argument not understood")
+
+def timenow(request):
+
+	now = datetime.datetime.now(datetime.timezone.utc)
+
+	return JsonResponse({'now': now, 'time': now.timestamp()})
 

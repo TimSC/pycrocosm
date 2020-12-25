@@ -218,3 +218,32 @@ def object_history(request, objType, objId):
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+@api_view(['GET'])
+def object_history(request, objType, objId):
+	t = p.GetTransaction("ACCESS SHARE")
+
+	bboxes = pgmap.mapi64vectord()
+	t.GetObjectBboxes(objType, [int(objId)], bboxes)
+
+	if len(bboxes) == 0:
+		return HttpResponseNotFound("{} {} not found".format(objType, objId))
+
+	responseRoot = ET.Element('bbox')
+	doc = ET.ElementTree(responseRoot)
+	responseRoot.attrib["version"] = str(settings.API_VERSION)
+	responseRoot.attrib["generator"] = settings.GENERATOR
+
+	for objIdRet in bboxes:
+		bbox = bboxes[objIdRet]
+		elObj = ET.SubElement(responseRoot, objType)
+		elObj.attrib["id"] = objId
+		elObj.attrib["minlon"] = str(bbox[0])
+		elObj.attrib["minlat"] = str(bbox[1])
+		elObj.attrib["maxlon"] = str(bbox[2])
+		elObj.attrib["maxlat"] = str(bbox[3])
+
+	sio = io.BytesIO()
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
