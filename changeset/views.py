@@ -466,7 +466,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		affectedWayIds.add(way.objId)
 	affectedRelIds = pgmap.seti64()
 	for i in range(block.relations.size()):
-		rel = block.relation[i]
+		rel = block.relations[i]
 		affectedRelIds.add(rel.objId)
 
 	if action in ["modify", "delete"]:

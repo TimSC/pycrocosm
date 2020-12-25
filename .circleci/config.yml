@@ -2,11 +2,14 @@
 #
 # Check https://circleci.com/docs/2.0/language-python/ for more details
 #
-version: 2
+version: 2.0
 jobs:
   build:
-    machine:
-      image: circleci/classic:latest
+    docker:
+      - image: cimg/base:2020.12
+        environment:
+          PGUSER: root
+          POSTGRES_USER: postgres
 
     working_directory: ~/repo
 
@@ -23,29 +26,7 @@ jobs:
           name: Install apt packages
           command: |
             sudo apt -qq update
-            sudo apt install -y git cmake python-dev libpqxx-dev libexpat1-dev python-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev
-
-      - run:
-          name: Install swig from source
-          command: |
-            wget http://prdownloads.sourceforge.net/swig/swig-3.0.12.tar.gz
-            tar -zxf swig-3.0.12.tar.gz
-            cd swig-3.0.12
-            ./configure && make
-            sudo make install
-            cd ..
-
-      - run:
-          name: Install rapidjson from source
-          command: |
-            wget https://github.com/Tencent/rapidjson/archive/v1.1.0.tar.gz
-            tar -xvf v1.1.0.tar.gz
-            cd rapidjson-1.1.0
-            mkdir build
-            cd build
-            cmake ..
-            sudo make install
-            cd ../..
+            sudo apt install -y git cmake python3.8-dev libpqxx-dev libexpat1-dev python3-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev swig rapidjson-dev libprotobuf-dev protobuf-compiler
 
       - run:
           name: Build pgmap
@@ -55,37 +36,43 @@ jobs:
             protoc -I=proto proto/osmformat.proto --cpp_out=pbf
             protoc -I=proto proto/fileformat.proto --cpp_out=pbf
             cd ..
-            python setup.py build
-            pip install .
+            python3 setup.py build
+            pip3 install .
             make quickinit
             cd ..
 
       - run:
           name: Install postgis
           command: |
-            sudo apt install -y postgresql postgis postgresql-9.3-postgis-2.1 postgresql-9.3-postgis-scripts postgresql-9.3-postgis-2.1-scripts
+            sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
+
+      - run:
+          name: Wait for Postgres to start
+          command: |
+            sudo service postgresql start
+            dockerize -wait tcp://localhost:5432 -timeout 1m
 
       - run:
           name: Initialize map database
           command: |
             cd pgmap
-            sudo chmod o+rw .
-            sudo -u postgres ./quickinit
+            sudo chmod a+rw .
+            sudo su postgres -c "./quickinit"
             cd ..
 
       - run:
           name: install dependencies
           command: |
-            pip install -r requirements.txt
+            pip3 install -r requirements.txt
 
       - run:
           name: initialise django database and do migration
           command: |
-            sudo -u postgres psql -c "CREATE DATABASE db_settings;"
-            sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;"
+            sudo su postgres -c "psql -c \"CREATE DATABASE db_settings;\""
+            sudo su postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;\""
             cp pycrocosm/settings.py.template pycrocosm/settings.py
-            python syncdbsettings.py
-            python manage.py migrate
+            python3 syncdbsettings.py
+            python3 manage.py migrate
 
         
       # run tests!
@@ -96,7 +83,7 @@ jobs:
       - run:
           name: run tests
           command: |
-            python manage.py test --keep
+            python3 manage.py test --keep
 
       - store_artifacts:
           path: test-reports
