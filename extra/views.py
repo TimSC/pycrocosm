@@ -13,34 +13,4 @@ import io
 
 # Create your views here.
 
-@api_view(['GET'])
-def get_affected(request, objType, objIds):
-
-	t = p.GetTransaction("ACCESS SHARE")
-
-	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType, list(map(int, objIds.split(","))), osmData)
-
-	affectedData = pgmap.OsmData()
-	t.GetAffectedObjects(osmData, affectedData)
-
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	affectedData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
-
-
-@api_view(['POST'])
-@parser_classes((DefusedXmlParser, ))
-def get_affected_from_upload(request):
-
-	t = p.GetTransaction("ACCESS SHARE")
-
-	affectedData = pgmap.OsmData()
-	t.GetAffectedObjects(request.data, affectedData)
-
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio)
-	affectedData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
