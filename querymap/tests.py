@@ -13,7 +13,7 @@ import random
 import sys
 import gc
 import time
-from changeset.views import GetOsmDataIndex
+from changeset.views import GetOsmDataIndex, store_objects_with_bbox_tracking
 
 def DecodeOsmdataResponse(xml):
 	data = pgmap.OsmData()
@@ -55,10 +55,11 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = 
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -91,10 +92,10 @@ def create_way(uid, username, refs, changeset = 1000, timestamp = None):
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -129,10 +130,10 @@ def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -140,40 +141,7 @@ def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 	else:
 		t.Commit()
 	relation.objId = createdRelationIds[-1]
-	return relation
-
-def modify_relation(uid, username, relationIn, refsIn, tagsIn):
-	relation = pgmap.OsmRelation()
-	relation.objId = relationIn.objId
-	relation.metaData.version = relationIn.metaData.version + 1
-	relation.metaData.timestamp = int(time.time())
-	relation.metaData.changeset = 1000
-	relation.metaData.uid = uid
-	relation.metaData.username = username
-	relation.metaData.visible = True
-	for k in tagsIn:
-		relation.tags[k] = tagsIn[k]
-	for refTypeStr, refId, refRole in refsIn:
-		relation.refTypeStrs.append(refTypeStr)
-		relation.refIds.append(refId)
-		relation.refRoles.append(refRole)
-
-	data = pgmap.OsmData()
-	data.relations.append(relation)
-
-	createdNodeIds = pgmap.mapi64i64()
-	createdWayIds = pgmap.mapi64i64()
-	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
-
-	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	if not ok:
-		t.Abort()
-		print (errStr.errStr)
-		return None
-	else:
-		t.Commit()
+	
 	return relation
 
 def modify_node(nodeIn, nodeCurrentVer, user, timestamp = None):
@@ -198,10 +166,10 @@ def modify_node(nodeIn, nodeCurrentVer, user, timestamp = None):
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -232,16 +200,49 @@ def modify_way(wayIn, refsIn, tagsIn, user, timestamp = None):
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
 	else:
 		t.Commit()
 	return ok, way
+
+def modify_relation(uid, username, relationIn, refsIn, tagsIn):
+	relation = pgmap.OsmRelation()
+	relation.objId = relationIn.objId
+	relation.metaData.version = relationIn.metaData.version + 1
+	relation.metaData.timestamp = int(time.time())
+	relation.metaData.changeset = 1000
+	relation.metaData.uid = uid
+	relation.metaData.username = username
+	relation.metaData.visible = True
+	for k in tagsIn:
+		relation.tags[k] = tagsIn[k]
+	for refTypeStr, refId, refRole in refsIn:
+		relation.refTypeStrs.append(refTypeStr)
+		relation.refIds.append(refId)
+		relation.refRoles.append(refRole)
+
+	data = pgmap.OsmData()
+	data.relations.append(relation)
+
+	createdNodeIds = pgmap.mapi64i64()
+	createdWayIds = pgmap.mapi64i64()
+	createdRelationIds = pgmap.mapi64i64()
+
+	t = p.GetTransaction("EXCLUSIVE")
+	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	if not ok:
+		t.Abort()
+		print (errStr.errStr)
+		return None
+	else:
+		t.Commit()
+	return relation
 	
 def delete_object(objIn, user, tIn = None, timestamp = None):
 	if isinstance(objIn, pgmap.OsmNode):
@@ -277,14 +278,14 @@ def delete_object(objIn, user, tIn = None, timestamp = None):
 	createdNodeIds = pgmap.mapi64i64()
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
-	errStr = pgmap.PgMapError()
 
 	if tIn is not None:
 		t = tIn
 	else:
 		t = p.GetTransaction("EXCLUSIVE")
 
-	ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	ok, diffs, errStr = store_objects_with_bbox_tracking("delete", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	
 	if tIn is None:
 		if not ok:

@@ -374,7 +374,8 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(int(ndiff.attrib["new_version"]), 1)
 		self.assertEqual(int(ndiff.attrib["new_id"])>0, True)
 		
-		dbNode = GetObj(p, "node", int(ndiff.attrib["new_id"]))
+		idOnServer = int(ndiff.attrib["new_id"])
+		dbNode = GetObj(p, "node", idOnServer)
 
 		self.assertEqual(dbNode is not None, True)
 		self.assertEqual(dbNode.metaData.username, self.user.username)
@@ -388,6 +389,16 @@ class ChangesetUploadTestCase(TestCase):
 			self.assertEqual(ch.tag, "create")
 			for ch2 in ch:
 				self.assertEqual(ch2.tag, "node")
+
+		#Check bbox of object
+		response3 = self.client.get(reverse('elements:object_bbox', args=("node", idOnServer,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-50.79046578105)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-50.79046578105)<1e-6, True)
 
 	def test_upload_modify_single_node(self):
 
@@ -427,6 +438,17 @@ class ChangesetUploadTestCase(TestCase):
 			self.assertEqual(ch.tag, "modify")
 			for ch2 in ch:
 				self.assertEqual(ch2.tag, "node")
+
+		#Check bbox of object
+		response3 = self.client.get(reverse('elements:object_bbox', args=("node", dbNode.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])+1.05)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])+1.05)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-50.80)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-50.80)<1e-6, True)
+
 
 	def test_upload_modify_single_node_wrong_version(self):
 
@@ -499,6 +521,19 @@ class ChangesetUploadTestCase(TestCase):
 		ok, node = modify_node(node, node.metaData.version+1, self.user)
 		self.assertEqual(ok, True)
 
+		dbNode = GetObj(p, "node", node.objId)
+		self.assertEqual(dbNode is not None, True)
+
+		#Check bbox of object
+		response3 = self.client.get(reverse('elements:object_bbox', args=("node", node.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-node.lon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-node.lon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-node.lat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-node.lat)<1e-6, True)
+
 	def test_upload_create_long_tag(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
@@ -570,6 +605,16 @@ class ChangesetUploadTestCase(TestCase):
 		for ref in list(newWay.refs):
 			self.assertEqual(ref > 0, True)
 
+		#Check bbox of object
+		response3 = self.client.get(reverse('elements:object_bbox', args=("way", newWayId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])+1.051)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-50.79046578105)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-50.81)<1e-6, True)
+
 	def generate_upload_way_with_n_nodes(self, csId, numNodes):
 		nids = range(-5393, -5393-numNodes, -1)
 		xml = ["""<osmChange generator="JOSM" version="0.6">
@@ -628,13 +673,16 @@ class ChangesetUploadTestCase(TestCase):
 
 		node = create_node(self.user.id, self.user.username)
 
+		lats = [50.78673385857, 50.7865119298, 50.78724872927]
+		lons = [-1.04730886255, -1.04843217891, -1.04808114255]
+
 		xml = """<osmChange version="0.6" generator="JOSM">
 		<create>
-		  <node id='-3912' changeset='{0}' lat='50.78673385857' lon='-1.04730886255'>
+		  <node id='-3912' changeset='{0}' lat='{2}' lon='{5}'>
 			<tag k='abc' v='def' />
 		  </node>
-		  <node id='-3910' changeset='{0}' lat='50.7865119298' lon='-1.04843217891' />
-		  <node id='-3909' changeset='{0}' lat='50.78724872927' lon='-1.04808114255' />
+		  <node id='-3910' changeset='{0}' lat='{3}' lon='{6}' />
+		  <node id='-3909' changeset='{0}' lat='{4}' lon='{7}' />
 		  <way id='-3911' changeset='{0}'>
 			<nd ref='-3909' />
 			<nd ref='-3910' />
@@ -653,7 +701,7 @@ class ChangesetUploadTestCase(TestCase):
 			<tag k='rst' v='xyz' />
 		  </relation>
 		</create>
-		</osmChange>""".format(cs.objId, node.objId)
+		</osmChange>""".format(cs.objId, node.objId, *lats, *lons)
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
@@ -688,6 +736,152 @@ class ChangesetUploadTestCase(TestCase):
 
 		rel2Tags = dict(rel2.tags)
 		self.assertEqual(rel2Tags, {'rst': 'xyz'})
+
+		#Check bbox of object
+		lats.append(node.lat)
+		lons.append(node.lon)
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response3 = self.client.get(reverse('elements:object_bbox', args=("way", way.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)
+
+		response4 = self.client.get(reverse('elements:object_bbox', args=("relation", rel1.objId,)))
+		xml4 = fromstring(response3.content)
+		self.assertEqual(len(xml4), 1)
+		el = xml4[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)
+
+		response5 = self.client.get(reverse('elements:object_bbox', args=("relation", rel2.objId,)))
+		xml5 = fromstring(response3.content)
+		self.assertEqual(len(xml5), 1)
+		el = xml5[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)
+
+	def test_change_relation_by_moving_node(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		relation = create_relation(self.user.id, self.user.username, [("node", node.objId, "parrot"), ("node", node2.objId, "dead")])
+
+		#Check bbox of object
+		lats = [node.lat, node2.lat]
+		lons = [node.lon, node2.lon]
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response = self.client.get(reverse('elements:object_bbox', args=("relation", relation.objId,)))
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 1)
+		el = xml[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)		
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<modify>
+		  <node changeset="{}" id="{}" lat="50.80" lon="-1.05" version="{}">
+			<tag k="note" v="Just a node"/>
+		  </node>
+		</modify>
+		</osmChange>""".format(cs.objId, node.objId, node.metaData.version)
+
+		response2 = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		if response2.status_code != 200:
+			print (response2.content)
+		self.assertEqual(response2.status_code, 200)
+
+		#Check bbox of object
+		lats = [50.80, node2.lat]
+		lons = [-1.05, node2.lon]
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response3 = self.client.get(reverse('elements:object_bbox', args=("relation", relation.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)
+
+	def test_change_relation_by_changing_way(self):
+
+		cs = CreateTestChangeset(self.user, tags={"foo": "me"}, is_open=True)
+
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		node3 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId, node3.objId])
+		relation = create_relation(self.user.id, self.user.username, [("way", way.objId, "parrot")])
+
+		#Check bbox of object
+		lats = [node.lat, node2.lat, node3.lat]
+		lons = [node.lon, node2.lon, node3.lon]
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response = self.client.get(reverse('elements:object_bbox', args=("relation", relation.objId,)))
+		xml = fromstring(response.content)
+		self.assertEqual(len(xml), 1)
+		el = xml[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)		
+
+		xml = """<osmChange generator="JOSM" version="0.6">
+		<modify>
+		  <way id='{1}' changeset='{0}' version="{2}">
+			<nd ref='{3}' />
+			<nd ref='{4}' />
+			<tag k='ghi' v='jkl' />
+		  </way>
+		</modify>
+		</osmChange>""".format(cs.objId, way.objId, way.metaData.version, node.objId, node2.objId)
+
+		response2 = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
+			content_type='text/xml')
+		if response2.status_code != 200:
+			print (response2.content)
+		self.assertEqual(response2.status_code, 200)
+
+		#Check bbox of object
+		lats = [node.lat, node2.lat]
+		lons = [node.lon, node2.lon]
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response3 = self.client.get(reverse('elements:object_bbox', args=("relation", relation.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)		
 
 	def test_upload_delete_node_used_by_way(self):
 
@@ -876,6 +1070,22 @@ class ChangesetUploadTestCase(TestCase):
 
 		xml = fromstring(response.content)
 		diffDict = ParseOsmDiffToDict(xml)
+
+		#Check bbox of object
+		lats = [50.78673385857, node.lat, node2.lat]
+		lons = [-1.04730886255, node.lon, node2.lon]
+		minlat = min(lats)
+		maxlat = max(lats)
+		minlon = min(lons)
+		maxlon = max(lons)
+		response3 = self.client.get(reverse('elements:object_bbox', args=("way", way.objId,)))
+		xml3 = fromstring(response3.content)
+		self.assertEqual(len(xml3), 1)
+		el = xml3[0]
+		self.assertEqual(abs(float(el.attrib['minlon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['minlat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(el.attrib['maxlat'])-maxlat)<1e-6, True)
 
 	def test_upload_delete_node_used_by_way_if_unused(self):
 

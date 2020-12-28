@@ -237,11 +237,12 @@ def object_history(request, objType, objId):
 		bbox = bboxes[objIdRet]
 		elObj = ET.SubElement(responseRoot, objType)
 		elObj.attrib["id"] = objId
-		elObj.attrib["minlon"] = str(bbox[0])
-		elObj.attrib["minlat"] = str(bbox[1])
-		elObj.attrib["maxlon"] = str(bbox[2])
-		elObj.attrib["maxlat"] = str(bbox[3])
-
+		if len(bbox) == 4:
+			elObj.attrib["minlon"] = str(bbox[0])
+			elObj.attrib["minlat"] = str(bbox[1])
+			elObj.attrib["maxlon"] = str(bbox[2])
+			elObj.attrib["maxlat"] = str(bbox[3])
+	
 	sio = io.BytesIO()
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 

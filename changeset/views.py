@@ -164,18 +164,98 @@ def upload_check_modify(objs):
 				return HttpResponseBadRequest("Tag value is too long", content_type="text/plain")
 	return None
 
-def upload_update_diff_result(action, objType, objs, createdIds, responseRoot):
+def upload_update_diff_result(action, objType, objs, createdIds):
+
+	diffs = []
 	for i in range(objs.size()):
 		obj = objs[i]
-		comment = ET.SubElement(responseRoot, objType)
-		comment.attrib["old_id"] = str(obj.objId)
+		diff = {'objType': objType}
+		diff["old_id"] = str(obj.objId)
 		if action == "create":
-			comment.attrib["new_id"] = str(createdIds[obj.objId])
-			comment.attrib["new_version"] = str(obj.metaData.version)
+			diff["new_id"] = str(createdIds[obj.objId])
+			diff["new_version"] = str(obj.metaData.version)
 			obj.objId = createdIds[obj.objId]
 		if action == "modify":
-			comment.attrib["new_id"] = str(obj.objId)
-			comment.attrib["new_version"] = str(obj.metaData.version)
+			diff["new_id"] = str(obj.objId)
+			diff["new_version"] = str(obj.metaData.version)
+		diffs.append(diff)
+		
+	return diffs
+
+def upload_update_diff_result2(diffs, responseRoot):
+	for diff in diffs:
+
+		comment = ET.SubElement(responseRoot, diff['objType'])
+		comment.attrib["old_id"] = str(diff['old_id'])
+		if 'new_id' in diff:
+			comment.attrib["new_id"] = str(diff['new_id'])
+		if 'new_version' in diff:
+			comment.attrib["new_version"] = str(diff['new_version'])
+
+def track_bboxes_step2(action, block, t, affectedParents):
+	errStr = pgmap.PgMapError()
+	ok = True
+
+	affectedWayIds = pgmap.seti64()
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		affectedWayIds.add(way.objId)
+	affectedRelIds = pgmap.seti64()
+	for i in range(block.relations.size()):
+		rel = block.relations[i]
+		affectedRelIds.add(rel.objId)
+
+	if action in ["modify", "delete"]:
+		#Ensure active tables have copies of any affected parents
+		unusedNodeIds = pgmap.mapi64i64()
+		unusedWayIds = pgmap.mapi64i64()
+		unusedRelationIds = pgmap.mapi64i64()
+
+		ok = t.StoreObjects(affectedParents, unusedNodeIds, unusedWayIds, unusedRelationIds, False, errStr)
+		if not ok:
+			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+
+		#Update bbox of any affected parents
+		for i in range(affectedParents.ways.size()):
+			way = affectedParents.ways[i]
+			affectedWayIds.add(way.objId)
+
+		for i in range(affectedParents.relations.size()):
+			rel = affectedParents.relations[i]
+			affectedRelIds.add(rel.objId)
+
+	for i in range(len(affectedWayIds)):
+		print ("uw", affectedWayIds[i])
+	for i in range(len(affectedRelIds)):
+		print ("ur", affectedRelIds[i])
+
+	t.UpdateObjectBboxesById("way", affectedWayIds, False, False, errStr)
+
+	t.UpdateObjectBboxesById("relation", affectedRelIds, False, False, errStr)
+
+	return ok, errStr
+
+def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds):
+
+	#Get complete set of query objects based on modified objects (unless action is create)
+	affectedParents = pgmap.OsmData()
+
+	if action in ["modify", "delete"]:
+		#Get complete set of query objects for original data
+		t.GetAffectedParents(block, affectedParents)
+
+	errStr = pgmap.PgMapError()
+	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	if not ok:
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+
+	diffs = upload_update_diff_result(action, "node", block.nodes, createdNodeIds)
+	diffs.extend(upload_update_diff_result(action, "way", block.ways, createdWayIds))
+	diffs.extend(upload_update_diff_result(action, "relation", block.relations, createdRelationIds))
+
+	track_bboxes_step2(action, block, t, affectedParents)
+
+	return ok, diffs, errStr
 
 def upload_block(action, block, changesetId, t, responseRoot, 
 	uid, username, timestamp,
@@ -419,14 +499,6 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.nodes = filtered.nodes
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
-
-	#Get complete set of query objects based on modified objects
-	#TODO
-	if action in ["modify", "delete"]:
-		#Get complete set of query objects for original data
-		affectedParents = pgmap.OsmData()
-		t.GetAffectedParents(block, affectedParents)
-
 	#Set visiblity flag
 	visible = action != "delete"
 	for i in range(block.nodes.size()):
@@ -450,48 +522,11 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		block.relations[i].metaData.username = username
 		block.relations[i].metaData.timestamp = int(timestamp)
 
-	errStr = pgmap.PgMapError()
-	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	if not ok:
-		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+	ok, diffs, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds)
 
 	#Update diff result	
-	upload_update_diff_result(action, "node", block.nodes, createdNodeIds, responseRoot)
-	upload_update_diff_result(action, "way", block.ways, createdWayIds, responseRoot)
-	upload_update_diff_result(action, "relation", block.relations, createdRelationIds, responseRoot)
+	upload_update_diff_result2(diffs, responseRoot)
 	
-	affectedWayIds = pgmap.seti64()
-	for i in range(block.ways.size()):
-		way = block.ways[i]
-		affectedWayIds.add(way.objId)
-	affectedRelIds = pgmap.seti64()
-	for i in range(block.relations.size()):
-		rel = block.relations[i]
-		affectedRelIds.add(rel.objId)
-
-	if action in ["modify", "delete"]:
-		#Ensure active tables have copies of any affected parents
-		unusedNodeIds = pgmap.mapi64i64()
-		unusedWayIds = pgmap.mapi64i64()
-		unusedRelationIds = pgmap.mapi64i64()
-
-		ok = t.StoreObjects(affectedParents, unusedNodeIds, unusedWayIds, unusedRelationIds, False, errStr)
-		if not ok:
-			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
-
-		#Update bbox of any affected parents
-		for i in range(affectedParents.ways.size()):
-			way = affectedParents.ways[i]
-			affectedWayIds.add(way.objId)
-
-		for i in range(affectedParents.relations.size()):
-			rel = affectedParents.relations[i]
-			affectedRelIds.add(rel.objId)
-
-	t.UpdateObjectBboxesById("way", affectedWayIds, False, False, errStr);
-
-	t.UpdateObjectBboxesById("relation", affectedRelIds, False, False, errStr);
-
 	#Update changeset bbox based on edits
 	#TODO
 
