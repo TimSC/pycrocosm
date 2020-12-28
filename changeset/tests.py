@@ -323,53 +323,6 @@ class ChangesetTestCase(TestCase):
 		cs2 = self.get_test_changeset(cs.objId)
 		self.assertEqual(cs2.is_open, True)
 
-	def test_expand_bbox(self):
-		cs = CreateTestChangeset(self.user)
-
-		response = self.client.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
-			content_type='text/xml')
-		self.assertEqual(response.status_code, 200)
-
-		t = p.GetTransaction("ACCESS SHARE")
-		cs2 = pgmap.PgChangeset()
-		errStr = pgmap.PgMapError()
-		t.GetChangeset(cs.objId, cs2, errStr)
-
-		self.assertEqual(cs2.bbox_set, True)
-		self.assertEqual(abs(cs2.y1 - 50.2964626834) < 1e-5, True) 
-		self.assertEqual(abs(cs2.y2 - 51.7985258134) < 1e-5, True) 
-		self.assertEqual(abs(cs2.x1 + 5.24880409375) < 1e-5, True)
-		self.assertEqual(abs(cs2.x2 + 3.08999061719) < 1e-5, True) 
-
-		xml = fromstring(response.content)
-		self.assertEqual(xml.tag, "osm")
-		csout = xml.find("changeset")
-		self.assertEqual(int(csout.attrib["id"]) == cs.objId, True)
-		self.assertEqual(abs(float(csout.attrib["min_lat"]) - 50.2964626834) < 1e-5, True)
-		self.assertEqual(abs(float(csout.attrib["max_lat"]) - 51.7985258134) < 1e-5, True)
-		self.assertEqual(abs(float(csout.attrib["min_lon"]) + 5.24880409375) < 1e-5, True)
-		self.assertEqual(abs(float(csout.attrib["max_lon"]) + 3.08999061719) < 1e-5, True)
-
-		t.Commit()
-
-	def test_expand_bbox_anon(self):
-		cs = CreateTestChangeset(self.user)
-
-		anonClient = Client()
-		response = anonClient.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
-			content_type='text/xml')
-		self.assertEqual(response.status_code, 403)
-
-	def test_expand_bbox_closed(self):
-		cs = CreateTestChangeset(self.user, is_open=False)
-
-		response = self.client.post(reverse('changeset:expand_bbox', args=(cs.objId,)), self.expandBboxXml, 
-			content_type='text/xml')
-		self.assertEqual(response.status_code, 409)
-
-		self.assertEqual(response.content, "The changeset {} was closed at {}.".format(cs.objId, 
-			datetime.datetime.fromtimestamp(cs.close_timestamp).isoformat()).encode(str("utf-8")))
-
 	def tearDown(self):
 		u = User.objects.get(username = self.username)
 		u.delete()

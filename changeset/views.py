@@ -645,47 +645,8 @@ def download(request, changesetId):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
-	t = p.GetTransaction("EXCLUSIVE")
 
-	changesetData = pgmap.PgChangeset()
-	errStr = pgmap.PgMapError()
-	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
-	if ret == -1:
-		return HttpResponseNotFound("Changeset not found")
-	if ret == 0:	
-		return HttpResponseServerError(errStr.errStr)
-
-	if request.user.id != changesetData.uid:
-		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
-
-	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.objId, 
-			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
-		response = HttpResponse(err, content_type="text/plain")
-		response.status_code = 409
-		return response
-
-	for node in request.data.findall("node"):
-		if not changesetData.bbox_set:
-			changesetData.y1 = float(node.attrib["lat"])
-			changesetData.y2 = float(node.attrib["lat"])
-			changesetData.x1 = float(node.attrib["lon"])
-			changesetData.x2 = float(node.attrib["lon"])
-			changesetData.bbox_set = True
-		else:
-			if float(node.attrib["lat"]) < changesetData.y1: changesetData.y1 = float(node.attrib["lat"])
-			if float(node.attrib["lat"]) > changesetData.y2: changesetData.y2 = float(node.attrib["lat"])
-			if float(node.attrib["lon"]) < changesetData.x1: changesetData.x1 = float(node.attrib["lon"])
-			if float(node.attrib["lon"]) > changesetData.x2: changesetData.x2 = float(node.attrib["lon"])
-
-	ok = t.UpdateChangeset(changesetData, errStr)
-	if not ok:
-		t.Abort()
-		return HttpResponseServerError(errStr.errStr)
-
-	t.Commit()
-
-	return SerializeChangesets([changesetData])
+	return HttpResponse("Depricated December 2019", status=410, content_type="text/plain")
 
 @api_view(['GET'])
 def list_changesets(request):
