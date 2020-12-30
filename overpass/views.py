@@ -18,12 +18,17 @@ def xapi(request):
 		if len(bbox) != 4:
 			return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
 
-	objectType = request.GET.get('type', 'node')
-	queryKey = request.GET.get('key', '')
-	queryValue = request.GET.get('value', '')
+	objectType = request.GET.get('type', None)
+	queryKey = request.GET.get('key', None)
+	queryValue = request.GET.get('value', None)
 
-	if bbox is None and queryKey == '':
+	if bbox is None and queryKey is None:
 		return HttpResponseBadRequest("Specify either a bbox or a query key (at least)", content_type="text/plain")
+
+	if objectType is None: objectType = 'node'
+	if queryKey is None: queryKey = ''
+	if queryValue is None: queryValue = ''
+	if bbox is None: bbox = []
 
 	t = p.GetTransaction("ACCESS SHARE")
 
