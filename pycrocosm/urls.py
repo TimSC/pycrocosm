@@ -25,6 +25,7 @@ from oauth_provider import views as oauth_views
 from objectinfo import views as objectinfo_views
 
 urlpatterns = [
+	url(r'overpass/', include('overpass.urls', namespace='overpass')),
 	url(r'api/0.6/user/', include('users.urls')),
 	url(r'api/0.6/changeset', include('changeset.urls', namespace='changeset')),
 	url(r'api/0.6/(node|way|relation)/', include('elements.urls')),
