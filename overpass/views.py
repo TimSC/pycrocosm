@@ -25,7 +25,7 @@ def xapi(request):
 	if bbox is None and queryKey is None:
 		return HttpResponseBadRequest("Specify either a bbox or a query key (at least)", content_type="text/plain")
 
-	if objectType is None: objectType = 'node'
+	if objectType is None: objectType = '*'
 	if queryKey is None: queryKey = ''
 	if queryValue is None: queryValue = ''
 	if bbox is None: bbox = []
