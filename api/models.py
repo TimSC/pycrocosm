@@ -11,10 +11,10 @@ class Nodes(models.Model):
     changeset = models.BigIntegerField(blank=True, null=True)
     username = models.TextField(blank=True, null=True)
     uid = models.IntegerField(blank=True, null=True)
-    visible = models.NullBooleanField()
+    visible = models.BooleanField(null=True)
     timestamp = models.BigIntegerField(blank=True, null=True)
     version = models.IntegerField(blank=True, null=True)
-    current = models.NullBooleanField()
+    current = models.BooleanField(null=True)
     tags = models.TextField(blank=True, null=True)  # This field type is a guess.
     geom = models.TextField(blank=True, null=True)  # This field type is a guess.
 
@@ -27,10 +27,10 @@ class Ways(models.Model):
     changeset = models.BigIntegerField(blank=True, null=True)
     username = models.TextField(blank=True, null=True)
     uid = models.IntegerField(blank=True, null=True)
-    visible = models.NullBooleanField()
+    visible = models.BooleanField(null=True)
     timestamp = models.BigIntegerField(blank=True, null=True)
     version = models.IntegerField(blank=True, null=True)
-    current = models.NullBooleanField()
+    current = models.BooleanField(null=True)
     tags = models.TextField(blank=True, null=True)  # This field type is a guess.
     members = models.TextField(blank=True, null=True)  # This field type is a guess.
 
@@ -43,10 +43,10 @@ class Relations(models.Model):
     changeset = models.BigIntegerField(blank=True, null=True)
     username = models.TextField(blank=True, null=True)
     uid = models.IntegerField(blank=True, null=True)
-    visible = models.NullBooleanField()
+    visible = models.BooleanField(null=True)
     timestamp = models.BigIntegerField(blank=True, null=True)
     version = models.IntegerField(blank=True, null=True)
-    current = models.NullBooleanField()
+    current = models.BooleanField(null=True)
     tags = models.TextField(blank=True, null=True)  # This field type is a guess.
     members = models.TextField(blank=True, null=True)  # This field type is a guess.
     memberroles = models.TextField(blank=True, null=True)  # This field type is a guess.
