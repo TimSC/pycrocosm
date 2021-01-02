@@ -525,6 +525,20 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#Update changeset bbox based on edits
 	#TODO
 
+	#Track edit volumes
+	errStr = pgmap.PgMapError()
+	bbox = pgmap.vectord()
+	ok = t.InsertEditActivity(int(changesetId),
+		int(timestamp),
+		uid,
+		bbox,
+		action,
+		len(block.nodes),
+		len(block.ways),
+		len(block.relations),
+		errStr)
+	if not ok: print (errStr.errStr)
+
 	return True
 
 @csrf_exempt

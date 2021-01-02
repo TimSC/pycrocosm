@@ -15,6 +15,7 @@ import pgmap
 import io
 import random
 import sys
+import time
 
 TEST = 'test' in sys.argv
 if TEST:
@@ -40,7 +41,8 @@ class MapQueryResponse(object):
 		#Don't let transaction object go out of scope while query is running
 		self.t = p.GetTransaction("ACCESS SHARE")
 		self.mapQuery = self.t.GetQueryMgr()
-		if self.mapQuery.Start(bbox, self.enc)<0:
+		timestamp = time.time()
+		if self.mapQuery.Start(bbox, int(timestamp), self.enc)<0:
 			raise RuntimeError("Map query failed to start")
 		self.complete = False
 
