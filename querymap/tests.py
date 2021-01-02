@@ -310,6 +310,7 @@ class QueryMapTestCase(TestCase):
 		errStr = pgmap.PgMapError()
 		t = p.GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
+		#t.SetMetaValue("useBboxInQuery", "1", errStr);
 		if not ok:
 			t.Abort()
 			print (errStr.errStr)

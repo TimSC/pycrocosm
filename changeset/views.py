@@ -224,11 +224,6 @@ def track_bboxes_step2(action, block, t, affectedParents):
 			rel = affectedParents.relations[i]
 			affectedRelIds.add(rel.objId)
 
-	for i in range(len(affectedWayIds)):
-		print ("uw", affectedWayIds[i])
-	for i in range(len(affectedRelIds)):
-		print ("ur", affectedRelIds[i])
-
 	t.UpdateObjectBboxesById("way", affectedWayIds, False, False, errStr)
 
 	t.UpdateObjectBboxesById("relation", affectedRelIds, False, False, errStr)
@@ -247,7 +242,7 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
-		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+		return False, None, errStr #HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
 	diffs = upload_update_diff_result(action, "node", block.nodes, createdNodeIds)
 	diffs.extend(upload_update_diff_result(action, "way", block.ways, createdWayIds))
