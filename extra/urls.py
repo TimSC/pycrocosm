@@ -6,7 +6,8 @@ from django.conf.urls import url
 from . import views
 
 app_name = 'extra'
-urlpatterns = [
 
+urlpatterns = [
+	url(r'^most_active$', views.most_active_users, name='most_active_users'),
 ]
 
