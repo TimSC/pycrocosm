@@ -253,6 +253,20 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 
 	return ok, diffs, affectedParents, errStr
 
+def calc_bbox_of_nodes(nodes, outerBbox=[]):
+	nlats, nlons = [], []
+	if len(outerBbox) > 0:
+		nlats, nlons = [outerBbox[1], outerBbox[3]], [outerBbox[0], outerBbox[2]]
+	for i in range(nodes.size()):
+		node = nodes[i]
+		nlats.append(node.lat)
+		nlons.append(node.lon)
+	if len(nlats) > 0:
+		outerBbox = [min(nlons), min(nlats), max(nlons), max(nlats)]
+
+	print ("ret", outerBbox)
+	return outerBbox
+
 def get_object_type_id_vers(block):
 	objTypes, objIdVers = [], []
 
@@ -566,21 +580,47 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	upload_update_diff_result2(diffs, responseRoot)
 	
 	#Get related objects (children of affected parents that remain unmodified)
-	relatedNodeIds = set()
-	knownNodeIds = set()
+	relatedNodeIds, relatedWayIds, relatedRelationIds = set(), set(), set()
+	knownNodeIds, knownWayIds, knownRelationIds = set(), set(), set()
 	for i in range(block.nodes.size()):
 		knownNodeIds.add(block.nodes[i].objId)
 	for i in range(block.ways.size()):
-		way = block.ways[i]
-		for ref in way.refs:
-			relatedNodeIds.add(ref)
+		knownWayIds.add(block.ways[i].objId)
+	for i in range(block.relations.size()):
+		knownRelationIds.add(block.relations[i].objId)
+	assert affectedParents.nodes.size() == 0 #Nodes are not parents
 	for i in range(affectedParents.ways.size()):
-		way = affectedParents.ways[i]
-		for ref in way.refs:
-			relatedNodeIds.add(ref)
+		knownWayIds.add(affectedParents.ways[i].objId)
+	for i in range(affectedParents.relations.size()):
+		knownRelationIds.add(affectedParents.relations[i].objId)
+
+	if action == "create":
+		for i in range(refedObjData.nodes.size()):
+			node = refedObjData.nodes[i]
+			relatedNodeIds.add(node.objId)
+		for i in range(refedObjData.ways.size()):
+			way = refedObjData.ways[i]
+			relatedWayIds.add(way.objId)
+		for i in range(refedObjData.relations.size()):
+			rel = refedObjData.relations[i]
+			relatedRelationIds.add(rel.objId)
+	elif action == "modify":
+		for i in range(block.ways.size()):
+			way = block.ways[i]
+			for ref in way.refs:
+				relatedNodeIds.add(ref)
+		for i in range(affectedParents.ways.size()):
+			way = affectedParents.ways[i]
+			for ref in way.refs:
+				relatedNodeIds.add(ref)
+
 	relatedNodeIds = relatedNodeIds - knownNodeIds
+	relatedWayIds = relatedWayIds - knownWayIds
+	relatedRelationIds = relatedRelationIds - knownRelationIds
 	relatedObjs = pgmap.OsmData()
 	t.GetObjectsById("node", list(relatedNodeIds), relatedObjs)
+	t.GetObjectsById("way", list(relatedWayIds), relatedObjs)
+	t.GetObjectsById("relation", list(relatedRelationIds), relatedObjs)
 
 	#Update changeset bbox based on edits
 	# "Nodes: Any change to a node, including deletion, adds the node's old and new location to the bbox.
@@ -589,15 +629,25 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#   adding or removing nodes or ways from a relation causes them to be added to the changeset bounding box.
     #   adding a relation member or changing tag values causes all node and way members to be added to the bounding box.
     #   this is similar to how the map call does things and is reasonable on the assumption that adding or removing members doesn't materially change the rest of the relation."
-	#TODO
+	outerBbox = calc_bbox_of_nodes(originalObjData.nodes)
+	outerBbox = calc_bbox_of_nodes(block.nodes, outerBbox)
 
+	#TODO ways and relations
+
+	errStr = pgmap.PgMapError()
+	if len(outerBbox) > 0:
+		ok = t.ExpandChangesetBbox(int(changesetId),
+			outerBbox,
+			errStr)
+		if not ok:
+			print (errStr.errStr)
+
+	#Track edit activity in database
 	existingObjTypes, existingObjIdVers = get_object_type_id_vers(originalObjData)
 	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
 	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
 	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)
 
-	#Track edit volumes
-	errStr = pgmap.PgMapError()
 	bbox = pgmap.vectord()
 	ok = t.InsertEditActivity(int(changesetId),
 		int(timestamp),

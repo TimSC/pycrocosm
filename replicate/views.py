@@ -290,7 +290,10 @@ def get_edit_activity(request, objId):
 	relatedIdVer = pgmap.vectorpairi64i64()
 
 	errStr = pgmap.PgMapError()
+	actionLi = pgmap.vectorstring()
+
 	t.GetEditActivity(int(objId), 
+		actionLi,
 		existingType,
 		existingIdVer,
 		updatedType,
@@ -327,7 +330,7 @@ def get_edit_activity(request, objId):
 	t.GetObjectsByIdVer("way", relatedWayIdVers, related)
 	t.GetObjectsByIdVer("relation", relatedRelationIdVers, related)
 
-	#Read xml back into python ET
+	#Save objects to xml then read xml back into python ET
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	existing.StreamTo(enc)
@@ -348,22 +351,24 @@ def get_edit_activity(request, objId):
 	related.StreamTo(enc)
 	relatedRoot = ET.fromstring(sio.getvalue())
 
-	#Encode output
+	#Organize output
 	root = ET.Element('editactivity')
 	root.attrib['id'] = objId
-	existingEl = ET.SubElement(root, 'existing')
+	actionEl = ET.SubElement(root, actionLi[0])
+
+	existingEl = ET.SubElement(actionEl, 'existing')
 	for ch in existingRoot:
 		existingEl.append(ch)
 
-	updatedEl = ET.SubElement(root, 'updated')
+	updatedEl = ET.SubElement(actionEl, 'updated')
 	for ch in updatedRoot:
 		updatedEl.append(ch)
 
-	affectedparentsEl = ET.SubElement(root, 'affectedparents')
+	affectedparentsEl = ET.SubElement(actionEl, 'affectedparents')
 	for ch in affectedparentsRoot:
 		affectedparentsEl.append(ch)
 
-	relatedEl = ET.SubElement(root, 'related')
+	relatedEl = ET.SubElement(actionEl, 'related')
 	for ch in relatedRoot:
 		relatedEl.append(ch)
 
@@ -372,5 +377,5 @@ def get_edit_activity(request, objId):
 	sio = io.BytesIO()
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 
-	return HttpResponse(sio.getvalue(), content_type='text/plain')
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
