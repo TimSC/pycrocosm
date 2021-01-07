@@ -242,15 +242,34 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	if not ok:
-		return False, None, errStr #HttpResponseServerError(errStr.errStr, content_type='text/plain')
+		return False, None, affectedParents, errStr
 
 	diffs = upload_update_diff_result(action, "node", block.nodes, createdNodeIds)
 	diffs.extend(upload_update_diff_result(action, "way", block.ways, createdWayIds))
 	diffs.extend(upload_update_diff_result(action, "relation", block.relations, createdRelationIds))
 
+	#Update affected bounding boxes
 	track_bboxes_step2(action, block, t, affectedParents)
 
-	return ok, diffs, errStr
+	return ok, diffs, affectedParents, errStr
+
+def get_object_type_id_vers(block):
+	objTypes, objIdVers = [], []
+
+	for i in range(block.nodes.size()):
+		obj = block.nodes[i]
+		objTypes.append("node")
+		objIdVers.append((obj.objId, obj.metaData.version))
+	for i in range(block.ways.size()):
+		obj = block.ways[i]
+		objTypes.append("way")
+		objIdVers.append((obj.objId, obj.metaData.version))
+	for i in range(block.relations.size()):
+		obj = block.relations[i]
+		objTypes.append("relation")
+		objIdVers.append((obj.objId, obj.metaData.version))
+
+	return objTypes, objIdVers
 
 def upload_block(action, block, changesetId, t, responseRoot, 
 	uid, username, timestamp,
@@ -344,27 +363,29 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			if refTypeStr == "relation":
 				refedRelations.add(refId)
 
+	#Get original positions of modified objects.
 	#Check referenced positive ID objects already exist (to ensure
 	#non existent nodes or ways are not added to ways or relations).
 	posRefedNodes = [objId for objId in refedNodes if objId>0]
 	posRefedWays = [objId for objId in refedWays if objId>0]
 	posRefedRelations = [objId for objId in refedRelations if objId>0]
 
-	foundNodeData = pgmap.OsmData()
-	t.GetObjectsById("node", posRefedNodes, foundNodeData)
-	foundNodeIndex = GetOsmDataIndex(foundNodeData)["node"]
+	existingObjData = pgmap.OsmData()
+	t.GetObjectsById("node", posRefedNodes, existingObjData)
+	t.GetObjectsById("way", posRefedWays, existingObjData)
+	t.GetObjectsById("relation", posRefedRelations, existingObjData)
+
+	existingObjIndex = GetOsmDataIndex(existingObjData)
+	
+	foundNodeIndex = existingObjIndex["node"]
 	if set(posRefedNodes) != set(foundNodeIndex.keys()):
 		return HttpResponseNotFound("Referenced node(s) not found")
 
-	foundWayData = pgmap.OsmData()
-	t.GetObjectsById("way", posRefedWays, foundWayData)
-	foundWayIndex = GetOsmDataIndex(foundWayData)["way"]
+	foundWayIndex = existingObjIndex["way"]
 	if set(posRefedWays) != set(foundWayIndex.keys()):
 		return HttpResponseNotFound("Referenced way(s) not found")
 
-	foundRelationData = pgmap.OsmData()
-	t.GetObjectsById("relation", posRefedRelations, foundRelationData)
-	foundRelationIndex = GetOsmDataIndex(foundRelationData)["relation"]
+	foundRelationIndex = existingObjIndex["relation"]
 	if set(posRefedRelations) != set(foundRelationIndex.keys()):
 		return HttpResponseNotFound("Referenced relation(s) not found")
 	
@@ -517,13 +538,39 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		block.relations[i].metaData.username = username
 		block.relations[i].metaData.timestamp = int(timestamp)
 
-	ok, diffs, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds)
+	if not ok:
+		raise HttpResponseServerError(errStr, content_type='text/plain')
 
 	#Update diff result	
 	upload_update_diff_result2(diffs, responseRoot)
 	
+	#Get related objects (children of affected parents that remain unmodified)
+	relatedNodeIds = set()
+	knownNodeIds = set()
+	for i in range(block.nodes.size()):
+		knownNodeIds.add(block.nodes[i].objId)
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		for ref in way.refs:
+			relatedNodeIds.add(ref)
+	relatedNodeIds = relatedNodeIds - knownNodeIds
+	relatedObjs = pgmap.OsmData()
+	t.GetObjectsById("node", list(relatedNodeIds), relatedObjs)
+
 	#Update changeset bbox based on edits
+	# "Nodes: Any change to a node, including deletion, adds the node's old and new location to the bbox.
+	# Ways: Any change to a way, including deletion, adds all of the way's nodes to the bbox.
+    # Relations:
+	#   adding or removing nodes or ways from a relation causes them to be added to the changeset bounding box.
+    #   adding a relation member or changing tag values causes all node and way members to be added to the bounding box.
+    #   this is similar to how the map call does things and is reasonable on the assumption that adding or removing members doesn't materially change the rest of the relation."
 	#TODO
+
+	existingObjTypes, existingObjIdVers = get_object_type_id_vers(existingObjData)
+	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
+	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
+	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)
 
 	#Track edit volumes
 	errStr = pgmap.PgMapError()
@@ -536,6 +583,10 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		len(block.nodes),
 		len(block.ways),
 		len(block.relations),
+		existingObjTypes, existingObjIdVers,
+		modifiedObjTypes, modifiedObjIdVers,
+		affectedParentsTypes, affectedParentsIdVers,
+		relatedObjsTypes, relatedObjsIdVers,
 		errStr)
 	if not ok: print (errStr.errStr)
 

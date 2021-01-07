@@ -58,7 +58,7 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = 
 
 	t = p.GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 
 	if not ok:
 		t.Abort()
@@ -95,7 +95,7 @@ def create_way(uid, username, refs, changeset = 1000, timestamp = None):
 
 	t = p.GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -133,7 +133,7 @@ def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 
 	t = p.GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -169,7 +169,7 @@ def modify_node(nodeIn, nodeCurrentVer, user, timestamp = None):
 
 	t = p.GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -203,7 +203,7 @@ def modify_way(wayIn, refsIn, tagsIn, user, timestamp = None):
 
 	t = p.GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -235,7 +235,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	createdRelationIds = pgmap.mapi64i64()
 
 	t = p.GetTransaction("EXCLUSIVE")
-	ok, diffs, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
 		print (errStr.errStr)
@@ -285,7 +285,7 @@ def delete_object(objIn, user, tIn = None, timestamp = None):
 		t = p.GetTransaction("EXCLUSIVE")
 
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
-	ok, diffs, errStr = store_objects_with_bbox_tracking("delete", data, t, createdNodeIds, createdWayIds, createdRelationIds)
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("delete", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	
 	if tIn is None:
 		if not ok:
