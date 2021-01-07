@@ -341,6 +341,27 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			return HttpResponseBadRequest("Modified object ID is not unique", content_type="text/plain")
 		modRelationIdSet.add(relation.objId)
 
+	#Get list of pre-existing objects that are modified
+	preexistingNodeIds, preexistingWayIds, preexistingRelationIds = set(), set(), set()
+	for i in range(block.nodes.size()):
+		node = block.nodes[i]
+		if node.objId > 0:
+			preexistingNodeIds.add(node.objId)
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		if way.objId > 0:
+			preexistingWayIds.add(way.objId)
+	for i in range(block.relations.size()):
+		relation = block.relations[i]
+		if relation.objId > 0:
+			preexistingRelationIds.add(relation.objId)
+
+	#Get original positions of modified objects.
+	originalObjData = pgmap.OsmData()
+	t.GetObjectsById("node", list(preexistingNodeIds), originalObjData)
+	t.GetObjectsById("way", list(preexistingWayIds), originalObjData)
+	t.GetObjectsById("relation", list(preexistingRelationIds), originalObjData)
+
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = set(), set(), set()
 	for i in range(block.nodes.size()):
@@ -362,33 +383,32 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				refedWays.add(refId)
 			if refTypeStr == "relation":
 				refedRelations.add(refId)
-
-	#Get original positions of modified objects.
+	
 	#Check referenced positive ID objects already exist (to ensure
 	#non existent nodes or ways are not added to ways or relations).
 	posRefedNodes = [objId for objId in refedNodes if objId>0]
 	posRefedWays = [objId for objId in refedWays if objId>0]
 	posRefedRelations = [objId for objId in refedRelations if objId>0]
 
-	existingObjData = pgmap.OsmData()
-	t.GetObjectsById("node", posRefedNodes, existingObjData)
-	t.GetObjectsById("way", posRefedWays, existingObjData)
-	t.GetObjectsById("relation", posRefedRelations, existingObjData)
+	refedObjData = pgmap.OsmData()
+	t.GetObjectsById("node", posRefedNodes, refedObjData)
+	t.GetObjectsById("way", posRefedWays, refedObjData)
+	t.GetObjectsById("relation", posRefedRelations, refedObjData)
 
-	existingObjIndex = GetOsmDataIndex(existingObjData)
+	refedObjIndex = GetOsmDataIndex(refedObjData)
 	
-	foundNodeIndex = existingObjIndex["node"]
+	foundNodeIndex = refedObjIndex["node"]
 	if set(posRefedNodes) != set(foundNodeIndex.keys()):
 		return HttpResponseNotFound("Referenced node(s) not found")
 
-	foundWayIndex = existingObjIndex["way"]
+	foundWayIndex = refedObjIndex["way"]
 	if set(posRefedWays) != set(foundWayIndex.keys()):
 		return HttpResponseNotFound("Referenced way(s) not found")
 
-	foundRelationIndex = existingObjIndex["relation"]
+	foundRelationIndex = refedObjIndex["relation"]
 	if set(posRefedRelations) != set(foundRelationIndex.keys()):
 		return HttpResponseNotFound("Referenced relation(s) not found")
-	
+
 	#Check versions of updated/deleted objects match what we expect
 	dataIndex = GetOsmDataIndex(block)
 	nodeObjsById, wayObjsById, relationObjsById = dataIndex['node'], dataIndex['way'], dataIndex['relation']
@@ -554,6 +574,10 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		way = block.ways[i]
 		for ref in way.refs:
 			relatedNodeIds.add(ref)
+	for i in range(affectedParents.ways.size()):
+		way = affectedParents.ways[i]
+		for ref in way.refs:
+			relatedNodeIds.add(ref)
 	relatedNodeIds = relatedNodeIds - knownNodeIds
 	relatedObjs = pgmap.OsmData()
 	t.GetObjectsById("node", list(relatedNodeIds), relatedObjs)
@@ -567,7 +591,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
     #   this is similar to how the map call does things and is reasonable on the assumption that adding or removing members doesn't materially change the rest of the relation."
 	#TODO
 
-	existingObjTypes, existingObjIdVers = get_object_type_id_vers(existingObjData)
+	existingObjTypes, existingObjIdVers = get_object_type_id_vers(originalObjData)
 	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
 	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
 	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)

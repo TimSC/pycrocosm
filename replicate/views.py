@@ -6,6 +6,9 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest, JsonResponse
 from django.conf import settings
 from django.utils.dateparse import parse_datetime, parse_date
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+#from defusedxml.ElementTree import fromstring
+import xml.etree.ElementTree as ET
 from querymap.views import p
 from pycrocosm import common
 import pgmap
@@ -259,4 +262,115 @@ def timenow(request):
 	now = datetime.datetime.now(datetime.timezone.utc)
 
 	return JsonResponse({'now': now, 'time': now.timestamp()})
+
+def TypeIdVerSeparate(types, idVers):
+	nodeIdVers, wayIdVers, relationIdVers = [], [], []
+	for objType, (objId, ObjVer) in zip(types, idVers):
+		if objType == "node":
+			nodeIdVers.append(pgmap.pairi64i64(objId, ObjVer))
+		if objType == "way":
+			wayIdVers.append(pgmap.pairi64i64(objId, ObjVer))
+		if objType == "relation":
+			relationIdVers.append(pgmap.pairi64i64(objId, ObjVer))
+
+	return nodeIdVers, wayIdVers, relationIdVers
+
+@api_view(['GET'])
+def get_edit_activity(request, objId):
+
+	t = p.GetTransaction("ACCESS SHARE")
+
+	existingType = pgmap.vectorstring()
+	existingIdVer = pgmap.vectorpairi64i64()
+	updatedType = pgmap.vectorstring()
+	updatedIdVer = pgmap.vectorpairi64i64()
+	affectedparentsType = pgmap.vectorstring()
+	affectedparentsIdVer = pgmap.vectorpairi64i64()
+	relatedType = pgmap.vectorstring()
+	relatedIdVer = pgmap.vectorpairi64i64()
+
+	errStr = pgmap.PgMapError()
+	t.GetEditActivity(int(objId), 
+		existingType,
+		existingIdVer,
+		updatedType,
+		updatedIdVer,
+		affectedparentsType,
+		affectedparentsIdVer,
+		relatedType,
+		relatedIdVer,
+		errStr)
+
+	#Get relevent objects from database
+	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(existingType, existingIdVer)
+	updatedNodeIdVers, updatedWayIdVers, updatedRelationIdVers = TypeIdVerSeparate(updatedType, updatedIdVer)
+	affectedparentsNodeIdVers, affectedparentsWayIdVers, affectedparentsRelationIdVers = TypeIdVerSeparate(affectedparentsType, affectedparentsIdVer)
+	relatedNodeIdVers, relatedWayIdVers, relatedRelationIdVers = TypeIdVerSeparate(relatedType, relatedIdVer)
+
+	existing = pgmap.OsmData()
+	t.GetObjectsByIdVer("node", existingNodeIdVers, existing)
+	t.GetObjectsByIdVer("way", existingWayIdVers, existing)
+	t.GetObjectsByIdVer("relation", existingRelationIdVers, existing)
+
+	updated = pgmap.OsmData()
+	t.GetObjectsByIdVer("node", updatedNodeIdVers, updated)
+	t.GetObjectsByIdVer("way", updatedWayIdVers, updated)
+	t.GetObjectsByIdVer("relation", updatedRelationIdVers, updated)
+
+	affectedparents = pgmap.OsmData()
+	t.GetObjectsByIdVer("node", affectedparentsNodeIdVers, affectedparents)
+	t.GetObjectsByIdVer("way", affectedparentsWayIdVers, affectedparents)
+	t.GetObjectsByIdVer("relation", affectedparentsRelationIdVers, affectedparents)
+
+	related = pgmap.OsmData()
+	t.GetObjectsByIdVer("node", relatedNodeIdVers, related)
+	t.GetObjectsByIdVer("way", relatedWayIdVers, related)
+	t.GetObjectsByIdVer("relation", relatedRelationIdVers, related)
+
+	#Read xml back into python ET
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	existing.StreamTo(enc)
+	existingRoot = ET.fromstring(sio.getvalue())
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	updated.StreamTo(enc)
+	updatedRoot = ET.fromstring(sio.getvalue())
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	affectedparents.StreamTo(enc)
+	affectedparentsRoot = ET.fromstring(sio.getvalue())
+
+	sio = io.BytesIO()
+	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	related.StreamTo(enc)
+	relatedRoot = ET.fromstring(sio.getvalue())
+
+	#Encode output
+	root = ET.Element('editactivity')
+	root.attrib['id'] = objId
+	existingEl = ET.SubElement(root, 'existing')
+	for ch in existingRoot:
+		existingEl.append(ch)
+
+	updatedEl = ET.SubElement(root, 'updated')
+	for ch in updatedRoot:
+		updatedEl.append(ch)
+
+	affectedparentsEl = ET.SubElement(root, 'affectedparents')
+	for ch in affectedparentsRoot:
+		affectedparentsEl.append(ch)
+
+	relatedEl = ET.SubElement(root, 'related')
+	for ch in relatedRoot:
+		relatedEl.append(ch)
+
+	#Write final xml
+	doc = ET.ElementTree(root)
+	sio = io.BytesIO()
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+
+	return HttpResponse(sio.getvalue(), content_type='text/plain')
 
