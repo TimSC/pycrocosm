@@ -264,7 +264,6 @@ def calc_bbox_of_nodes(nodes, outerBbox=[]):
 	if len(nlats) > 0:
 		outerBbox = [min(nlons), min(nlats), max(nlons), max(nlats)]
 
-	print ("ret", outerBbox)
 	return outerBbox
 
 def get_object_type_id_vers(block):
@@ -284,6 +283,50 @@ def get_object_type_id_vers(block):
 		objIdVers.append((obj.objId, obj.metaData.version))
 
 	return objTypes, objIdVers
+
+def get_relation_members(relation):
+	chNodes, chWays, chRelations = set(), set(), set()
+	for i, refId in enumerate(relation.refIds):
+		refTypeStr = relation.refTypeStrs[i]
+		if refTypeStr == "node":
+			chNodes.add(refId)
+		if refTypeStr == "way":
+			chWays.add(refId)
+		if refTypeStr == "relation":
+			chRelations.add(refId)
+
+	return chNodes, chWays, chRelations
+
+def get_multi_relation_members(relations):
+	chNodes, chWays, chRelations = set(), set(), set()
+	for i in range(relations.size()):
+		relation = relations[i]
+		n, w, r = get_relation_members(relation)
+		chNodes.update(n)
+		chWays.update(w)
+		chRelations.update(r)
+
+	return chNodes, chWays, chRelations
+
+def get_refed_members(block):
+	refedNodes, refedWays, refedRelations = set(), set(), set()
+	for i in range(block.nodes.size()):
+		node = block.nodes[i]
+		refedNodes.add(node.objId)
+	for i in range(block.ways.size()):
+		way = block.ways[i]
+		refedWays.add(way.objId)
+		for ref in way.refs:
+			refedNodes.add(ref)
+	for i in range(block.relations.size()):
+		relation = block.relations[i]
+		refedRelations.add(relation.objId)
+	n, w, r = get_multi_relation_members(block.relations)
+	refedNodes.update(n)
+	refedWays.update(w)
+	refedRelations.update(r)
+
+	return refedNodes, refedWays, refedRelations
 
 def upload_block(action, block, changesetId, t, responseRoot, 
 	uid, username, timestamp,
@@ -377,26 +420,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	t.GetObjectsById("relation", list(preexistingRelationIds), originalObjData)
 
 	#Get list of referenced objects
-	refedNodes, refedWays, refedRelations = set(), set(), set()
-	for i in range(block.nodes.size()):
-		node = block.nodes[i]
-		refedNodes.add(node.objId)
-	for i in range(block.ways.size()):
-		way = block.ways[i]
-		refedWays.add(way.objId)
-		for ref in way.refs:
-			refedNodes.add(ref)
-	for i in range(block.relations.size()):
-		relation = block.relations[i]
-		refedRelations.add(relation.objId)
-		for i, refId in enumerate(relation.refIds):
-			refTypeStr = relation.refTypeStrs[i]
-			if refTypeStr == "node":
-				refedNodes.add(refId)
-			if refTypeStr == "way":
-				refedWays.add(refId)
-			if refTypeStr == "relation":
-				refedRelations.add(refId)
+	refedNodes, refedWays, refedRelations = get_refed_members(block)
 	
 	#Check referenced positive ID objects already exist (to ensure
 	#non existent nodes or ways are not added to ways or relations).
@@ -627,12 +651,84 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	# Ways: Any change to a way, including deletion, adds all of the way's nodes to the bbox.
     # Relations:
 	#   adding or removing nodes or ways from a relation causes them to be added to the changeset bounding box.
-    #   adding a relation member or changing tag values causes all node and way members to be added to the bounding box.
+    #   adding a relation as a member or changing tag values causes all node and way members to be added to the bounding box.
     #   this is similar to how the map call does things and is reasonable on the assumption that adding or removing members doesn't materially change the rest of the relation."
 	outerBbox = calc_bbox_of_nodes(originalObjData.nodes)
 	outerBbox = calc_bbox_of_nodes(block.nodes, outerBbox)
+	wayNodeIds = set()
+	wayNodes = pgmap.OsmData()
+	for i in range(block.ways.size()): #Get unmodified nodes of ways
+		way = block.ways[i]
+		for ref in way.refs:
+			wayNodeIds.add(ref)
+	t.GetObjectsById("node", list(wayNodeIds), wayNodes)
+	outerBbox = calc_bbox_of_nodes(wayNodes.nodes, outerBbox)
 
-	#TODO ways and relations
+	if action == "modifiy":
+		originalObjIndex = GetOsmDataIndex(originalObjData)
+		originalRelationIndex = originalObjIndex["relation"]
+
+		for i in range(block.relations.size()):
+			relation = block.relations[i]
+			assert relation.objId in originalRelationIndex
+			originalRel = originalRelationIndex[relation.objId]
+
+			tagsChanged = relation.tags != originalRel.tags
+
+			mchNodes, mchWays, mchRelations = get_relation_members(relation)
+			ochNodes, ochWays, ochRelations = get_relation_members(originalRel)
+
+			diffNodes = mchNodes.symmetric_difference(ochNodes)
+			diffWays = mchWays.symmetric_difference(ochWays)
+			diffRelations = mchRelations.symmetric_difference(ochRelations)
+	
+			updateWholeRelation = tagsChanged or len(diffRelations) > 0
+			
+			if not updateWholeRelation:
+				#Update added or removed nodes and ways
+				chNodes = diffNodes.copy()
+				chWayObjs = pgmap.OsmData()
+				t.GetObjectsById("way", list(diffWays), chWayObjs)
+				for i in range(chWayObjs.ways.size()):
+					way = chWayObjs.ways[i]
+					for ref in way.refs:
+						chNodes.add(ref)
+
+				wayNodes2 = pgmap.OsmData()
+				t.GetObjectsById("node", list(chNodes), wayNodes2)
+				outerBbox = calc_bbox_of_nodes(wayNodes2.nodes, outerBbox)		
+
+			else:
+				#Update all nodes and ways
+				allNodes = mchNodes.union(ochNodes)
+				allWays = mchWays.union(ochWays)
+
+				chWayObjs = pgmap.OsmData()
+				t.GetObjectsById("way", list(allWays), chWayObjs)
+				for i in range(chWayObjs.ways.size()):
+					way = chWayObjs.ways[i]
+					for ref in way.refs:
+						allNodes.add(ref)
+
+				wayNodes2 = pgmap.OsmData()
+				t.GetObjectsById("node", list(allNodes), wayNodes2)
+				outerBbox = calc_bbox_of_nodes(wayNodes2.nodes, outerBbox)		
+
+	elif action in ["create", "delete"]:
+		if action == "create":
+			chNodes, chWays, chRelations = get_multi_relation_members(block.relations)
+		else:
+			chNodes, chWays, chRelations = get_multi_relation_members(originalObjData.relations)
+		chWayObjs = pgmap.OsmData()
+		t.GetObjectsById("way", list(chWays), chWayObjs)
+		for i in range(chWayObjs.ways.size()):
+			way = chWayObjs.ways[i]
+			for ref in way.refs:
+				chNodes.add(ref)
+
+		wayNodes2 = pgmap.OsmData()
+		t.GetObjectsById("node", list(chNodes), wayNodes2)
+		outerBbox = calc_bbox_of_nodes(wayNodes2.nodes, outerBbox)		
 
 	errStr = pgmap.PgMapError()
 	if len(outerBbox) > 0:
