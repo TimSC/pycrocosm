@@ -275,20 +275,7 @@ def TypeIdVerSeparate(types, idVers):
 
 	return nodeIdVers, wayIdVers, relationIdVers
 
-@api_view(['GET'])
-def get_edit_activity(request, objId):
-
-	t = p.GetTransaction("ACCESS SHARE")
-
-	errStr = pgmap.PgMapError()
-	activity = pgmap.EditActivity()
-
-	found = t.GetEditActivityById(int(objId), 
-		activity,
-		errStr)
-	if not found:
-		return HttpResponseNotFound("Edit activity does not exist")
-
+def edit_activity_to_et(activity, t):
 	#Get relevent objects from database
 	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(activity.existingType, activity.existingIdVer)
 	updatedNodeIdVers, updatedWayIdVers, updatedRelationIdVers = TypeIdVerSeparate(activity.updatedType, activity.updatedIdVer)
@@ -337,30 +324,103 @@ def get_edit_activity(request, objId):
 	relatedRoot = ET.fromstring(sio.getvalue())
 
 	#Organize output
-	root = ET.Element('editactivity')
-	root.attrib['id'] = objId
-	actionEl = ET.SubElement(root, activity.action)
+	activityEl = ET.Element('editactivity')
+	activityEl.attrib['id'] = str(activity.objId)
+	if activity.changeset > 0:
+		activityEl.attrib['changeset'] = str(activity.changeset)
+	if activity.timestamp > 0:
+		activityEl.attrib['timestamp'] = str(activity.timestamp)
+	activityEl.attrib['action'] = str(activity.action)
 
-	existingEl = ET.SubElement(actionEl, 'existing')
+	existingEl = ET.SubElement(activityEl, 'existing')
 	for ch in existingRoot:
 		existingEl.append(ch)
 
-	updatedEl = ET.SubElement(actionEl, 'updated')
+	updatedEl = ET.SubElement(activityEl, 'updated')
 	for ch in updatedRoot:
 		updatedEl.append(ch)
 
-	affectedparentsEl = ET.SubElement(actionEl, 'affectedparents')
+	affectedparentsEl = ET.SubElement(activityEl, 'affectedparents')
 	for ch in affectedparentsRoot:
 		affectedparentsEl.append(ch)
 
-	relatedEl = ET.SubElement(actionEl, 'related')
+	relatedEl = ET.SubElement(activityEl, 'related')
 	for ch in relatedRoot:
 		relatedEl.append(ch)
 
+	return activityEl
+
+@api_view(['GET'])
+def get_edit_activity(request, objId):
+
+	t = p.GetTransaction("ACCESS SHARE")
+
+	errStr = pgmap.PgMapError()
+	activity = pgmap.EditActivity()
+
+	found = t.GetEditActivityById(int(objId), 
+		activity,
+		errStr)
+	if not found:
+		return HttpResponseNotFound("Edit activity does not exist")
+
+	resultsEl = ET.Element('editactivities')
+
+	activityEl = edit_activity_to_et(activity, t)
+	resultsEl.append(activityEl)
+
 	#Write final xml
-	doc = ET.ElementTree(root)
+	doc = ET.ElementTree(resultsEl)
 	sio = io.BytesIO()
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
+@api_view(['GET'])
+def query_edit_activity_by_timestamp(request):
+
+	sinceTimestamp = request.GET.get('since', None)
+	untilTimestamp = request.GET.get('until', None)
+
+	if sinceTimestamp is not None:
+		sinceTimestamp=parse_datetime(sinceTimestamp)
+		sinceTimestamp = sinceTimestamp.replace(tzinfo=datetime.timezone.utc)
+		sinceTimestamp = int(time.mktime(sinceTimestamp.timetuple()))
+	else:
+		sinceTimestamp = 0
+
+	if untilTimestamp is not None:
+		untilTimestamp=parse_datetime(untilTimestamp)
+		untilTimestamp = untilTimestamp.replace(tzinfo=datetime.timezone.utc)
+		untilTimestamp = int(time.mktime(untilTimestamp.timetuple()))
+	else:
+		untilTimestamp = 0
+
+	t = p.GetTransaction("ACCESS SHARE")
+
+	errStr = pgmap.PgMapError()
+	results = pgmap.vectorsharedptreditactivity()
+
+	t.QueryEditActivityByTimestamp(sinceTimestamp, untilTimestamp,
+		results,
+		errStr)
+
+	resultsEl = ET.Element('editactivities')
+
+	test = []
+	for i in range(len(results)):
+		test.append(results[i])
+
+	for i in range(results.size()):
+		activity = results[i]
+		activityEl = edit_activity_to_et(activity, t)
+		resultsEl.append(activityEl)
+
+	#Write final xml
+	doc = ET.ElementTree(resultsEl)
+	sio = io.BytesIO()
+	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
 
