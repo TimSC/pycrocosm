@@ -390,6 +390,14 @@ class ChangesetUploadTestCase(TestCase):
 			for ch2 in ch:
 				self.assertEqual(ch2.tag, "node")
 
+		#Check changeset bbox
+		response2b = self.client.get(reverse('changeset:changeset', args=(cs.objId,)))
+		xml2b = fromstring(response2b.content)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lat'])-50.79046578105)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lat'])-50.79046578105)<1e-6, True)
+
 		#Check bbox of object
 		response3 = self.client.get(reverse('elements:object_bbox', args=("node", idOnServer,)))
 		xml3 = fromstring(response3.content)
@@ -438,6 +446,15 @@ class ChangesetUploadTestCase(TestCase):
 			self.assertEqual(ch.tag, "modify")
 			for ch2 in ch:
 				self.assertEqual(ch2.tag, "node")
+
+		#Check changeset bbox
+		response2b = self.client.get(reverse('changeset:changeset', args=(cs.objId,)))
+		xml2b = fromstring(response2b.content)
+		csBboxLats, csBboxLons = [node.lat, 50.80], [node.lon, -1.05]
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lon'])-min(csBboxLons))<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lon'])-max(csBboxLons))<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lat'])-min(csBboxLats))<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lat'])-max(csBboxLats))<1e-6, True)
 
 		#Check bbox of object
 		response3 = self.client.get(reverse('elements:object_bbox', args=("node", dbNode.objId,)))
@@ -604,6 +621,14 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(newWay is not None, True)
 		for ref in list(newWay.refs):
 			self.assertEqual(ref > 0, True)
+
+		#Check changeset bbox
+		response2b = self.client.get(reverse('changeset:changeset', args=(cs.objId,)))
+		xml2b = fromstring(response2b.content)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lon'])+1.051)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lon'])+1.04971367626)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lat'])-50.79046578105)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lat'])-50.81)<1e-6, True)
 
 		#Check bbox of object
 		response3 = self.client.get(reverse('elements:object_bbox', args=("way", newWayId,)))
@@ -1071,13 +1096,23 @@ class ChangesetUploadTestCase(TestCase):
 		xml = fromstring(response.content)
 		diffDict = ParseOsmDiffToDict(xml)
 
-		#Check bbox of object
+		#Check changeset bbox
 		lats = [50.78673385857, node.lat, node2.lat]
 		lons = [-1.04730886255, node.lon, node2.lon]
 		minlat = min(lats)
 		maxlat = max(lats)
 		minlon = min(lons)
 		maxlon = max(lons)
+		response2b = self.client.get(reverse('changeset:changeset', args=(cs.objId,)))
+		xml2b = fromstring(response2b.content)
+		print (lats, lons)
+		print ("111", xml2b[0].attrib)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lon'])-minlon)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lon'])-maxlon)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['min_lat'])-minlat)<1e-6, True)
+		self.assertEqual(abs(float(xml2b[0].attrib['max_lat'])-maxlat)<1e-6, True)
+
+		#Check bbox of object
 		response3 = self.client.get(reverse('elements:object_bbox', args=("way", way.objId,)))
 		xml3 = fromstring(response3.content)
 		self.assertEqual(len(xml3), 1)

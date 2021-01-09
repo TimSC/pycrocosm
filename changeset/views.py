@@ -732,6 +732,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	errStr = pgmap.PgMapError()
 	if len(outerBbox) > 0:
+		print ("outerBbox", int(changesetId), outerBbox)
 		ok = t.ExpandChangesetBbox(int(changesetId),
 			outerBbox,
 			errStr)
