@@ -1105,8 +1105,6 @@ class ChangesetUploadTestCase(TestCase):
 		maxlon = max(lons)
 		response2b = self.client.get(reverse('changeset:changeset', args=(cs.objId,)))
 		xml2b = fromstring(response2b.content)
-		print (lats, lons)
-		print ("111", xml2b[0].attrib)
 		self.assertEqual(abs(float(xml2b[0].attrib['min_lon'])-minlon)<1e-6, True)
 		self.assertEqual(abs(float(xml2b[0].attrib['max_lon'])-maxlon)<1e-6, True)
 		self.assertEqual(abs(float(xml2b[0].attrib['min_lat'])-minlat)<1e-6, True)

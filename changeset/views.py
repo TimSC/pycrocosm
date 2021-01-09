@@ -732,7 +732,6 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	errStr = pgmap.PgMapError()
 	if len(outerBbox) > 0:
-		print ("outerBbox", int(changesetId), outerBbox)
 		ok = t.ExpandChangesetBbox(int(changesetId),
 			outerBbox,
 			errStr)
@@ -746,18 +745,25 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)
 
 	bbox = pgmap.vectord()
-	ok = t.InsertEditActivity(int(changesetId),
-		int(timestamp),
-		uid,
-		bbox,
-		action,
-		len(block.nodes),
-		len(block.ways),
-		len(block.relations),
-		existingObjTypes, existingObjIdVers,
-		modifiedObjTypes, modifiedObjIdVers,
-		affectedParentsTypes, affectedParentsIdVers,
-		relatedObjsTypes, relatedObjsIdVers,
+	activity = pgmap.EditActivity()
+	activity.existingType = pgmap.vectorstring(existingObjTypes)
+	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
+	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
+	activity.updatedIdVer = pgmap.vectorpairi64i64(modifiedObjIdVers)
+	activity.affectedparentsType = pgmap.vectorstring(affectedParentsTypes)
+	activity.affectedparentsIdVer = pgmap.vectorpairi64i64(affectedParentsIdVers)
+	activity.relatedType = pgmap.vectorstring(relatedObjsTypes)
+	activity.relatedIdVer = pgmap.vectorpairi64i64(relatedObjsIdVers)
+	activity.changesetId = int(changesetId)
+	activity.timestamp = int(timestamp)
+	activity.uid = uid
+	activity.bbox = bbox
+	activity.action = action
+	activity.nodes = len(block.nodes)
+	activity.ways = len(block.ways)
+	activity.relations = len(block.relations)
+
+	ok = t.InsertEditActivity(activity,
 		errStr)
 	if not ok: print (errStr.errStr)
 

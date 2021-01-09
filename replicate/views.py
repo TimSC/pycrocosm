@@ -280,35 +280,20 @@ def get_edit_activity(request, objId):
 
 	t = p.GetTransaction("ACCESS SHARE")
 
-	existingType = pgmap.vectorstring()
-	existingIdVer = pgmap.vectorpairi64i64()
-	updatedType = pgmap.vectorstring()
-	updatedIdVer = pgmap.vectorpairi64i64()
-	affectedparentsType = pgmap.vectorstring()
-	affectedparentsIdVer = pgmap.vectorpairi64i64()
-	relatedType = pgmap.vectorstring()
-	relatedIdVer = pgmap.vectorpairi64i64()
-
 	errStr = pgmap.PgMapError()
-	actionLi = pgmap.vectorstring()
+	activity = pgmap.EditActivity()
 
-	t.GetEditActivity(int(objId), 
-		actionLi,
-		existingType,
-		existingIdVer,
-		updatedType,
-		updatedIdVer,
-		affectedparentsType,
-		affectedparentsIdVer,
-		relatedType,
-		relatedIdVer,
+	found = t.GetEditActivityById(int(objId), 
+		activity,
 		errStr)
+	if not found:
+		return HttpResponseNotFound("Edit activity does not exist")
 
 	#Get relevent objects from database
-	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(existingType, existingIdVer)
-	updatedNodeIdVers, updatedWayIdVers, updatedRelationIdVers = TypeIdVerSeparate(updatedType, updatedIdVer)
-	affectedparentsNodeIdVers, affectedparentsWayIdVers, affectedparentsRelationIdVers = TypeIdVerSeparate(affectedparentsType, affectedparentsIdVer)
-	relatedNodeIdVers, relatedWayIdVers, relatedRelationIdVers = TypeIdVerSeparate(relatedType, relatedIdVer)
+	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(activity.existingType, activity.existingIdVer)
+	updatedNodeIdVers, updatedWayIdVers, updatedRelationIdVers = TypeIdVerSeparate(activity.updatedType, activity.updatedIdVer)
+	affectedparentsNodeIdVers, affectedparentsWayIdVers, affectedparentsRelationIdVers = TypeIdVerSeparate(activity.affectedparentsType, activity.affectedparentsIdVer)
+	relatedNodeIdVers, relatedWayIdVers, relatedRelationIdVers = TypeIdVerSeparate(activity.relatedType, activity.relatedIdVer)
 
 	existing = pgmap.OsmData()
 	t.GetObjectsByIdVer("node", existingNodeIdVers, existing)
@@ -354,7 +339,7 @@ def get_edit_activity(request, objId):
 	#Organize output
 	root = ET.Element('editactivity')
 	root.attrib['id'] = objId
-	actionEl = ET.SubElement(root, actionLi[0])
+	actionEl = ET.SubElement(root, activity.action)
 
 	existingEl = ET.SubElement(actionEl, 'existing')
 	for ch in existingRoot:
