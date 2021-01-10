@@ -754,7 +754,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	activity.affectedparentsIdVer = pgmap.vectorpairi64i64(affectedParentsIdVers)
 	activity.relatedType = pgmap.vectorstring(relatedObjsTypes)
 	activity.relatedIdVer = pgmap.vectorpairi64i64(relatedObjsIdVers)
-	activity.changesetId = int(changesetId)
+	activity.changeset = int(changesetId)
 	activity.timestamp = int(timestamp)
 	activity.uid = uid
 	activity.bbox = bbox

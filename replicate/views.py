@@ -329,7 +329,7 @@ def edit_activity_to_et(activity, t):
 	if activity.changeset > 0:
 		activityEl.attrib['changeset'] = str(activity.changeset)
 	if activity.timestamp > 0:
-		activityEl.attrib['timestamp'] = str(activity.timestamp)
+		activityEl.attrib['timestamp'] = datetime.datetime.fromtimestamp(activity.timestamp).isoformat()
 	activityEl.attrib['action'] = str(activity.action)
 
 	existingEl = ET.SubElement(activityEl, 'existing')
