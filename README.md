@@ -2,44 +2,10 @@
 
 # pycrocosm
 
-OSM Map server API 0.6 implemented using Django. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database.
+OSM Map server API 0.6 implemented using Django and Python 3. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database.
 
 Installation
 ------------
-
-### Python 2 installation
-
-Installation is described for Linux Mint 20.0, but should work on similar systems like Debian, Ubuntu Focal or later. 
-
-    cd /var
-
-    sudo apt install git virtualenv python-pip swig4 g++ python-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
-
-    sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
-
-    sudo chown www-data:www-data -R pycrocosm
-
-    sudo chmod g+rwx -R pycrocosm
-
-    cd pycrocosm
-
-    virtualenv --python=/usr/bin/python pgmapenv
-
-    source pgmapenv/bin/activate
-
-Install the rest of the dependencies
-
-    pip install -r requirements.txt
-
-    cd pycrocosm/pgmap/
-
-    make
-
-    pip install .
-
-    cd ..
-
-At this stage, you need to configure and initialize the PostGIS database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database and import some data.
 
 ### Python 3 Installation
 
