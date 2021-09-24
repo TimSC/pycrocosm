@@ -1,4 +1,4 @@
-django==3.2.4
+django==3.2.5
 djangorestframework==3.12.4
 defusedxml==0.6.0
 psycopg2-binary==2.8.6
