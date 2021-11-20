@@ -219,7 +219,7 @@ def object_history(request, objType, objId):
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @api_view(['GET'])
-def object_history(request, objType, objId):
+def object_bbox(request, objType, objId):
 	t = p.GetTransaction("ACCESS SHARE")
 
 	bboxes = pgmap.mapi64vectord()
