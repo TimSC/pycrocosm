@@ -115,8 +115,8 @@ MAP_DATABASE = {
 	'HOST': os.environ.get('DJANGO_DB_HOST', default='127.0.0.1'), #SCRIPT_REPLACE_dbhost
 	'PORT': '5432',
 	'PREFIX': "planet_static_", #SCRIPT_REPLACE_dbtableprefix
-	'PREFIX_TEST': "planet_mod_", #SCRIPT_REPLACE_dbtabletestprefix
-	'PREFIX_MOD': "planet_test_", #SCRIPT_REPLACE_dbtablemodifyprefix
+	'PREFIX_TEST': "planet_test_", #SCRIPT_REPLACE_dbtabletestprefix
+	'PREFIX_MOD': "planet_mod_", #SCRIPT_REPLACE_dbtablemodifyprefix
 }
 
 # Password validation
