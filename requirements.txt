@@ -1,7 +1,7 @@
-django==3.2.15
-djangorestframework==3.12.4
+django==4.1.5
+djangorestframework==3.14.0
 defusedxml==0.7.1
-psycopg2-binary==2.9.2
+psycopg2-binary==2.9.5
 django-oauth10a-mod==2.2.10
 gunicorn==20.1.0
 
