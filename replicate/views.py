@@ -221,12 +221,14 @@ def customdiff(request):
 	startTs=parse_datetime(startTsArg)
 	if startTs is None:
 		startTs=parse_date(startTsArg)
+		startTs=datetime.datetime(startTs.year, startTs.month, startTs.day)
 
 	if endTsArg is None:
 		return HttpResponseBadRequest("end argument not set")
 	endTs=parse_datetime(endTsArg)
 	if endTs is None:
-		endTs=parse_date(endTsArg)		
+		endTs=parse_date(endTsArg)
+		endTs=datetime.datetime(endTs.year, endTs.month, endTs.day)
 
 	if startTs is None:
 		return HttpResponseBadRequest("start argument not understood (should be ISO 8601 date or datetime)")
