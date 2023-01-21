@@ -1,6 +1,6 @@
 # Based on https://testdriven.io/blog/dockerizing-django-with-postgres-gunicorn-and-nginx/
 # pull official base image
-FROM ubuntu:20.04
+FROM ubuntu:22.04
 
 # https://rtfm.co.ua/en/docker-configure-tzdata-and-timezone-during-build/
 ENV TZ=Europe/London
