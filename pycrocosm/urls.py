@@ -41,6 +41,7 @@ urlpatterns = [
 	url(r'accounts/', include(('django.contrib.auth.urls', 'accounts'), namespace="accounts")),
 	url(r'register/', include('register.urls', namespace="register")),
 	url(r'replication/', include('replicate.urls', namespace='replication')),
+	url(r'^o/', include('oauth2_provider.urls', namespace='oauth2_provider')),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
 	url(r'migrate/', include('migrateusers.urls', namespace='migrateusers')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
