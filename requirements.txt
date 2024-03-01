@@ -3,4 +3,4 @@ djangorestframework==3.14.0
 defusedxml==0.7.1
 psycopg2-binary==2.9.9
 gunicorn==21.2.0
-
+tzdata
