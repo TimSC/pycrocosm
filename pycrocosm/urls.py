@@ -24,7 +24,6 @@ except:
     from django.conf.urls import include, url
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
-from oauth_provider import views as oauth_views
 from objectinfo import views as objectinfo_views
 
 urlpatterns = [
@@ -42,10 +41,6 @@ urlpatterns = [
 	url(r'accounts/', include(('django.contrib.auth.urls', 'accounts'), namespace="accounts")),
 	url(r'register/', include('register.urls', namespace="register")),
 	url(r'replication/', include('replicate.urls', namespace='replication')),
-	url(r'^oauth/request_token$', oauth_views.request_token,      name='oauth_request_token'),
-	url(r'^oauth/authorize$',     oauth_views.user_authorization, name='oauth_user_authorization'),
-	url(r'^oauth/access_token$',  oauth_views.access_token,	      name='oauth_access_token'),
-	url(r'oauth/',  include('oauth.urls', namespace="oauth")),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
 	url(r'migrate/', include('migrateusers.urls', namespace='migrateusers')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
