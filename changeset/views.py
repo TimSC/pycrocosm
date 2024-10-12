@@ -1000,7 +1000,7 @@ def upload(request, changesetId):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	for i in range(request.data.blocks.size()):
+	for i in range(len(request.data.blocks)):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
 		ifunused = request.data.ifunused[i]
