@@ -1,6 +1,6 @@
 # Based on https://testdriven.io/blog/dockerizing-django-with-postgres-gunicorn-and-nginx/
 # pull official base image
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 # https://rtfm.co.ua/en/docker-configure-tzdata-and-timezone-during-build/
 ENV TZ=Europe/London
@@ -16,8 +16,8 @@ WORKDIR /usr/src/app
 
 RUN python3 -m venv /opt/env
 ENV PATH="/opt/env/bin:$PATH"
-RUN pip3 install --upgrade pip
-RUN pip3 install setuptools wheel
+RUN pip3 install pip==24.2
+RUN pip3 install setuptools==75.1.0 wheel==0.44.0
 COPY ./requirements.txt .
 RUN pip3 install -r requirements.txt
 
