@@ -181,8 +181,8 @@ TIMEOUT_SECONDS = 300
 STATUS_DATABASE = "online"
 STATUS_API = "online"
 STATUS_GPX = "online"
-POLICY_IMAGERY_BLACKLIST = [".*\.google(apis)?\..*/(vt|kh)[\?/].*([xyz]=.*){3}.*", 
-	"http://xdworld\.vworld\.kr:8080/.*", ".*\.here\.com[/:].*"]
+POLICY_IMAGERY_BLACKLIST = [".*\\.google(apis)?\\..*/(vt|kh)[\\?/].*([xyz]=.*){3}.*", 
+	"http://xdworld\\.vworld\\.kr:8080/.*", ".*\\.here\\.com[/:].*"]
 
 REPLICATE_EPOCH = datetime.datetime(2012, 9, 12)
 REPLICATE_OFFSET = 200
