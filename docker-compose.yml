@@ -4,6 +4,8 @@ services:
   web:
     build: ./
     command: python3 manage.py runserver 0.0.0.0:8000
+    #command: /opt/env/bin/python3 manage.py migrate
+    #command: sleep infinity
     #command: gunicorn pycrocosm.wsgi:application --bind 0.0.0.0:8000 -w 2
     volumes:
       - ./:/usr/src/app/
