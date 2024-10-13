@@ -6,7 +6,7 @@ version: 2.0
 jobs:
   build:
     docker:
-      - image: cimg/base:2020.12
+      - image: cimg/python:3.12.7
         environment:
           PGUSER: root
           POSTGRES_USER: postgres
@@ -26,7 +26,7 @@ jobs:
           name: Install apt packages
           command: |
             sudo apt -qq update
-            sudo apt install -y git cmake python3.8-dev libpqxx-dev libexpat1-dev python3-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev swig rapidjson-dev libprotobuf-dev protobuf-compiler
+            sudo apt install -y git cmake python3-dev libpqxx-dev libexpat1-dev python3-pip libboost-filesystem-dev libboost-program-options-dev build-essential libpcre3-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev swig rapidjson-dev libprotobuf-dev protobuf-compiler
 
       - run:
           name: Build pgmap
@@ -44,7 +44,7 @@ jobs:
       - run:
           name: Install postgis
           command: |
-            sudo apt install -y postgresql postgis postgresql-12-postgis-3 postgresql-12-postgis-3-scripts
+            sudo apt install -y postgresql postgis postgresql-14-postgis-3 postgresql-14-postgis-3-scripts
 
       - run:
           name: Wait for Postgres to start
