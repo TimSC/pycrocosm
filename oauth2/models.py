@@ -30,6 +30,8 @@ class Oauth2Application(models.Model):
 	permission_send_messages = models.BooleanField()
 	permission_openid = models.BooleanField()
 
+	disabled = models.BooleanField()
+
 	class Meta:
 		indexes = [
 			models.Index(fields=['user'], name='oauth2_app_client_id_idx'),
@@ -56,6 +58,8 @@ class Oauth2Authorization(models.Model):
 	permission_consume_messages = models.BooleanField()
 	permission_send_messages = models.BooleanField()
 	permission_openid = models.BooleanField()
+
+	disabled = models.BooleanField()
 
 	class Meta:
 		indexes = [

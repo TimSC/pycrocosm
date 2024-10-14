@@ -10,6 +10,10 @@ class TokenAuthentication(BaseAuthentication):
 
 	def authenticate(self, request):
 		
+		# Only allow oauth2 on secure connections (or if debug is enabled)
+		if not request.is_secure() and not settings.DEBUG:
+			return None
+
 		authHeader = request.headers.get(self.keyword)
 		if authHeader is None:
 			return None
@@ -24,21 +28,22 @@ class TokenAuthentication(BaseAuthentication):
 			decoded = jwt.decode(authHeaderSp[1], settings.SECRET_KEY, algorithms=["HS256"])
 		except jwt.exceptions.PyJWTError as err:
 			raise AuthenticationFailed()
-		
+
 		if decoded['type'] != 'token':
 			raise AuthenticationFailed()
 
 		authRecord = Oauth2Authorization.objects.filter(id=decoded['auth_id']).first()
 		if authRecord is None:
 			raise AuthenticationFailed()
+		if authRecord.disabled:
+			raise AuthenticationFailed()
 
 		appRecord = authRecord.parent_app
 		if appRecord is None:
 			raise AuthenticationFailed()
+		if appRecord.disabled:
+			raise AuthenticationFailed()			
 
 		scope = ['read_prefs', 'write_api']
 		return (authRecord.user, scope)
-
-	def authenticate_header(self, request):
-		return self.keyword
 
