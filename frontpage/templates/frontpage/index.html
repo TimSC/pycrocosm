@@ -16,8 +16,6 @@
 <p><a href="{% url 'accounts:logout' %}">Log out</a></p>
 
 {% else %}
-<p><a href="{% url 'register:index' %}">Register</a> <a href="{% url 'migrateusers:index' %}">Migrate fosm account</a></p>
-
 <p><a href="{% url 'accounts:login' %}">Log in</a></p>
 {% endif %}
 

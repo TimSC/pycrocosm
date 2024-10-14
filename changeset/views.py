@@ -21,7 +21,6 @@ import io
 from pycrocosm import common
 from querymap.views import p
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
-from migrateusers.models import LegacyAccount
 PY3 = sys.version_info > (3, 0)
 
 # Create your views here.
@@ -936,11 +935,7 @@ def list_changesets(request):
 			user = User.objects.get(username=display_name)
 			user_uid = user.id
 		except ObjectDoesNotExist:
-			try:
-				user = LegacyAccount.objects.get(username=display_name)
-				user_uid = user.uid			
-			except ObjectDoesNotExist:
-				return HttpResponseNotFound("User not found")
+			return HttpResponseNotFound("User not found")
 
 	closedAfter = -1
 	openedBefore = -1

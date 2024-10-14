@@ -42,7 +42,6 @@ urlpatterns = [
 	url(r'register/', include('register.urls', namespace="register")),
 	url(r'replication/', include('replicate.urls', namespace='replication')),
 	url(r'', include('frontpage.urls', namespace='frontpage')),
-	url(r'migrate/', include('migrateusers.urls', namespace='migrateusers')),
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
 	url(r'oauth2/', include('oauth2.urls', namespace='oauth2')),
 ]
