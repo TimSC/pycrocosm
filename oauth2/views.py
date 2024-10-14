@@ -3,7 +3,7 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFou
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from django.views.decorators.csrf import csrf_exempt
-from django.conf import settings#
+from django.conf import settings
 from django.contrib.auth.models import User
 import jwt
 import datetime
@@ -35,7 +35,10 @@ def token(request):
 	if app is None:
 		return HttpResponseNotFound("No such application")
 
-	decoded = jwt.decode(request.POST.get('code'), settings.SECRET_KEY, algorithms=["HS256"])
+	try:
+		decoded = jwt.decode(request.POST.get('code'), settings.SECRET_KEY, algorithms=["HS256"])
+	except jwt.exceptions.PyJWTError as err:
+		return HttpResponseBadRequest("Code incorrect")
 
 	if decoded['type'] != "app":
 		return HttpResponseBadRequest("Code incorrect")	

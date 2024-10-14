@@ -9,7 +9,8 @@ import io
 from django.shortcuts import render
 from django.http import HttpResponse
 from django.conf import settings
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 
 # Create your views here.
 
@@ -56,6 +57,7 @@ def capabilities(request):
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @api_view(['GET'])
+@permission_classes((IsAuthenticatedOrReadOnly, ))
 def permissions(request):
 	root = ET.Element('osm')
 	doc = ET.ElementTree(root)
@@ -63,6 +65,11 @@ def permissions(request):
 	root.attrib["generator"] = settings.GENERATOR
 
 	permissions = ET.SubElement(root, "permissions")
+
+	if request.auth is not None:
+		for perm in request.auth:
+			pe = ET.SubElement(permissions, "permission")
+			pe.attrib["name"] = perm
 
 	sio = io.BytesIO()
 	doc.write(sio, "UTF-8")
