@@ -1,6 +1,8 @@
 <html>
 <body>
 
+<h3>Applications</h3>
+
 <table border="2" margin="2">
 <tr><th>Name</th><th>Client ID</th><th>Client secret</th></tr>
 {% for app in apps %}
@@ -31,6 +33,8 @@ Permissions<br/>
 {% csrf_token %}
 <input type="submit"/>
 </form>
+
+<p><a href="{% url 'frontpage:index' %}">Front page</a></p>
 
 </body>
 </html>

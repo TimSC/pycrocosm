@@ -1,7 +1,5 @@
 <p>Front page</p>
 
-<p>This server is current in beta. Please test functionality but any edits will probably be lost eventually.</p>
-
 <p>Database status: {{db_status}}</p>
 
 <p>Api: <a href="{% url 'api:apibase' %}">{% url 'api:apibase' %}</a></p>
@@ -11,7 +9,7 @@
 
 <p>Hi {{ user.username }}</p>
 
-<p><a href="{% url 'oauth:oauth_manage' %}">OAuth settings</a></p>
+<p><a href="{% url 'oauth2:applications' %}">OAuth2 settings</a></p>
 
 <p><a href="{% url 'accounts:password_change' %}">Change password</a></p>
 
