@@ -1,0 +1,34 @@
+<html>
+<body>
+
+<h3>Application</h3>
+
+<table border="2" margin="2">
+<tr><td>Name</td><td>{{app.name}}</td></tr>
+<tr><td>Client ID</td><td>{{app.client_id}}</td></tr>
+<tr><td>Client secret</td><td>{{app.client_secret}}</td></tr>
+
+</table>
+
+<h3>Authorizations</h3>
+
+{% if token != None %}
+<p>New access token (keep a note of it): {{token}}</p>
+{% endif %}
+
+<table border="2" margin="2">
+<tr><th>Created at</th><th>User</th></tr>
+{% for auth in auths %}
+<tr><td>{{auth.created_at}}</td><td>{{auth.user.id}}</td></tr>
+{% endfor %}
+</table>
+
+<form method="POST">
+<input type="submit" name="action" value="Create Authorization"/>
+{% csrf_token %}
+</form>
+
+<p><a href="/oauth2/applications">Applications</a></p>
+
+</body>
+</html>

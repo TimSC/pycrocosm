@@ -1,0 +1,36 @@
+<html>
+<body>
+
+<table border="2" margin="2">
+<tr><th>Name</th><th>Client ID</th><th>Client secret</th></tr>
+{% for app in apps %}
+<tr><td><a href="/oauth2/application/{{app.client_id}}">{{app.name}}</a></td><td>{{app.client_id}}</td><td>{{app.client_secret}}</td></tr>
+{% endfor %}
+</table>
+
+<h3>Register an application</h3>
+<form method="POST">
+Name <input type="text" name="name"/><br/>
+Redirect URIs <textarea name="redirects" rows="4" cols="50" disabled="true">urn:ietf:wg:oauth:2.0:oob</textarea><br/>
+
+<!--
+Confidential application? <input type="checkbox"/><br/>
+Permissions<br/>
+<input type="checkbox"/> Read user preferences<br/>
+<input type="checkbox"/> Modify user preferences<br/>
+<input type="checkbox"/> Create diary entries, comments and make friends<br/>
+<input type="checkbox"/> Modify the map<br/>
+<input type="checkbox"/> Read private GPS traces<br/>
+<input type="checkbox"/> Upload GPS traces<br/>
+<input type="checkbox"/> Modify notes<br/>
+<input type="checkbox"/> Redact map data<br/>
+<input type="checkbox"/> Read, update status and delete user messages<br/>
+<input type="checkbox"/> Send private messages to other users<br/>
+<input type="checkbox"/> Sign-in using OpenStreetMap<br/>
+-->
+{% csrf_token %}
+<input type="submit"/>
+</form>
+
+</body>
+</html>

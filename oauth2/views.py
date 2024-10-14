@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.utils.crypto import get_random_string
 import jwt
 import datetime
 import time
@@ -25,6 +26,35 @@ def authorize(request):
 
 	return HttpResponse(payload, content_type='text/plain')
 	#return render(request, 'frontpage/index.html', {'db_status': dbStatus})
+
+def create_authorization(user, app):
+
+	scope = 'read_prefs write_api'
+
+	auth = Oauth2Authorization.objects.create(parent_app = app,
+		user = user,
+		permission_read_prefs = True,
+		permission_write_prefs = False,
+		permission_write_diary = False,
+		permission_write_api = True,
+		permission_read_gpx = False,
+		permission_write_gpx = False,
+		permission_write_notes = False,
+		permission_write_redactions = False,
+		permission_consume_messages = False,
+		permission_send_messages = False,
+		permission_openid = False,
+		disabled = False)
+
+	token = jwt.encode({"type": "token", 
+		"auth_id": auth.id, 
+		"user_id": user.id, 
+		"client_id": app.client_id, 
+		'scope': scope,
+		'created_at': datetime.datetime.now().isoformat()}, 
+		settings.SECRET_KEY, algorithm="HS256")
+
+	return token
 
 @csrf_exempt
 @api_view(['POST'])
@@ -52,29 +82,7 @@ def token(request):
 	if user is None:
 		return HttpResponseNotFound("No such user")
 
-	scope = 'read_prefs write_api'
-
-	auth = Oauth2Authorization.objects.create(parent_app = app,
-		user = user,
-		permission_read_prefs = True,
-		permission_write_prefs = False,
-		permission_write_diary = False,
-		permission_write_api = True,
-		permission_read_gpx = False,
-		permission_write_gpx = False,
-		permission_write_notes = False,
-		permission_write_redactions = False,
-		permission_consume_messages = False,
-		permission_send_messages = False,
-		permission_openid = False)
-
-	token = jwt.encode({"type": "token", 
-		"auth_id": auth.id, 
-		"user_id": user.id, 
-		"client_id": app.client_id, 
-		'scope': scope,
-		'created_at': datetime.datetime.now().isoformat()}, 
-		settings.SECRET_KEY, algorithm="HS256")
+	token = create_authorization(user, app)
 
 	out = {'access_token': token, 
 		'token_type': 'Bearer', 
@@ -82,4 +90,56 @@ def token(request):
 		'created_at': int(time.time())}
 
 	return JsonResponse(out)
+
+@permission_classes((IsAuthenticated, ))
+def applications(request):
+
+	if request.method == "POST":
+		
+		app = Oauth2Application.objects.create(
+
+			name = request.POST.get("name"),
+
+			user = request.user,
+			client_id = get_random_string(32),
+			client_secret = get_random_string(32),
+			redirect_uris = request.POST.get("redirects", "urn:ietf:wg:oauth:2.0:oob"),
+
+			confidential = False,
+
+			permission_read_prefs = True,
+			permission_write_prefs = True,
+			permission_write_diary = True,
+			permission_write_api = True,
+			permission_read_gpx = True,
+			permission_write_gpx = True,
+			permission_write_notes = True,
+			permission_write_redactions = True,
+			permission_consume_messages = True,
+			permission_send_messages = True,
+			permission_openid = True,
+
+			disabled = False)
+
+	apps = Oauth2Application.objects.filter(user=request.user).all()
+
+	return render(request, 'oauth2/applications.html', {'apps': apps})
+
+@permission_classes((IsAuthenticated, ))
+def application_detail(request, client_id):
+
+	app = Oauth2Application.objects.filter(client_id=client_id).first()
+	if app is None:
+		return HttpResponseNotFound("No such application")
+	
+	token = None
+	if request.method == "POST":
+		action = request.POST.get("action")
+		if action == "Create Authorization":
+			token = create_authorization(request.user, app)
+
+	auths = Oauth2Authorization.objects.filter(parent_app=app).all()
+	
+	return render(request, 'oauth2/application_detail.html', 
+		{'app': app, 'auths': auths, 'token': token})
 

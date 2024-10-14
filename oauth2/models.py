@@ -12,7 +12,7 @@ class Oauth2Application(models.Model):
 	name = models.CharField(max_length=255)
 
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
-	client_id = models.CharField(max_length=255)
+	client_id = models.CharField(max_length=255, unique=True)
 	client_secret = models.CharField(max_length=255)
 	redirect_uris = models.TextField()
 
