@@ -4,3 +4,4 @@ defusedxml==0.7.1
 psycopg2-binary==2.9.9
 gunicorn==23.0.0
 tzdata
+pyjwt[crypto]==2.9.0

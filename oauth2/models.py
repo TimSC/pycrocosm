@@ -6,6 +6,9 @@ from django.contrib.auth.models import User
 class Oauth2Application(models.Model):
 	id = models.BigAutoField(primary_key=True)
 
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
+
 	name = models.CharField(max_length=255)
 
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
@@ -35,6 +38,9 @@ class Oauth2Application(models.Model):
 
 class Oauth2Authorization(models.Model):
 	id = models.BigAutoField(primary_key=True)
+
+	created_at = models.DateTimeField(auto_now_add=True)
+	updated_at = models.DateTimeField(auto_now=True)
 
 	parent_app = models.ForeignKey(Oauth2Application, on_delete=models.CASCADE)
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
