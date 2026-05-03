@@ -32,8 +32,7 @@ RUN protoc -I=proto proto/fileformat.proto --cpp_out=pbf
 
 WORKDIR /usr/src/app/pgmap
 
-RUN python3 setup.py build
-RUN python3 setup.py install
+RUN pip install .
 
 WORKDIR /usr/src/app
 
