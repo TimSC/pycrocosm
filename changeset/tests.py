@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 from __future__ import print_function
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
@@ -656,6 +656,7 @@ class ChangesetUploadTestCase(TestCase):
 		</osmChange>""")
 		return "".join(xml)
 
+	@override_settings(WAYNODES_MAXIMUM=100, CHANGESETS_MAXIMUM_ELEMENTS=200, XML_UPLOAD_MAXIMUM_BYTES=1000000)
 	def test_upload_create_way_with_max_nodes(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
@@ -663,8 +664,9 @@ class ChangesetUploadTestCase(TestCase):
 
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, 
 			content_type='text/xml')
-		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response.status_code, 200, response.content)
 
+	@override_settings(WAYNODES_MAXIMUM=100, CHANGESETS_MAXIMUM_ELEMENTS=200, XML_UPLOAD_MAXIMUM_BYTES=1000000)
 	def test_upload_create_way_too_many_nodes(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
@@ -1409,4 +1411,3 @@ class ChangesetAutoCloseTestCase(TestCase):
 		if not ok:
 			print (errStr.errStr)
 		t.Commit()
-

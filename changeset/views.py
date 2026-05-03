@@ -143,14 +143,16 @@ def upload_check_way_mems(action, objs):
 		if action != "delete" and len(obj.refs) < 2:
 			return HttpResponseBadRequest("Way has too few nodes", content_type="text/plain")
 		if len(obj.refs) > settings.WAYNODES_MAXIMUM:
-			return HttpResponseBadRequest("Way has too many nodes", content_type="text/plain")
+			return HttpResponseBadRequest("WAYNODES_MAXIMUM limit exceeded; maximum is {}, got {}".format(
+				settings.WAYNODES_MAXIMUM, len(obj.refs)), content_type="text/plain")
 	return None
 
 def upload_check_relation_mems(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
 		if len(obj.refIds) > settings.RELATION_MEMBERS_MAXIMUM:
-			return HttpResponseBadRequest("Relation has too many members", content_type="text/plain")
+			return HttpResponseBadRequest("RELATION_MEMBERS_MAXIMUM limit exceeded; maximum is {}, got {}".format(
+				settings.RELATION_MEMBERS_MAXIMUM, len(obj.refIds)), content_type="text/plain")
 	return None
 
 def upload_check_modify(objs):
@@ -1028,7 +1030,8 @@ def upload(request, changesetId):
 		elementCount += block.nodes.size() + block.ways.size() + block.relations.size()
 		if elementCount > settings.CHANGESETS_MAXIMUM_ELEMENTS:
 			common.abort_transaction(t)
-			return HttpResponseBadRequest("Changeset upload has too many elements", content_type="text/plain")
+			return HttpResponseBadRequest("CHANGESETS_MAXIMUM_ELEMENTS limit exceeded; maximum is {}, got {}".format(
+				settings.CHANGESETS_MAXIMUM_ELEMENTS, elementCount), content_type="text/plain")
 
 		ret = upload_block(action, block, changesetId, t, responseRoot, 
 			request.user.id, request.user.username, timestamp,
