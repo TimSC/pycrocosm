@@ -3,17 +3,21 @@
 
 <h3>Applications</h3>
 
+{% if new_client_secret != None %}
+<p style="overflow-wrap: break-word; word-wrap: break-word;">New client secret (keep a note of it): {{new_client_secret}}</p>
+{% endif %}
+
 <table border="2" margin="2">
-<tr><th>Name</th><th>Client ID</th><th>Client secret</th></tr>
+<tr><th>Name</th><th>Client ID</th></tr>
 {% for app in apps %}
-<tr><td><a href="/oauth2/application/{{app.client_id}}">{{app.name}}</a></td><td>{{app.client_id}}</td><td>{{app.client_secret}}</td></tr>
+<tr><td><a href="/oauth2/application/{{app.client_id}}">{{app.name}}</a></td><td>{{app.client_id}}</td></tr>
 {% endfor %}
 </table>
 
 <h3>Register an application</h3>
 <form method="POST">
 Name <input type="text" name="name"/><br/>
-Redirect URIs <textarea name="redirects" rows="4" cols="50" disabled="true">urn:ietf:wg:oauth:2.0:oob</textarea><br/>
+Redirect URIs <textarea name="redirects" rows="4" cols="50">urn:ietf:wg:oauth:2.0:oob</textarea><br/>
 
 <!--
 Confidential application? <input type="checkbox"/><br/>

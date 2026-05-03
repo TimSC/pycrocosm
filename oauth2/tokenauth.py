@@ -4,6 +4,9 @@ from rest_framework.exceptions import AuthenticationFailed
 from django.conf import settings
 from .models import Oauth2Application, Oauth2Authorization
 
+def oauth2_signing_secret():
+	return getattr(settings, 'OAUTH2_JWT_SECRET', settings.SECRET_KEY)
+
 class TokenAuthentication(BaseAuthentication):
 
 	keyword = 'Authorization'
@@ -25,7 +28,7 @@ class TokenAuthentication(BaseAuthentication):
 			return None
 
 		try:
-			decoded = jwt.decode(authHeaderSp[1], settings.SECRET_KEY, algorithms=["HS256"])
+			decoded = jwt.decode(authHeaderSp[1], oauth2_signing_secret(), algorithms=["HS256"])
 		except jwt.exceptions.PyJWTError as err:
 			raise AuthenticationFailed()
 
@@ -46,4 +49,3 @@ class TokenAuthentication(BaseAuthentication):
 
 		scope = ['read_prefs', 'write_api']
 		return (authRecord.user, scope)
-
