@@ -4,6 +4,7 @@ from __future__ import print_function
 
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound
+from django.conf import settings
 from rest_framework.decorators import api_view
 
 from querymap.views import p
@@ -19,16 +20,17 @@ def index(request, objType):
 		return HttpResponseBadRequest("Incorrect arguments in URL")
 
 	try:
-		objIds = map(int, request.GET[objType].split(","))
+		objIds = list(map(int, request.GET[objType].split(",")))
 	except ValueError as err:
 		return HttpResponseBadRequest(err)
+	if len(objIds) > settings.MULTIFETCH_MAXIMUM_IDS:
+		return HttpResponseBadRequest("Too many object IDs")
 
 	t = p.GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData()
-	t.GetObjectsById(objType[:-1], list(objIds), osmData);
+	t.GetObjectsById(objType[:-1], objIds, osmData);
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
 	osmData.StreamTo(enc)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-

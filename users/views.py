@@ -12,16 +12,11 @@ from rest_framework.permissions import IsAuthenticated
 from .models import UserData, UserPreference
 
 import xml.etree.ElementTree as ET
-from defusedxml.ElementTree import parse
 from rest_framework.parsers import BaseParser
+from pycrocosm.parsers import DefusedXmlParser
 
 import io
 import sys
-
-class DefusedXmlParser(BaseParser):
-	media_type = 'application/xml'
-	def parse(self, stream, media_type, parser_context):
-		return parse(stream)
 
 class PlainTextParser(BaseParser):
 	media_type = 'text/plain'
@@ -149,4 +144,3 @@ def preferences_put(request, key):
 @api_view(['GET', 'POST'])
 def not_implemented(request):
 	return HttpResponse("Not implemented", status=501)
-

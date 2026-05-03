@@ -2,6 +2,7 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
 from querymap.views import p
 import pgmap
 import io
@@ -84,16 +85,30 @@ def xapi(request, queryStr):
 	#Parse square bracket predicates
 	bbox = None
 	keyPredicate = []
+	queryKey = None
+	queryValue = None
 	for frag in fragments:
 		fragParts = ParseFragment(frag)
 		if fragParts[0] == "bbox" and len(fragParts) >= 2:
-			bbox = list(map(float, fragParts[1].split(",")))
+			try:
+				bbox = list(map(float, fragParts[1].split(",")))
+			except ValueError:
+				return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
 		elif len(fragParts) >= 2:
 			keyPredicate.append(fragParts[:2])
 
 	if bbox is not None and len(bbox) != 4:
 			return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
-	if bbox is None: bbox = []
+
+	if bbox is not None:
+		if (bbox[0] < -180.0 or bbox[0] > 180.0 or
+			bbox[1] < -90.0 or bbox[1] > 90.0 or
+			bbox[2] < -180.0 or bbox[2] > 180.0 or
+			bbox[3] < -90.0 or bbox[3] > 90.0 or
+			bbox[0] > bbox[2] or bbox[1] > bbox[3]):
+			return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
+		if (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) > settings.OVERPASS_AREA_MAXIMUM:
+			return HttpResponseBadRequest("Bbox is too large", content_type="text/plain")
 
 	if len(keyPredicate) >= 1:
 		queryKey = keyPredicate[0][0]
@@ -101,6 +116,10 @@ def xapi(request, queryStr):
 
 	if bbox is None and queryKey is None:
 		return HttpResponseBadRequest("Specify either a bbox or a query key (at least)", content_type="text/plain")
+	if bbox is None: bbox = []
+	if queryKey is None:
+		queryKey = ""
+		queryValue = ""
 
 	if queryValue == '*': queryValue = ''
 
@@ -126,4 +145,3 @@ def xapi1(request, queryStr):
 @api_view(['GET'])
 def xapi2(request):
 	return xapi(request, request.META['QUERY_STRING'])
-

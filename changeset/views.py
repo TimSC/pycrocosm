@@ -146,6 +146,13 @@ def upload_check_way_mems(action, objs):
 			return HttpResponseBadRequest("Way has too many nodes", content_type="text/plain")
 	return None
 
+def upload_check_relation_mems(objs):
+	for i in range(objs.size()):
+		obj = objs[i]
+		if len(obj.refIds) > settings.RELATION_MEMBERS_MAXIMUM:
+			return HttpResponseBadRequest("Relation has too many members", content_type="text/plain")
+	return None
+
 def upload_check_modify(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
@@ -366,6 +373,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		return True #Skip this block
 
 	ret = upload_check_way_mems(action, block.ways)
+	if ret is not None: return ret
+	ret = upload_check_relation_mems(block.relations)
 	if ret is not None: return ret
 
 	#Check changeset value is consistent
@@ -1010,11 +1019,16 @@ def upload(request, changesetId):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
+	elementCount = 0
 	for i in range(request.data.blocks.size()):
 		action = request.data.actions[i]
 		block = request.data.blocks[i]
 		ifunused = request.data.ifunused[i]
 		timestamp = time.time()
+		elementCount += block.nodes.size() + block.ways.size() + block.relations.size()
+		if elementCount > settings.CHANGESETS_MAXIMUM_ELEMENTS:
+			common.abort_transaction(t)
+			return HttpResponseBadRequest("Changeset upload has too many elements", content_type="text/plain")
 
 		ret = upload_block(action, block, changesetId, t, responseRoot, 
 			request.user.id, request.user.username, timestamp,
@@ -1047,5 +1061,3 @@ def subscribe(request, changesetId):
 @permission_classes((IsAuthenticated, ))
 def unsubscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
-
-

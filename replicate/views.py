@@ -242,6 +242,8 @@ def customdiff(request):
 		return HttpResponseBadRequest("end cannot be before start")
 	if endTs > now:
 		return HttpResponseBadRequest("end cannot be in the future")
+	if (endTs - startTs).total_seconds() > settings.REPLICATE_DIFF_MAXIMUM_SECONDS:
+		return HttpResponseBadRequest("requested diff range is too large")
 
 	t = p.GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
@@ -424,5 +426,4 @@ def query_edit_activity_by_timestamp(request):
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-
 
