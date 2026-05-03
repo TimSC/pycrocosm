@@ -7,7 +7,7 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFou
 from django.conf import settings
 from rest_framework.decorators import api_view
 
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
 import pgmap
 import io
@@ -26,7 +26,7 @@ def index(request, objType):
 	if len(objIds) > settings.MULTIFETCH_MAXIMUM_IDS:
 		return HttpResponseBadRequest("Too many object IDs")
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType[:-1], objIds, osmData);
 

@@ -7,7 +7,7 @@ from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
 
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from querymap.tests import create_node, create_way, DecodeOsmdataResponse
 from changeset.tests import CreateTestChangeset
 import gc

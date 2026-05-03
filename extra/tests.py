@@ -11,7 +11,7 @@ from changeset.tests import CreateTestChangeset, GetObj, ParseOsmDiffToDict
 from querymap.tests import DecodeOsmdataResponse
 from changeset.views import GetOsmDataIndex
 from defusedxml.ElementTree import parse, fromstring
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 import pgmap
 import sys
 import gc

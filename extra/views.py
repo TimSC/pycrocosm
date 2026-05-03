@@ -6,7 +6,7 @@ from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.dateparse import parse_datetime
 from django.contrib.auth.models import User
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 from pycrocosm import common
@@ -29,7 +29,7 @@ def most_active_users(request):
 		if timearg < timeNow - 31*24*60*60:
 			return HttpResponseBadRequest("Timestamp too far into the past (must be within 31 days)", content_type="text/plain")
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	uids = pgmap.vectori64()
 	objectCount = pgmap.vectorvectori64()

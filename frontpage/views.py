@@ -4,12 +4,12 @@ from __future__ import print_function
 
 from django.shortcuts import render, reverse
 import pgmap
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 
 # Create your views here.
 
 def index(request):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	value = int(t.GetMetaValue("readonly", errStr))

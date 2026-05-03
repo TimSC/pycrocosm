@@ -3,7 +3,7 @@ from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFou
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 import pgmap
 import io
 from rest_framework.decorators import api_view
@@ -123,7 +123,7 @@ def xapi(request, queryStr):
 
 	if queryValue == '*': queryValue = ''
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.XapiQuery(objectType, queryKey, queryValue, bbox, osmData)

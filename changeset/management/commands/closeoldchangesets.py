@@ -4,7 +4,7 @@ from __future__ import print_function
 from django.core.management.base import BaseCommand, CommandError
 import pgmap
 import time
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 
 class Command(BaseCommand):
 	help = 'Close old changesets'
@@ -13,7 +13,7 @@ class Command(BaseCommand):
 		pass
 
 	def handle(self, *args, **options):
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		errStr = pgmap.PgMapError()
 
 		whereBeforeTimestamp = int(time.time()) - (24 * 60 * 60)

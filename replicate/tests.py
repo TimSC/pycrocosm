@@ -8,7 +8,7 @@ from django.urls import reverse
 from django.contrib.auth.models import User
 from django.conf import settings
 
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 import replicate.views as rv
 import querymap.tests as qmt
 import pgmap
@@ -59,7 +59,7 @@ class ReplicateTestCase(TestCase):
 		self.client.login(username=self.username, password=self.password)
 		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			t.Abort()

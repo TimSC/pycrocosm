@@ -19,7 +19,7 @@ import pgmap
 import time
 import io
 from pycrocosm import common
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
 PY3 = sys.version_info > (3, 0)
 
@@ -800,7 +800,7 @@ def create(request):
 	changeset.uid = request.user.id
 	changeset.username = request.user.username
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 
 	changeset.open_timestamp = int(time.time())
 
@@ -820,9 +820,9 @@ def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
 
 	if request.method == 'GET':
-		t = p.GetTransaction("ACCESS SHARE")
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
 	else:
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 	
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -878,7 +878,7 @@ def changeset(request, changesetId):
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 def close(request, changesetId):
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
@@ -910,7 +910,7 @@ def close(request, changesetId):
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
 def download(request, changesetId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	
 	osmChange = pgmap.OsmChange()
 	errStr = pgmap.PgMapError()
@@ -968,7 +968,7 @@ def list_changesets(request):
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	ok = t.GetChangesets(changesets, int(user_uid), closedAfter, openedBefore, 
 		isOpenOnly, isClosedOnly, errStr)
 
@@ -986,7 +986,7 @@ def list_changesets(request):
 def upload(request, changesetId):
 
 	#Check changeset is open and for this user
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	
 	changesetData = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()

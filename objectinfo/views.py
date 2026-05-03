@@ -3,12 +3,12 @@ from __future__ import unicode_literals
 from __future__ import print_function
 
 from django.shortcuts import render
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 import pgmap
 import datetime
 
 def history(request):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	uid = 0 #Corresponds to null user ID for no filtering
 
 	changesets = pgmap.vectorchangeset()
@@ -26,7 +26,7 @@ def history(request):
 	return render(request, 'objectinfo/history.html', {'changesets': changesetLi})
 
 def changeset(request, changesetId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	changeset = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()

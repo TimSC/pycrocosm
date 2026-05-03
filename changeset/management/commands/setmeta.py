@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand, CommandError
 import pgmap
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 
 class Command(BaseCommand):
 	help = 'Set metadata variable'
@@ -10,7 +10,7 @@ class Command(BaseCommand):
 		parser.add_argument('value', nargs='+', type=str)
 
 	def handle(self, *args, **options):
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		errStr = pgmap.PgMapError()
 
 		ok = t.SetMetaValue(options['key'][0], 

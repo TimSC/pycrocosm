@@ -18,7 +18,7 @@ import time
 import datetime
 import random
 from changeset import views
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from xml.sax.saxutils import escape
 from querymap.tests import create_node, create_way, create_relation, modify_node, modify_way, modify_relation
 from changeset.management.commands import closeoldchangesets
@@ -64,7 +64,7 @@ def GetObj(p, objType, objId):
 def CreateTestChangeset(user, tags=None, is_open=True, bbox=None, open_timestamp=None, close_timestamp=None):
 	if tags is None:
 		tags = {'foo': 'bar'}
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	cs = pgmap.PgChangeset()
 	errStr = pgmap.PgMapError()
 	for k in tags:
@@ -160,7 +160,7 @@ class ChangesetTestCase(TestCase):
 			</osm>"""
 
 	def get_test_changeset(self, cid):
-		t = p.GetTransaction("ACCESS SHARE")
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cid, cs2, errStr)
@@ -283,7 +283,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
-		t = p.GetTransaction("ACCESS SHARE")
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cs.objId, cs2, errStr)
@@ -297,7 +297,7 @@ class ChangesetTestCase(TestCase):
 		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
 		self.assertEqual(response.status_code, 200)
 
-		t = p.GetTransaction("ACCESS SHARE")
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
 		cs2 = pgmap.PgChangeset()
 		errStr = pgmap.PgMapError()
 		ret = t.GetChangeset(cs.objId, cs2, errStr)
@@ -328,7 +328,7 @@ class ChangesetTestCase(TestCase):
 		u.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)
@@ -375,7 +375,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(int(ndiff.attrib["new_id"])>0, True)
 		
 		idOnServer = int(ndiff.attrib["new_id"])
-		dbNode = GetObj(p, "node", idOnServer)
+		dbNode = GetObj(get_pgmap(), "node", idOnServer)
 
 		self.assertEqual(dbNode is not None, True)
 		self.assertEqual(dbNode.metaData.username, self.user.username)
@@ -434,7 +434,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(int(ndiff.attrib["new_version"]), node.metaData.version+1)
 		self.assertEqual(int(ndiff.attrib["new_id"]), node.objId)
 
-		dbNode = GetObj(p, "node", node.objId)
+		dbNode = GetObj(get_pgmap(), "node", node.objId)
 		self.assertEqual(abs(dbNode.lat-50.80)<1e-6, True)
 		self.assertEqual(abs(dbNode.lon+1.05)<1e-6, True)
 		self.assertEqual(len(dbNode.tags), 1)
@@ -523,7 +523,7 @@ class ChangesetUploadTestCase(TestCase):
 		ndiff = xml[0]
 		self.assertEqual(int(ndiff.attrib["old_id"]), node.objId)
 
-		dbNode = GetObj(p, "node", node.objId)
+		dbNode = GetObj(get_pgmap(), "node", node.objId)
 		self.assertEqual(dbNode is None, True)
 
 		# Check xml download is reasonable
@@ -538,7 +538,7 @@ class ChangesetUploadTestCase(TestCase):
 		ok, node = modify_node(node, node.metaData.version+1, self.user)
 		self.assertEqual(ok, True)
 
-		dbNode = GetObj(p, "node", node.objId)
+		dbNode = GetObj(get_pgmap(), "node", node.objId)
 		self.assertEqual(dbNode is not None, True)
 
 		#Check bbox of object
@@ -617,7 +617,7 @@ class ChangesetUploadTestCase(TestCase):
 		newWayId, newWayVersion = diffDict["way"][-434]
 
 		self.assertEqual(newWayVersion, 1)
-		newWay = GetObj(p, "way", newWayId)
+		newWay = GetObj(get_pgmap(), "way", newWayId)
 		self.assertEqual(newWay is not None, True)
 		for ref in list(newWay.refs):
 			self.assertEqual(ref > 0, True)
@@ -737,7 +737,7 @@ class ChangesetUploadTestCase(TestCase):
 		xml = fromstring(response.content)
 		diffDict = ParseOsmDiffToDict(xml)
 		
-		way = GetObj(p, "way", diffDict["way"][-3911][0])
+		way = GetObj(get_pgmap(), "way", diffDict["way"][-3911][0])
 		wayRefs = list(way.refs)
 		for diffId, diffVer in diffDict["node"].values():
 			self.assertEqual(diffId in wayRefs, True)
@@ -746,7 +746,7 @@ class ChangesetUploadTestCase(TestCase):
 		wayTags = dict(way.tags)
 		self.assertEqual(wayTags, {'ghi': 'jkl'})
 
-		rel1 = GetObj(p, "relation", diffDict["relation"][-3933][0])
+		rel1 = GetObj(get_pgmap(), "relation", diffDict["relation"][-3933][0])
 		rel1Refs = zip(list(rel1.refTypeStrs), list(rel1.refIds), list(rel1.refRoles))
 		self.assertEqual(("way", diffDict["way"][-3911][0], "lmn") in rel1Refs, True)
 		self.assertEqual(("node", diffDict["node"][-3909][0], "opq") in rel1Refs, True)
@@ -754,7 +754,7 @@ class ChangesetUploadTestCase(TestCase):
 		rel1Tags = dict(rel1.tags)
 		self.assertEqual(rel1Tags, {'rst': 'uvw'})
 
-		rel2 = GetObj(p, "relation", diffDict["relation"][-3934][0])
+		rel2 = GetObj(get_pgmap(), "relation", diffDict["relation"][-3934][0])
 		rel2Refs = zip(list(rel2.refTypeStrs), list(rel2.refIds), list(rel2.refRoles))
 		self.assertEqual(("way", diffDict["way"][-3911][0], "lmn") in rel2Refs, True)
 		self.assertEqual(("relation", diffDict["relation"][-3933][0], "opq") in rel2Refs, True)
@@ -1325,7 +1325,7 @@ class ChangesetUploadTestCase(TestCase):
 		u2.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)
@@ -1404,10 +1404,9 @@ class ChangesetAutoCloseTestCase(TestCase):
 		u2.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)
 		t.Commit()
-
 

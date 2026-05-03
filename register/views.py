@@ -6,7 +6,7 @@ from django.contrib.auth import login, authenticate
 from django.shortcuts import render, redirect
 from django.http import HttpResponse
 from . import forms
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
 
 # Create your views here.
@@ -17,7 +17,7 @@ def index(request):
 	if request.method == 'POST':
 		form = forms.RegisterForm(request.POST)
 		if form.is_valid():
-			t = p.GetTransaction("EXCLUSIVE")
+			t = get_pgmap().GetTransaction("EXCLUSIVE")
 			try:
 				cid = t.GetAllocatedId(b"uid")
 				userObj = form.save(commit=False)

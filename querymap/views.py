@@ -11,35 +11,20 @@ from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from pycrocosm import common
+from pycrocosm.mapdb import get_pgmap
 import pgmap
 import io
 import random
-import sys
 import time
-
-TEST = 'test' in sys.argv
-if TEST:
-	ACTIVE_DB = "PREFIX_TEST"
-else:
-	ACTIVE_DB = "PREFIX_MOD"
-
-def Escape(st):
-	return st.replace('"','\\"').replace("'","\\'")
-
-mapDbSettings = settings.MAP_DATABASE
-connectionString = ("dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]), 
-	Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"])))
-p = pgmap.PgMap(connectionString, 
-	str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]), 
-	str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]))
 
 class MapQueryResponse(object):
 	def __init__(self, bbox):
 		self.sio = io.BytesIO()
 		self.enc = pgmap.PyOsmXmlEncode(self.sio, common.xmlAttribs)
 		
-		#Don't let transaction object go out of scope while query is running
-		self.t = p.GetTransaction("ACCESS SHARE")
+		#Don't let map or transaction objects go out of scope while query is running
+		self.p = get_pgmap()
+		self.t = self.p.GetTransaction("ACCESS SHARE")
 		self.mapQuery = self.t.GetQueryMgr()
 		timestamp = time.time()
 		if self.mapQuery.Start(bbox, int(timestamp), self.enc)<0:
@@ -145,7 +130,7 @@ def historic_map(request):
 		response["Error"] = err
 		return response
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	sio = io.BytesIO()
 	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
@@ -154,4 +139,3 @@ def historic_map(request):
 	t.Commit()
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-

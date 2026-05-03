@@ -11,7 +11,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
 import pgmap
 import io
@@ -85,7 +85,7 @@ def element(request, objType, objId):
 
 	if request.method == 'GET':
 		osmData = pgmap.OsmData()
-		t = p.GetTransaction("ACCESS SHARE")
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
 		t.GetObjectsById(objType, pgmap.seti64([int(objId)]), osmData)
 
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
@@ -97,7 +97,7 @@ def element(request, objType, objId):
 		return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 	if request.method in ['PUT', 'DELETE']:
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		action = None
 		if request.method == "PUT": action = "modify"
 		if request.method == "DELETE": action = "delete"
@@ -123,7 +123,7 @@ def element(request, objType, objId):
 @permission_classes((IsAuthenticated, ))
 @parser_classes((OsmDataXmlParser,))
 def create(request, objType):
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 
 	obj = None
 	if objType == "node": obj = request.data.nodes[0]
@@ -139,7 +139,7 @@ def create(request, objType):
 
 @api_view(['GET'])
 def relations_for_obj(request, objType, objId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	#Check reference object exists
 	osmData = pgmap.OsmData()
@@ -157,7 +157,7 @@ def relations_for_obj(request, objType, objId):
 
 @api_view(['GET'])
 def ways_for_node(request, objType, objId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	#Check reference object exists
 	osmData = pgmap.OsmData()
@@ -175,7 +175,7 @@ def ways_for_node(request, objType, objId):
 
 @api_view(['GET'])
 def full_obj(request, objType, objId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetFullObjectById(objType, int(objId), osmData)
@@ -198,7 +198,7 @@ def full_obj(request, objType, objId):
 
 @api_view(['GET'])
 def object_version(request, objType, objId, objVer):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	idVerPair = pgmap.pairi64i64(int(objId), int(objVer))
@@ -214,7 +214,7 @@ def object_version(request, objType, objId, objVer):
 
 @api_view(['GET'])
 def object_history(request, objType, objId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	osmData = pgmap.OsmData()
 	t.GetObjectsHistoryById(objType, [int(objId)], osmData)
@@ -229,7 +229,7 @@ def object_history(request, objType, objId):
 
 @api_view(['GET'])
 def object_bbox(request, objType, objId):
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	bboxes = pgmap.mapi64vectord()
 	t.GetObjectBboxes(objType, [int(objId)], bboxes)

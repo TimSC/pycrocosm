@@ -7,7 +7,7 @@ from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
 
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 import pgmap
 import random
 import sys
@@ -56,7 +56,7 @@ def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = 
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 
@@ -93,7 +93,7 @@ def create_way(uid, username, refs, changeset = 1000, timestamp = None):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
@@ -131,7 +131,7 @@ def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("create", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
@@ -167,7 +167,7 @@ def modify_node(nodeIn, nodeCurrentVer, user, timestamp = None):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
@@ -201,7 +201,7 @@ def modify_way(wayIn, refsIn, tagsIn, user, timestamp = None):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
@@ -234,7 +234,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	createdWayIds = pgmap.mapi64i64()
 	createdRelationIds = pgmap.mapi64i64()
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("modify", data, t, createdNodeIds, createdWayIds, createdRelationIds)
 	if not ok:
 		t.Abort()
@@ -282,7 +282,7 @@ def delete_object(objIn, user, tIn = None, timestamp = None):
 	if tIn is not None:
 		t = tIn
 	else:
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 
 	#ok = t.StoreObjects(data, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking("delete", data, t, createdNodeIds, createdWayIds, createdRelationIds)
@@ -308,7 +308,7 @@ class QueryMapTestCase(TestCase):
 		self.client.login(username=self.username, password=self.password)
 		self.roi = [-1.0684204,50.8038735,-1.0510826,50.812877]
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		#t.SetMetaValue("useBboxInQuery", "1", errStr);
 		if not ok:
@@ -655,7 +655,7 @@ class QueryMapTestCase(TestCase):
 		nodeIdSet, wayIdSet, relationIdSet, nodeMems, wayMems, relationMems = self.find_object_ids(data)
 		candidateIds = list(relationIdSet.difference(relationMems))
 
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 
 		#Try to find a suitable candidate for deletion
 		for candidateId in candidateIds:
@@ -712,7 +712,7 @@ class QueryMapTestCase(TestCase):
 		u.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)

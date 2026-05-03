@@ -9,7 +9,7 @@ from django.utils.dateparse import parse_datetime, parse_date
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 #from defusedxml.ElementTree import fromstring
 import xml.etree.ElementTree as ET
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
 import pgmap
 import io
@@ -131,7 +131,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
 	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmc)
 
@@ -245,7 +245,7 @@ def customdiff(request):
 	if (endTs - startTs).total_seconds() > settings.REPLICATE_DIFF_MAXIMUM_SECONDS:
 		return HttpResponseBadRequest("requested diff range is too large")
 
-	t = p.GetTransaction("EXCLUSIVE")
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
 	t.GetReplicateDiff(int(time.mktime(startTs.timetuple())), int(time.mktime(endTs.timetuple())), osmc)
 
@@ -357,7 +357,7 @@ def edit_activity_to_et(activity, t):
 @api_view(['GET'])
 def get_edit_activity(request, objId):
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	activity = pgmap.EditActivity()
@@ -400,7 +400,7 @@ def query_edit_activity_by_timestamp(request):
 	else:
 		untilTimestamp = 0
 
-	t = p.GetTransaction("ACCESS SHARE")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	results = pgmap.vectorsharedptreditactivity()

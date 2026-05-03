@@ -9,7 +9,7 @@ from django.contrib.auth.models import User
 import sys
 import gc
 import pgmap
-from querymap.views import p
+from pycrocosm.mapdb import get_pgmap
 from changeset.tests import CreateTestChangeset, ParseOsmDiffToDict
 from defusedxml.ElementTree import parse, fromstring
 from querymap.tests import DecodeOsmdataResponse
@@ -116,7 +116,7 @@ class MultifetchTestCase(TestCase):
 		u.delete()
 
 		errStr = pgmap.PgMapError()
-		t = p.GetTransaction("EXCLUSIVE")
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		ok = t.ResetActiveTables(errStr)
 		if not ok:
 			print (errStr.errStr)
