@@ -113,6 +113,10 @@ Set server to read only mode:
 
      python manage.py setmeta readonly 1
 
+Run unit tests
+--------------
+
+     python manage.py test
 
 Highly loaded servers
 ---------------------

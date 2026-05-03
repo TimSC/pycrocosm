@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.contrib.auth.models import User
+from django.contrib.auth.decorators import login_required
 from django.utils.crypto import get_random_string
 import jwt
 import datetime
@@ -13,7 +14,7 @@ import time
 from .models import Oauth2Application, Oauth2Authorization
 
 # Create your views here.
-@permission_classes((IsAuthenticated, ))
+@login_required
 def authorize(request):
 
 	userRecord = request.user
@@ -91,7 +92,7 @@ def token(request):
 
 	return JsonResponse(out)
 
-@permission_classes((IsAuthenticated, ))
+@login_required
 def applications(request):
 
 	if request.method == "POST":
@@ -125,10 +126,10 @@ def applications(request):
 
 	return render(request, 'oauth2/applications.html', {'apps': apps})
 
-@permission_classes((IsAuthenticated, ))
+@login_required
 def application_detail(request, client_id):
 
-	app = Oauth2Application.objects.filter(client_id=client_id).first()
+	app = Oauth2Application.objects.filter(client_id=client_id, user=request.user).first()
 	if app is None:
 		return HttpResponseNotFound("No such application")
 	
@@ -142,4 +143,3 @@ def application_detail(request, client_id):
 	
 	return render(request, 'oauth2/application_detail.html', 
 		{'app': app, 'auths': auths, 'token': token})
-
