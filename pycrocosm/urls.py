@@ -25,6 +25,10 @@ except:
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from objectinfo import views as objectinfo_views
+from pycrocosm.ratelimit import rate_limit
+
+login_view = rate_limit("login", "LOGIN_RATE_LIMIT_REQUESTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS")(
+	auth_views.LoginView.as_view())
 
 urlpatterns = [
 	url(r'overpass/', include('overpass.urls', namespace='overpass')),
@@ -36,6 +40,7 @@ urlpatterns = [
 	url(r'api', include('api.urls', namespace='api')),
 	url(r'extra/', include('extra.urls', namespace='extra')),
 	url(r'admin/', admin.site.urls),
+	url(r'^accounts/login/$', login_view, name='login'),
 	url(r'^accounts/passwordsent/$', auth_views.PasswordResetDoneView.as_view(), name='password_reset_done'),
 	url(r'^accounts/passwordchanged/$', auth_views.PasswordChangeDoneView.as_view(), name='password_change_done'),
 	url(r'accounts/', include(('django.contrib.auth.urls', 'accounts'), namespace="accounts")),
@@ -45,5 +50,4 @@ urlpatterns = [
 	url(r'', include('objectinfo.urls', namespace='objectinfo')),
 	url(r'oauth2/', include('oauth2.urls', namespace='oauth2')),
 ]
-
 

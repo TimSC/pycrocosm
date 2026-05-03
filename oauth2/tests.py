@@ -4,6 +4,7 @@ from django.test import override_settings
 from django.urls import reverse
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.core.cache import cache
 import datetime
 import json
 
@@ -13,6 +14,7 @@ from .models import Oauth2Application, Oauth2AuthorizationCode
 
 class Oauth2ApplicationViewsTestCase(TestCase):
 	def setUp(self):
+		cache.clear()
 		self.password = "glass onion"
 		self.owner = User.objects.create_user("owner", "owner@example.com", self.password)
 		self.other = User.objects.create_user("other", "other@example.com", self.password)
@@ -150,6 +152,21 @@ class Oauth2ApplicationViewsTestCase(TestCase):
 		})
 
 		self.assertEqual(replay_response.status_code, 400)
+
+	@override_settings(OAUTH2_RATE_LIMIT_REQUESTS=1, OAUTH2_RATE_LIMIT_WINDOW_SECONDS=60)
+	def test_authorize_is_rate_limited(self):
+		client = Client()
+		client.login(username=self.owner.username, password=self.password)
+
+		first = client.get(reverse("oauth2:authorize"), {
+			"client_id": self.app.client_id,
+		})
+		second = client.get(reverse("oauth2:authorize"), {
+			"client_id": self.app.client_id,
+		})
+
+		self.assertEqual(first.status_code, 200)
+		self.assertEqual(second.status_code, 429)
 
 	@override_settings(OAUTH2_AUTH_CODE_SECONDS=-1)
 	def test_token_exchange_rejects_expired_code(self):

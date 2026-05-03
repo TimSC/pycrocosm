@@ -14,6 +14,7 @@ import time
 import uuid
 
 from .models import Oauth2Application, Oauth2Authorization, Oauth2AuthorizationCode
+from pycrocosm.ratelimit import rate_limit
 
 def oauth2_signing_secret():
 	return getattr(settings, 'OAUTH2_JWT_SECRET', settings.SECRET_KEY)
@@ -34,6 +35,7 @@ def get_request_redirect_uri(request, app):
 	return redirect_uri
 
 # Create your views here.
+@rate_limit("oauth2_authorize", "OAUTH2_RATE_LIMIT_REQUESTS", "OAUTH2_RATE_LIMIT_WINDOW_SECONDS", methods=('GET',))
 @login_required
 def authorize(request):
 
@@ -104,6 +106,7 @@ def create_authorization(user, app):
 
 @csrf_exempt
 @api_view(['POST'])
+@rate_limit("oauth2_token", "OAUTH2_RATE_LIMIT_REQUESTS", "OAUTH2_RATE_LIMIT_WINDOW_SECONDS")
 def token(request):
 	
 	userRecord = request.user
@@ -156,6 +159,7 @@ def token(request):
 
 	return JsonResponse(out)
 
+@rate_limit("oauth2_applications", "OAUTH2_RATE_LIMIT_REQUESTS", "OAUTH2_RATE_LIMIT_WINDOW_SECONDS")
 @login_required
 def applications(request):
 	new_client_secret = None
@@ -194,6 +198,7 @@ def applications(request):
 
 	return render(request, 'oauth2/applications.html', {'apps': apps, 'new_client_secret': new_client_secret})
 
+@rate_limit("oauth2_application_detail", "OAUTH2_RATE_LIMIT_REQUESTS", "OAUTH2_RATE_LIMIT_WINDOW_SECONDS")
 @login_required
 def application_detail(request, client_id):
 
