@@ -26,3 +26,8 @@ def get_utc_posix_timestamp(dt):
 	else:
 		return (dt - datetime.datetime(1970, 1, 1, tzinfo=pytz.utc)).total_seconds()
 
+def abort_transaction(t):
+	try:
+		t.Abort()
+	except Exception:
+		pass

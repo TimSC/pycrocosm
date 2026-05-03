@@ -819,8 +819,10 @@ def changeset(request, changesetId):
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
 	if ret == -1:
+		common.abort_transaction(t)
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
+		common.abort_transaction(t)
 		return HttpResponseServerError(errStr.errStr)
 
 	if request.method == 'GET':
@@ -831,6 +833,7 @@ def changeset(request, changesetId):
 	if request.method == 'PUT':
 		
 		if request.user.id != changesetData.uid:
+			common.abort_transaction(t)
 			return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 		if not changesetData.is_open:
@@ -838,6 +841,7 @@ def changeset(request, changesetId):
 				datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 			response = HttpResponse(err, content_type="text/plain")
 			response.status_code = 409
+			common.abort_transaction(t)
 			return response
 
 		unicodeTags = {}
@@ -845,6 +849,7 @@ def changeset(request, changesetId):
 		for tag in csIn.findall("tag"):
 			unicodeTags[tag.attrib["k"]] = tag.attrib["v"]
 		if not CheckTags(unicodeTags):
+			common.abort_transaction(t)
 			return HttpResponseBadRequest("Invalid tags")
 
 		changesetData.tags = pgmap.mapstringstring()
@@ -870,8 +875,10 @@ def close(request, changesetId):
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
 	if ret == -1:
+		common.abort_transaction(t)
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
+		common.abort_transaction(t)
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
@@ -879,9 +886,11 @@ def close(request, changesetId):
 			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
+		common.abort_transaction(t)
 		return response
 
 	if request.user.id != changesetData.uid:
+		common.abort_transaction(t)
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	t.CloseChangeset(int(changesetId), int(time.time()), errStr)
@@ -898,8 +907,10 @@ def download(request, changesetId):
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangesetOsmChange(int(changesetId), osmChange, errStr)
 	if ret == -1:
+		common.abort_transaction(t)
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
+		common.abort_transaction(t)
 		return HttpResponseServerError(errStr.errStr)
 
 	t.Commit()
@@ -972,17 +983,21 @@ def upload(request, changesetId):
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
 	if ret == -1:
+		common.abort_transaction(t)
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
+		common.abort_transaction(t)
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
 		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
+		common.abort_transaction(t)
 		return response
 
 	if request.user.id != changesetData.uid:
+		common.abort_transaction(t)
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
@@ -1006,6 +1021,7 @@ def upload(request, changesetId):
 			createdNodeIds, createdWayIds, createdRelationIds, ifunused)
 		if ret != True:
 			print (ret)
+			common.abort_transaction(t)
 			return ret
 
 	t.Commit()
@@ -1031,6 +1047,5 @@ def subscribe(request, changesetId):
 @permission_classes((IsAuthenticated, ))
 def unsubscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
-
 
 

@@ -26,6 +26,7 @@ def upload_single_object(action, request, obj, objType, t):
 	if(request.data.nodes.size() != (objType == "node")
 		or request.data.ways.size() != (objType == "way")
 		or request.data.relations.size() != (objType == "relation")):
+		common.abort_transaction(t)
 		return HttpResponseBadRequest("Wrong number of objects")
 
 	changesetId = obj.metaData.changeset
@@ -35,8 +36,10 @@ def upload_single_object(action, request, obj, objType, t):
 	errStr = pgmap.PgMapError()
 	ret = t.GetChangeset(int(changesetId), changesetData, errStr)
 	if ret == -1:
+		common.abort_transaction(t)
 		return HttpResponseNotFound("Changeset not found")
 	if ret == 0:	
+		common.abort_transaction(t)
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
@@ -44,9 +47,11 @@ def upload_single_object(action, request, obj, objType, t):
 			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
+		common.abort_transaction(t)
 		return response
 
 	if request.user.id != changesetData.uid:
+		common.abort_transaction(t)
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	#Prepare diff result xml
@@ -64,6 +69,7 @@ def upload_single_object(action, request, obj, objType, t):
 		request.user.id, request.user.username, timestamp,
 		createdNodeIds, createdWayIds, createdRelationIds)
 	if ret != True:
+		common.abort_transaction(t)
 		return ret
 
 	t.Commit()
@@ -102,10 +108,12 @@ def element(request, objType, objId):
 		if objType == "relation": obj = request.data.relations[0]
 
 		if obj.objId != objId:
+			common.abort_transaction(t)
 			return HttpResponseBadRequest("Object has wrong ID")
 
 		ret = upload_single_object(action, request, obj, objType, t)
 		if ret != True:
+			common.abort_transaction(t)
 			return ret
 
 		return HttpResponse("", content_type='text/plain')
@@ -124,6 +132,7 @@ def create(request, objType):
 
 	ret = upload_single_object("created", request, obj, objType, t)
 	if ret != True:
+		common.abort_transaction(t)
 		return ret
 
 	return HttpResponse("", content_type='text/plain')
@@ -247,4 +256,3 @@ def object_bbox(request, objType, objId):
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-

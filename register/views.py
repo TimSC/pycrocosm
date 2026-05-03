@@ -7,6 +7,7 @@ from django.shortcuts import render, redirect
 from django.http import HttpResponse
 from . import forms
 from querymap.views import p
+from pycrocosm import common
 
 # Create your views here.
 
@@ -17,11 +18,15 @@ def index(request):
 		form = forms.RegisterForm(request.POST)
 		if form.is_valid():
 			t = p.GetTransaction("EXCLUSIVE")
-			cid = t.GetAllocatedId(b"uid")
-			userObj = form.save(commit=False)
-			userObj.id = cid
-			userObj.save()
-			t.Commit()
+			try:
+				cid = t.GetAllocatedId(b"uid")
+				userObj = form.save(commit=False)
+				userObj.id = cid
+				userObj.save()
+				t.Commit()
+			except Exception:
+				common.abort_transaction(t)
+				raise
 			username = form.cleaned_data.get('username')
 			raw_password = form.cleaned_data.get('password1')
 			user = authenticate(username=username, password=raw_password)
@@ -30,4 +35,3 @@ def index(request):
 	else:
 		form = forms.RegisterForm()
 	return render(request, 'register/index.html', {'form': form})
-
