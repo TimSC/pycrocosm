@@ -775,7 +775,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	ok = t.InsertEditActivity(activity,
 		errStr)
-	if not ok: print (errStr.errStr)
+	if not ok:
+		return HttpResponseServerError(errStr.errStr, content_type="text/plain")
 
 	return True
 

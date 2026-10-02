@@ -351,6 +351,42 @@ class ChangesetUploadTestCase(TestCase):
 		self.client2 = Client()
 		self.client2.login(username=self.username2, password=self.password2)
 
+	def atomic_activity_for_changeset(self, changeset_id):
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
+		activity = pgmap.vectorsharedptreditactivity()
+		error = pgmap.PgMapError()
+		t.QueryEditActivityByTimestamp(0, 0, activity, error)
+		self.assertEqual(error.errStr, "")
+		rows = [pgmap.EditActivity(row) for row in activity if row.changeset == changeset_id]
+		t.Abort()
+		return sorted(rows, key=lambda row: row.objId)
+
+	def test_atomic_activity_groups_blocks_but_separates_uploads(self):
+		cs = CreateTestChangeset(self.user)
+		for count in (2, 1):
+			blocks = "".join(
+				'<create><node changeset="{}" id="{}" lat="50" lon="-1" /></create>'.format(cs.objId, -i-1)
+				for i in range(count))
+			response = self.client.post(reverse('changeset:upload', args=(cs.objId,)),
+				'<osmChange version="0.6">' + blocks + '</osmChange>', content_type='text/xml')
+			self.assertEqual(response.status_code, 200, response.content)
+		rows = self.atomic_activity_for_changeset(cs.objId)
+		self.assertEqual(len(rows), 3)
+		self.assertGreater(rows[0].atomicEditId, 0)
+		self.assertEqual(rows[0].atomicEditId, rows[1].atomicEditId)
+		self.assertGreater(rows[2].atomicEditId, rows[1].atomicEditId)
+		self.assertEqual([row.blockIndex for row in rows], [0, 1, 0])
+
+	def test_atomic_activity_rolls_back_when_later_block_fails(self):
+		cs = CreateTestChangeset(self.user)
+		xml = ('<osmChange version="0.6">'
+			'<create><node changeset="{0}" id="-1" lat="50" lon="-1" /></create>'
+			'<create><way changeset="{0}" id="-2"><nd ref="999999999999999" /></way></create>'
+			'</osmChange>').format(cs.objId)
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, content_type='text/xml')
+		self.assertEqual(response.status_code, 404, response.content)
+		self.assertEqual(self.atomic_activity_for_changeset(cs.objId), [])
+
 	def test_upload_create_single_node(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)
