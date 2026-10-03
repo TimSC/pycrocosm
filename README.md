@@ -7,7 +7,7 @@ OSM Map server API 0.6 implemented using Django and Python 3. It depends on subm
 Installation
 ------------
 
-pycrocosm runs in Docker, connecting to a PostgreSQL/PostGIS server on the host machine. Install Docker (with the compose plugin) and PostgreSQL, then clone the repository with its submodules:
+pycrocosm runs in Docker, connecting to a PostgreSQL/PostGIS server on the host machine. Install Docker (with the compose plugin) https://docs.docker.com/engine/install/ubuntu/ and PostgreSQL, then clone the repository with its submodules:
 
     git clone --recursive https://github.com/TimSC/pycrocosm.git
 
@@ -35,9 +35,11 @@ The container reaches PostgreSQL on the host via `host.docker.internal`. By defa
 
     listen_addresses = '*'
 
-and in `/etc/postgresql/<version>/main/pg_hba.conf` allow the Docker address range:
+and in `/etc/postgresql/<version>/main/pg_hba.conf` allow the pycrocosm user to connect from the Docker address range:
 
-    host    all    all    172.16.0.0/12    scram-sha-256
+    host    all    pycrocosm    172.16.0.0/12    scram-sha-256
+
+The database column needs to be `all` (rather than just `db_settings` and `db_map`) because running the unit tests also connects to `test_db_settings` and `postgres`.
 
 Then restart PostgreSQL (a reload is not enough for `listen_addresses`):
 
@@ -76,6 +78,21 @@ Start the server:
     docker compose up
 
 Connect to http://127.0.0.1:8000/ using a web browser and hope for the best.
+
+### Production server
+
+The default `docker-compose.yml` uses Django's `runserver`, which is only intended for development: it is single process, auto-reloads on file changes and has not been security audited. A production server really should use gunicorn (already in `requirements.txt`) or a similar WSGI server instead. To do this in Docker, create a `docker-compose.prod.yml` that overrides the command:
+
+    services:
+      web:
+        command: gunicorn pycrocosm.wsgi:application --bind 0.0.0.0:8000 -w 2 --timeout 300
+        restart: unless-stopped
+
+Increase `-w` (worker processes) to suit the number of CPU cores. Then start it with:
+
+    docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+Also set `DEBUG=0` in `.env`. gunicorn does not serve static files, so put a reverse proxy such as nginx in front of it to handle `/static/` and TLS, forwarding other requests with `proxy_pass http://127.0.0.1:8000;`.
 
 nginx configuration
 -------------------
@@ -126,6 +143,10 @@ Run unit tests
 --------------
 
      docker compose run --rm web python3 manage.py test
+
+The tests create a temporary `test_db_settings` database, so the pycrocosm user needs permission to create databases:
+
+     sudo -u postgres psql -c "ALTER USER pycrocosm CREATEDB;"
 
 Highly loaded servers
 ---------------------

@@ -1,7 +1,7 @@
-django==6.0.4
-djangorestframework==3.17.1
+django==6.1.1
+djangorestframework==3.18.1
 defusedxml==0.7.1
 psycopg2-binary==2.9.13
-gunicorn==25.3.0
+gunicorn==26.2.0
 tzdata
-pyjwt[crypto]==2.12.1
+pyjwt[crypto]==2.15.1
