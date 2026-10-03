@@ -20,7 +20,7 @@ def Escape(st):
 
 def make_connection_string():
 	mapDbSettings = settings.MAP_DATABASE
-	return ("dbname='{}' user='{}' password='{}' hostaddr='{}' port='{}'".format(Escape(mapDbSettings["NAME"]),
+	return ("dbname='{}' user='{}' password='{}' host='{}' port='{}'".format(Escape(mapDbSettings["NAME"]),
 		Escape(mapDbSettings["USER"]), Escape(mapDbSettings["PASSWORD"]), Escape(mapDbSettings["HOST"]), Escape(mapDbSettings["PORT"])))
 
 def make_pgmap_limits():

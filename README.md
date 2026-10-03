@@ -7,64 +7,73 @@ OSM Map server API 0.6 implemented using Django and Python 3. It depends on subm
 Installation
 ------------
 
-### Python 3 Installation
+pycrocosm runs in Docker, connecting to a PostgreSQL/PostGIS server on the host machine. Install Docker (with the compose plugin) and PostgreSQL, then clone the repository with its submodules:
 
-Installation is described for Linux Mint 18.2, but should work on similar systems like Debian, Ubuntu Xenial or later. 
-
-    cd /var
-
-    sudo apt install git virtualenv python3-pip swig3 g++ python3-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
-
-    sudo git clone --recursive https://github.com/TimSC/pycrocosm.git
-
-    sudo chown www-data:www-data -R pycrocosm
-
-    sudo chmod g+rwx -R pycrocosm
+    git clone --recursive https://github.com/TimSC/pycrocosm.git
 
     cd pycrocosm
 
-    virtualenv --python=/usr/bin/python3 pgmapenv3
+### Map database
 
-    source pgmapenv3/bin/activate
+You need to configure and initialize the PostGIS map database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database (named `db_map` by default) and import some data.
 
-Install the rest of the dependencies
-
-    pip3 install -r requirements.txt
-
-    cd pycrocosm/pgmap/
-
-    make
-
-    pip3 install .
-
-    cd ..
-
-At this stage, you need to configure and initialize the PostGIS database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database and import some data.
-
-Finishing Django site install
------------------------------
+### Django settings database
 
 Create a database to contain Django specific tables:
 
-    sudo su postgres
-
-    psql
+    sudo -u postgres psql
 
     CREATE DATABASE db_settings;
 
     GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;
 
-Use Ctrl-D (repeatedly) to exit back to your normal user. Django needs to know the actual database settings. Set the appropriate values in settings.py, particularly the section under DATABASES and MAP_DATABASE:
+Use Ctrl-D to exit.
 
-    cp pycrocosm/settings.py.template pycrocosm/settings.py
+### Allow connections from Docker containers
 
-    nano pycrocosm/settings.py
+The container reaches PostgreSQL on the host via `host.docker.internal`. By default PostgreSQL only listens on localhost, so in `/etc/postgresql/<version>/main/postgresql.conf` set:
 
-To complete the webserver installation, update pycrocosm.settings with details of your database. If you want to access the site from other computers, ALLOWED_HOSTS needs to be set as well. In production, change DEBUG to false and generate a new SECRET_KEY. Create the Django specific tables:
+    listen_addresses = '*'
 
-    python manage.py migrate
+and in `/etc/postgresql/<version>/main/pg_hba.conf` allow the Docker address range:
 
-    python manage.py runserver
+    host    all    all    172.16.0.0/12    scram-sha-256
+
+Then restart PostgreSQL (a reload is not enough for `listen_addresses`):
+
+    sudo systemctl restart postgresql
+
+If you use a firewall such as ufw, also allow port 5432 from Docker:
+
+    sudo ufw allow from 172.16.0.0/12 to any port 5432
+
+### Configuration
+
+Settings are read from environment variables in `.env`. Create it from the template and edit it:
+
+    cp env.template .env
+
+    nano .env
+
+Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. If you want to access the site from other computers, `DJANGO_ALLOWED_HOSTS` needs to be set as well. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
+
+### Build and run
+
+Build the image (this also compiles pgmap):
+
+    docker compose build
+
+Create the Django specific tables:
+
+    docker compose run --rm web python3 manage.py migrate
+
+Optionally, create an admin user:
+
+    docker compose run --rm web python3 manage.py createsuperuser
+
+Start the server:
+
+    docker compose up
 
 Connect to http://127.0.0.1:8000/ using a web browser and hope for the best.
 
@@ -111,12 +120,12 @@ TODO It might be safer to not run the service as root!
 
 Set server to read only mode: 
 
-     python manage.py setmeta readonly 1
+     docker compose run --rm web python3 manage.py setmeta readonly 1
 
 Run unit tests
 --------------
 
-     python manage.py test
+     docker compose run --rm web python3 manage.py test
 
 Highly loaded servers
 ---------------------
