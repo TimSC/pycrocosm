@@ -39,6 +39,8 @@ RUN mkdir -p /tmp/pgmap-pbf && \
 COPY . .
 
 WORKDIR /usr/src/app/pgmap
+# Compiler flags for pgmap, e.g. --build-arg PGMAP_CFLAGS="-g -O0" to debug.
+ARG PGMAP_CFLAGS="-g0 -O1"
 RUN cp /tmp/pgmap-pbf/* cppo5m/pbf/ && \
     pip install --no-build-isolation --no-deps .
 

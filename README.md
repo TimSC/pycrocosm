@@ -65,6 +65,12 @@ Build the image (this also compiles pgmap):
 
     docker compose build
 
+pgmap is compiled with `-g0 -O1` by default, which builds faster and smaller without noticeably affecting performance. To change the compiler flags, for example to include debug information when debugging pgmap, pass the `PGMAP_CFLAGS` build argument:
+
+    docker compose build --build-arg PGMAP_CFLAGS="-g -O0"
+
+An empty value (`PGMAP_CFLAGS=""`) uses Python's default flags (`-g -O2`). Outside Docker, set `PGMAP_CFLAGS` as an environment variable when running `pip install`.
+
 Create the Django specific tables:
 
     docker compose run --rm web python3 manage.py migrate
