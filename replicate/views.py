@@ -11,6 +11,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
+import json
 import pgmap
 import io
 import time
@@ -279,6 +280,27 @@ def TypeIdVerSeparate(types, idVers):
 
 	return nodeIdVers, wayIdVers, relationIdVers
 
+def sync_context_to_et(parent, name, references, t):
+	"""Expand versioned references, preserving their geometry component order."""
+	element = ET.SubElement(parent, name)
+	if not references:
+		element.set('null', 'true')
+		return
+	refs = json.loads(references)
+	data = pgmap.OsmData()
+	for obj_type in ('node', 'way', 'relation'):
+		id_versions = [pgmap.pairi64i64(obj_id, version)
+			for kind, obj_id, version in refs if kind == obj_type]
+		if id_versions:
+			t.GetObjectsByIdVer(obj_type, id_versions, data)
+	sio = io.BytesIO()
+	data.StreamTo(pgmap.PyOsmXmlEncode(sio, common.xmlAttribs))
+	objects = {(obj.tag, int(obj.attrib['id']), int(obj.attrib['version'])): obj
+		for obj in ET.fromstring(sio.getvalue()) if obj.tag in ('node', 'way', 'relation')}
+	for kind, obj_id, version in refs:
+		# Fail rather than return an incomplete collection with shifted alignment.
+		element.append(objects[(kind, obj_id, version)])
+
 def edit_activity_to_et(activity, t):
 	#Get relevent objects from database
 	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(activity.existingType, activity.existingIdVer)
@@ -335,6 +357,21 @@ def edit_activity_to_et(activity, t):
 	if activity.timestamp > 0:
 		activityEl.attrib['timestamp'] = datetime.datetime.fromtimestamp(activity.timestamp).isoformat()
 	activityEl.attrib['action'] = str(activity.action)
+	if activity.atomicEditId > 0:
+		activityEl.set('atomic_edit_id', str(activity.atomicEditId))
+		activityEl.set('block_index', str(activity.blockIndex))
+
+	sync_context_to_et(activityEl, 'sync_before', activity.syncBefore, t)
+	sync_context_to_et(activityEl, 'sync_after', activity.syncAfter, t)
+	for name, geometry in [('bbox_before', activity.bboxBefore), ('bbox_after', activity.bboxAfter)]:
+		geometry_el = ET.SubElement(activityEl, name)
+		if geometry:
+			geometry_el.set('format', 'wkt')
+			geometry_el.set('srid', '4326')
+			geometry_el.text = geometry
+		else:
+			geometry_el.set('null', 'true')
+
 
 	existingEl = ET.SubElement(activityEl, 'existing')
 	for ch in existingRoot:
@@ -357,6 +394,9 @@ def edit_activity_to_et(activity, t):
 @api_view(['GET'])
 def get_edit_activity(request, objId):
 
+	if not 0 < int(objId) <= 9223372036854775807:
+		return HttpResponseBadRequest("Activity ID is out of range")
+
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
@@ -365,6 +405,8 @@ def get_edit_activity(request, objId):
 	found = t.GetEditActivityById(int(objId), 
 		activity,
 		errStr)
+	if errStr.errStr:
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 	if not found:
 		return HttpResponseNotFound("Edit activity does not exist")
 
@@ -380,8 +422,37 @@ def get_edit_activity(request, objId):
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def activity_id_filters(params):
+	keys = ('id', 'first_id', 'last_id', 'atomic_edit_id')
+	values = {}
+	for key in keys:
+		if key in params:
+			value = params[key]
+			if not value or not value.isascii() or not value.isdecimal():
+				raise ValueError(key + ' must be a positive integer')
+			value = int(value)
+			if not 0 < value <= 9223372036854775807:
+				raise ValueError(key + ' is out of range')
+			values[key] = value
+	if not values:
+		return None
+	if any(key in params for key in ('since', 'until')):
+		raise ValueError('ID filters cannot be combined with timestamp filters')
+	if 'id' in values and any(key in values for key in ('first_id', 'last_id')):
+		raise ValueError('Use id or a row range, not both')
+	first = values.get('id', values.get('first_id', 0))
+	last = values.get('id', values.get('last_id', 0))
+	if last and last < first:
+		raise ValueError('last_id must be greater than or equal to first_id')
+	return first, last, values.get('atomic_edit_id', 0)
+
 @api_view(['GET'])
 def query_edit_activity_by_timestamp(request):
+
+	try:
+		id_filters = activity_id_filters(request.GET)
+	except ValueError as error:
+		return HttpResponseBadRequest(str(error))
 
 	sinceTimestamp = request.GET.get('since', None)
 	untilTimestamp = request.GET.get('until', None)
@@ -405,9 +476,12 @@ def query_edit_activity_by_timestamp(request):
 	errStr = pgmap.PgMapError()
 	results = pgmap.vectorsharedptreditactivity()
 
-	t.QueryEditActivityByTimestamp(sinceTimestamp, untilTimestamp,
-		results,
-		errStr)
+	if id_filters is not None:
+		t.QueryEditActivityByIds(*id_filters, results, errStr)
+	else:
+		t.QueryEditActivityByTimestamp(sinceTimestamp, untilTimestamp, results, errStr)
+	if errStr.errStr:
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
 	resultsEl = ET.Element('editactivities')
 

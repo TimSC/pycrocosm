@@ -2,7 +2,7 @@
 from __future__ import unicode_literals
 from __future__ import print_function
 
-from django.test import TestCase
+from django.test import TestCase, SimpleTestCase
 from django.test import Client
 from django.urls import reverse
 from django.contrib.auth.models import User
@@ -233,3 +233,26 @@ class ReplicateTestCase(TestCase):
 				break
 		self.assertEqual(found, True)
 
+
+
+class ActivityIdFilterTestCase(SimpleTestCase):
+	def test_supported_filters(self):
+		for params, expected in [
+			({'id': '7'}, (7, 7, 0)),
+			({'first_id': '2', 'last_id': '9'}, (2, 9, 0)),
+			({'first_id': '8'}, (8, 0, 0)),
+			({'atomic_edit_id': '4'}, (0, 0, 4)),
+			({}, None),
+		]:
+			with self.subTest(params=params):
+				self.assertEqual(rv.activity_id_filters(params), expected)
+
+	def test_invalid_filters(self):
+		for params in [
+			{'id': '-1'}, {'id': '0'}, {'id': str(2**63)},
+			{'first_id': '9', 'last_id': '2'}, {'atomic_edit_id': 'x'},
+			{'id': '3', 'since': '2026-10-03T00:00:00Z'},
+			{'id': '3', 'first_id': '2'},
+		]:
+			with self.subTest(params=params), self.assertRaises(ValueError):
+				rv.activity_id_filters(params)

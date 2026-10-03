@@ -15,6 +15,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 import sys
 import datetime
+import json
 import pgmap
 import time
 import io
@@ -756,6 +757,15 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	bbox = pgmap.vectord()
 	activity = pgmap.EditActivity()
+	# originalObjData was captured before storing this block. Exclude nodes
+	# whose requested deletion was skipped by if-unused validation.
+	acceptedNodeIds = {node.objId for node in block.nodes}
+	beforeNodes = [node for node in originalObjData.nodes if node.objId in acceptedNodeIds]
+	activity.syncBefore = json.dumps([
+		["node", node.objId, node.metaData.version] for node in beforeNodes])
+	activity.bboxBefore = ("GEOMETRYCOLLECTION(" + ",".join(
+		"POINT({:.17g} {:.17g})".format(node.lon, node.lat) for node in beforeNodes) + ")"
+		if beforeNodes else "GEOMETRYCOLLECTION EMPTY")
 	activity.existingType = pgmap.vectorstring(existingObjTypes)
 	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
 	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
