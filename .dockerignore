@@ -1,0 +1,30 @@
+# Secrets and local configuration
+.env
+.env.*
+pgmap/config.cfg
+
+# Version control and CI
+**/.git
+.gitignore
+.gitmodules
+.circleci
+
+# Python caches
+**/__pycache__
+**/*.pyc
+
+# pgmap build outputs from host builds; regenerated inside the image
+pgmap/build
+pgmap/*.egg-info
+pgmap/**/*.o
+pgmap/**/*.so
+pgmap/pgmap.py
+pgmap/pgmap_wrap.cpp
+pgmap/pgmap_wrap.cxx
+pgmap/admin
+pgmap/applydiffs
+pgmap/checkdata
+pgmap/dump
+pgmap/extract
+pgmap/osm2csv
+pgmap/quickinit

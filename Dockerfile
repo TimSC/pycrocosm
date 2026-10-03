@@ -1,15 +1,19 @@
 # Based on https://testdriven.io/blog/dockerizing-django-with-postgres-gunicorn-and-nginx/
 # pull official base image
-FROM ubuntu:24.04
+# Pin the Debian release: pgmap needs libpqxx 7.x, and later releases ship libpqxx 8.
+FROM python:3.14-slim-trixie
 
 # https://rtfm.co.ua/en/docker-configure-tzdata-and-timezone-during-build/
 ENV TZ=Europe/London
-RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-RUN apt update
-RUN apt install -y swig g++ python3-dev libpqxx-dev rapidjson-dev libexpat1-dev libboost-filesystem-dev
-RUN apt install -y libpqxx-dev libboost-program-options-dev libprotobuf-dev zlib1g-dev libboost-iostreams-dev
-RUN apt install -y python3-pip protobuf-compiler python3-venv
+# Python headers come from the base image, so python3-dev is not installed
+# (it would pull in Debian's separate system Python).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      tzdata swig g++ libpqxx-dev rapidjson-dev libexpat1-dev zlib1g-dev \
+      libboost-filesystem-dev libboost-program-options-dev libboost-iostreams-dev \
+      libprotobuf-dev protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 # set work directory
 WORKDIR /usr/src/app
@@ -18,8 +22,8 @@ RUN python3 -m venv /opt/env
 ENV PATH="/opt/env/bin:$PATH"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
-RUN pip3 install pip==24.2
-RUN pip3 install setuptools==75.1.0 wheel==0.44.0 packaging
+RUN pip3 install pip==26.2.1
+RUN pip3 install setuptools==84.0.0 wheel==0.48.0 packaging
 COPY ./requirements.txt .
 RUN pip3 install -r requirements.txt
 
