@@ -381,7 +381,7 @@ class ChangesetUploadTestCase(TestCase):
 		cs = CreateTestChangeset(self.user)
 		xml = ('<osmChange version="0.6">'
 			'<create><node changeset="{0}" id="-1" lat="50" lon="-1" /></create>'
-			'<create><way changeset="{0}" id="-2"><nd ref="999999999999999" /></way></create>'
+			'<create><way changeset="{0}" id="-2"><nd ref="999999999999998" /><nd ref="999999999999999" /></way></create>'
 			'</osmChange>').format(cs.objId)
 		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml, content_type='text/xml')
 		self.assertEqual(response.status_code, 404, response.content)
