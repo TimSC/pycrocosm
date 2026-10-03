@@ -16,28 +16,30 @@ WORKDIR /usr/src/app
 
 RUN python3 -m venv /opt/env
 ENV PATH="/opt/env/bin:$PATH"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 RUN pip3 install pip==24.2
-RUN pip3 install setuptools==75.1.0 wheel==0.44.0
+RUN pip3 install setuptools==75.1.0 wheel==0.44.0 packaging
 COPY ./requirements.txt .
 RUN pip3 install -r requirements.txt
 
-# copy project
+# Generate protobuf sources in a separate cached layer. Changes to pgmap C++
+# code do not require regenerating these files.
+COPY ./pgmap/cppo5m/proto/ /tmp/pgmap-proto/
+RUN mkdir -p /tmp/pgmap-pbf && \
+    protoc -I=/tmp/pgmap-proto \
+      /tmp/pgmap-proto/osmformat.proto /tmp/pgmap-proto/fileformat.proto \
+      --cpp_out=/tmp/pgmap-pbf
+
+# Copy frequently changing code only after all external dependencies.
 COPY . .
-#COPY ./pgmap pgmap
-
-WORKDIR /usr/src/app/pgmap/cppo5m
-
-RUN protoc -I=proto proto/osmformat.proto --cpp_out=pbf
-RUN protoc -I=proto proto/fileformat.proto --cpp_out=pbf
 
 WORKDIR /usr/src/app/pgmap
+RUN cp /tmp/pgmap-pbf/* cppo5m/pbf/ && \
+    pip install --no-build-isolation --no-deps .
 
-RUN pip install .
+# Verify the installed bindings independently of the build source directory.
+WORKDIR /tmp
+RUN python3 -c "import pgmap; assert hasattr(pgmap, 'mapstringstring')"
 
 WORKDIR /usr/src/app
-
-# set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
-
