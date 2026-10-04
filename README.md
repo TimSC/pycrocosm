@@ -150,6 +150,15 @@ Run unit tests
 
      docker compose run --rm web python3 manage.py test
 
+Run the stored-extract tests alone (rebuild the image if the pgmap bindings have changed):
+
+     docker compose run --rm web python3 manage.py test querymap.test_dbextract
+
+These tests create nodes through the upload path, save and update database extracts,
+and compare their exports with fresh bbox queries. They use unique temporary table
+prefixes in `MAP_DATABASE` and remove them afterward, without resetting the map's
+existing tables. This targeted suite does not need a Django test database.
+
 The tests create a temporary `test_db_settings` database, so the pycrocosm user needs permission to create databases:
 
      sudo -u postgres psql -c "ALTER USER pycrocosm CREATEDB;"
@@ -162,4 +171,3 @@ Highly loaded Linux servers should consider increasing net.core.somaxconn to abo
 Add net.core.somaxconn=1024 to /etc/sysctl.conf for it to become permanent, then reboot. https://serverfault.com/a/271386/375337
 
 All done!
-
