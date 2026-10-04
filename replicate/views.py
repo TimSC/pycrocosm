@@ -63,8 +63,30 @@ class ExtractDownload:
             transaction.Abort()
 
 
+class GzipStream:
+    """Gzip a stream of byte chunks as they are produced."""
+    def __init__(self, source):
+        self.source = source
+        self.compressor = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, zlib.MAX_WBITS | 16)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.compressor is None:
+            raise StopIteration
+        try:
+            return self.compressor.compress(next(self.source))
+        except StopIteration:
+            compressor, self.compressor = self.compressor, None
+            return compressor.flush()
+
+    def close(self):
+        self.source.close()
+
+
 @require_GET
-def download_extract(request, extract_id=None):
+def download_extract(request, extract_id=None, compressed=False):
     """Download a stored snapshot by ID, or by a unique ?name= value."""
     name = request.GET.get("name", "")
     if extract_id is None:
@@ -86,8 +108,12 @@ def download_extract(request, extract_id=None):
         if message == "Extract name is ambiguous; select by ID":
             return HttpResponseBadRequest(message, content_type="text/plain")
         raise
-    response = StreamingHttpResponse(download, content_type="application/xml")
-    response["Content-Disposition"] = 'attachment; filename="extract-{}.osm"'.format(download.extract_id)
+    if compressed:
+        response = StreamingHttpResponse(GzipStream(download), content_type="application/x-gzip")
+    else:
+        response = StreamingHttpResponse(download, content_type="application/xml")
+    response["Content-Disposition"] = 'attachment; filename="extract-{}.osm{}"'.format(
+        download.extract_id, ".gz" if compressed else "")
     return response
 
 def index(request):

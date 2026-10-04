@@ -1,0 +1,65 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; {{ opts.verbose_name_plural|capfirst }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+{% if has_add_permission %}
+<ul class="object-tools">
+<li><a href="{% url 'admin:replicate_dbextract_add' %}" class="addlink">Add database extract</a></li>
+</ul>
+{% endif %}
+{% if error %}
+<p class="errornote">Could not list extracts: {{ error }}</p>
+{% elif not extracts %}
+<p>No extracts are stored in the map database.</p>
+{% else %}
+<div class="results">
+<table id="result_list">
+<thead>
+<tr>
+<th>ID</th><th>Name</th><th>Bbox (west, south, east, north)</th><th>Query mode</th>
+<th>Last saved or updated</th><th>Edit activity checkpoint</th><th>Up to date</th>
+<th>Download</th>
+{% if has_update_permission or has_remove_permission %}<th>Actions</th>{% endif %}
+</tr>
+</thead>
+<tbody>
+{% for extract in extracts %}
+<tr>
+<td><a href="{% url 'admin:replicate_dbextract_detail' extract.id %}">{{ extract.id }}</a></td>
+<td>{{ extract.name|default:"-" }}</td>
+<td>{{ extract.bbox|join:", " }}</td>
+<td>{{ extract.query_mode }}</td>
+<td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td>
+<td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td>
+<td>{% if extract.up_to_date %}yes{% else %}no{% endif %}</td>
+<td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a></td>
+{% if has_update_permission or has_remove_permission %}
+<td>
+{% if has_update_permission %}
+<form method="post" action="{% url 'admin:replicate_dbextract_update' extract.id %}" style="display:inline">{% csrf_token %}
+<input type="submit" value="Update">
+</form>
+{% endif %}
+{% if has_remove_permission %}
+<a href="{% url 'admin:replicate_dbextract_remove' extract.id %}" class="deletelink">Delete</a>
+{% endif %}
+</td>
+{% endif %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+<p class="paginator">{{ extracts|length }} extract{{ extracts|length|pluralize }}</p>
+{% endif %}
+</div>
+{% endblock %}

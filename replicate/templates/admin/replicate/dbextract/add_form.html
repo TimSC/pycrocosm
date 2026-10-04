@@ -1,0 +1,36 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls static %}
+
+{% block extrastyle %}{{ block.super }}<link rel="stylesheet" href="{% static "admin/css/forms.css" %}">{% endblock %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url 'admin:replicate_dbextract_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; Add
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+<p>Stores a snapshot of the map inside a rectangle as a new extract. The map is queried
+while this page loads, so a large area can take a long time.</p>
+<form method="post" id="dbextract_form">{% csrf_token %}
+{% if form.errors %}<p class="errornote">Please correct the errors below.</p>{% endif %}
+{{ form.non_field_errors }}
+<fieldset class="module aligned">
+{% for field in form %}
+<div class="form-row{% if field.errors %} errors{% endif %}">
+{{ field.errors }}
+<div class="flex-container">{{ field.label_tag }}{{ field }}</div>
+{% if field.help_text %}<div class="help">{{ field.help_text }}</div>{% endif %}
+</div>
+{% endfor %}
+</fieldset>
+<div class="submit-row">
+<input type="submit" value="Save extract" class="default">
+</div>
+</form>
+</div>
+{% endblock %}

@@ -153,6 +153,10 @@ Download a complete database extract as OSM XML using either its ID or its uniqu
      curl -o extract.osm http://localhost:8000/replication/extract/1
      curl -G --data-urlencode 'name=my-extract' -o extract.osm http://localhost:8000/replication/extract
 
+Add `.osm.gz` to the ID form for a gzipped download, which is what the admin page links to:
+
+     curl -o extract.osm.gz http://localhost:8000/replication/extract/1.osm.gz
+
 The endpoint streams the stored snapshot in batches; it does not update the extract
 or repeat its bbox query. Missing extracts return 404; ambiguous names or invalid
 selectors return 400. The snapshot transaction remains open during streaming and
@@ -167,7 +171,7 @@ Run the stored-extract tests alone (rebuild the image if the pgmap bindings have
 
      docker compose run --rm web python3 manage.py test querymap.test_dbextract
 
-These tests create nodes through the upload path, save and update database extracts,
+These tests create and edit nodes, ways and relations through the upload path, save and update database extracts,
 and compare their exports with fresh bbox queries. They use unique temporary table
 prefixes in `MAP_DATABASE` and remove them afterward, without resetting the map's
 existing tables. This targeted suite does not need a Django test database.

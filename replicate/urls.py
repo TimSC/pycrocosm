@@ -10,6 +10,7 @@ from . import views
 
 app_name = 'replicate'
 urlpatterns = [
+    url(r'^extract/([0-9]+)\.osm\.gz$', views.download_extract, {'compressed': True}, name='download_extract_gz_by_id'),
     url(r'^extract/([0-9]+)/?$', views.download_extract, name='download_extract_by_id'),
     url(r'^extract/?$', views.download_extract, name='download_extract_by_name'),
     url(r'^now$', views.timenow, name='timenow'),

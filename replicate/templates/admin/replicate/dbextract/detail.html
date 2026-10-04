@@ -1,0 +1,44 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url 'admin:replicate_dbextract_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; {{ extract.id }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+<table id="extract_detail">
+<tbody>
+<tr><th>ID</th><td>{{ extract.id }}</td></tr>
+<tr><th>Name</th><td>{{ extract.name|default:"-" }}</td></tr>
+<tr><th>Bbox (west, south, east, north)</th><td>{{ extract.bbox|join:", " }}</td></tr>
+<tr><th>Query mode</th><td>{{ extract.query_mode }}</td></tr>
+<tr><th>Last saved or updated</th><td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td></tr>
+<tr><th>Edit activity checkpoint</th><td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td></tr>
+<tr><th>Atomic edit checkpoint</th><td>{{ extract.atomic_edit_id|default_if_none:"not set" }}</td></tr>
+<tr><th>Up to date</th><td>{% if extract.up_to_date %}yes{% else %}no{% endif %}</td></tr>
+<tr><th>Nodes</th><td id="extract_nodes">{{ extract.nodes }}</td></tr>
+<tr><th>Ways</th><td id="extract_ways">{{ extract.ways }}</td></tr>
+<tr><th>Relations</th><td id="extract_relations">{{ extract.relations }}</td></tr>
+<tr><th>Download</th><td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a></td></tr>
+</tbody>
+</table>
+{% if has_update_permission or has_remove_permission %}
+<div class="submit-row">
+{% if has_update_permission %}
+<form method="post" action="{% url 'admin:replicate_dbextract_update' extract.id %}" style="display:inline">{% csrf_token %}
+<input type="submit" value="Update">
+</form>
+{% endif %}
+{% if has_remove_permission %}
+<a href="{% url 'admin:replicate_dbextract_remove' extract.id %}" class="deletelink">Delete</a>
+{% endif %}
+</div>
+{% endif %}
+</div>
+{% endblock %}
