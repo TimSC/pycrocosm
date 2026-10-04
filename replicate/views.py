@@ -17,6 +17,78 @@ import io
 import time
 import datetime
 import zlib
+from django.http import StreamingHttpResponse
+from django.views.decorators.http import require_GET
+
+
+class ExtractDownload:
+    """Stream bounded XML batches while keeping the snapshot transaction alive."""
+    def __init__(self, extract_id, name):
+        self.map = get_pgmap()
+        self.transaction = self.map.GetTransaction("ACCESS SHARE")
+        self.buffer = io.BytesIO()
+        self.encoder = pgmap.PyOsmXmlEncode(self.buffer, common.xmlAttribs)
+        self.exporter = None
+        try:
+            self.exporter = self.transaction.StartExportExtract(extract_id, name, self.encoder)
+            self.extract_id = self.exporter.GetId()
+        except BaseException:
+            self.close()
+            raise
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.transaction is None:
+            raise StopIteration
+        try:
+            complete = self.exporter.Continue() == 1
+            chunk = self.buffer.getvalue()
+            self.buffer = io.BytesIO()
+            self.encoder.SetOutput(self.buffer)
+            if complete:
+                self.exporter = None
+                self.transaction.Commit()
+                self.transaction = None
+            return chunk
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self):
+        self.exporter = None
+        if self.transaction is not None:
+            transaction, self.transaction = self.transaction, None
+            transaction.Abort()
+
+
+@require_GET
+def download_extract(request, extract_id=None):
+    """Download a stored snapshot by ID, or by a unique ?name= value."""
+    name = request.GET.get("name", "")
+    if extract_id is None:
+        if not name.strip():
+            return HttpResponseBadRequest("Specify an extract name", content_type="text/plain")
+        extract_id = 0
+    else:
+        if name:
+            return HttpResponseBadRequest("Select by ID or name, not both", content_type="text/plain")
+        extract_id = int(extract_id)
+        if not 0 < extract_id <= 9223372036854775807:
+            return HttpResponseBadRequest("Invalid extract ID", content_type="text/plain")
+    try:
+        download = ExtractDownload(extract_id, name)
+    except RuntimeError as error:
+        message = str(error).removeprefix("Standard runtime exception: ")
+        if message == "Extract not found":
+            return HttpResponseNotFound(message, content_type="text/plain")
+        if message == "Extract name is ambiguous; select by ID":
+            return HttpResponseBadRequest(message, content_type="text/plain")
+        raise
+    response = StreamingHttpResponse(download, content_type="application/xml")
+    response["Content-Disposition"] = 'attachment; filename="extract-{}.osm"'.format(download.extract_id)
+    return response
 
 def index(request):
 	return HttpResponse("<a href='minute/'>Minutely</a> <a href='hour/'>Hourly</a> <a href='day/'>Daily</a>")
@@ -500,4 +572,3 @@ def query_edit_activity_by_timestamp(request):
 	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
-

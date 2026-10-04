@@ -145,6 +145,19 @@ Set server to read only mode:
 
      docker compose run --rm web python3 manage.py setmeta readonly 1
 
+Download a stored extract
+-------------------------
+
+Download a complete database extract as OSM XML using either its ID or its unique name:
+
+     curl -o extract.osm http://localhost:8000/replication/extract/1
+     curl -G --data-urlencode 'name=my-extract' -o extract.osm http://localhost:8000/replication/extract
+
+The endpoint streams the stored snapshot in batches; it does not update the extract
+or repeat its bbox query. Missing extracts return 404; ambiguous names or invalid
+selectors return 400. The snapshot transaction remains open during streaming and
+closes when the download finishes or the response is closed.
+
 Run unit tests
 --------------
 
