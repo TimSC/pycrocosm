@@ -21,6 +21,13 @@ from pycrocosm.parsers import DefusedXmlParser, OsmDataXmlParser
 from changeset.views import upload_block
 
 def upload_single_object(action, request, obj, objType, t, created=None):
+	"""Apply one create, modify or delete of the single element in the request.
+
+	Returns True on success, having committed the transaction, or the error
+	response to send. On success obj's version has been set to the new version.
+	"""
+	if action not in ("create", "modify", "delete"):
+		raise ValueError("Unknown upload action: {}".format(action))
 
 	#Additional validate of input
 	if(request.data.nodes.size() != (objType == "node")
@@ -43,7 +50,7 @@ def upload_single_object(action, request, obj, objType, t, created=None):
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.id, 
+		err = "The changeset {} was closed at {}.".format(changesetData.objId, 
 			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
@@ -65,7 +72,7 @@ def upload_single_object(action, request, obj, objType, t, created=None):
 	createdRelationIds = pgmap.mapi64i64()
 
 	timestamp = time.time()
-	ret = upload_block("create", request.data, changesetId, t, responseRoot, 
+	ret = upload_block(action, request.data, changesetId, t, responseRoot, 
 		request.user.id, request.user.username, timestamp,
 		createdNodeIds, createdWayIds, createdRelationIds)
 	if ret != True:
@@ -105,12 +112,13 @@ def element(request, objType, objId):
 		if request.method == "PUT": action = "modify"
 		if request.method == "DELETE": action = "delete"
 
-		obj = None
-		if objType == "node": obj = request.data.nodes[0]
-		if objType == "way": obj = request.data.ways[0]
-		if objType == "relation": obj = request.data.relations[0]
+		objs = {"node": request.data.nodes, "way": request.data.ways, "relation": request.data.relations}[objType]
+		if len(objs) != 1:
+			common.abort_transaction(t)
+			return HttpResponseBadRequest("Wrong number of objects")
+		obj = objs[0]
 
-		if obj.objId != objId:
+		if obj.objId != int(objId):
 			common.abort_transaction(t)
 			return HttpResponseBadRequest("Object has wrong ID")
 
@@ -119,7 +127,8 @@ def element(request, objType, objId):
 			common.abort_transaction(t)
 			return ret
 
-		return HttpResponse("", content_type='text/plain')
+		#Both calls answer with the element's new version number
+		return HttpResponse(str(obj.metaData.version), content_type='text/plain')
 
 def create_object(request, objType):
 	"""Create the one element in the request body and respond with its new ID."""
@@ -130,7 +139,7 @@ def create_object(request, objType):
 
 	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	created = {}
-	ret = upload_single_object("created", request, obj, objType, t, created)
+	ret = upload_single_object("create", request, obj, objType, t, created)
 	if ret != True:
 		common.abort_transaction(t)
 		return ret

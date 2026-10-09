@@ -788,6 +788,17 @@ class ChangesetUploadTestCase(TestCase):
 			content_type='text/xml')
 		self.assertEqual(response.status_code, 400)
 
+	def test_upload_to_closed_changeset(self):
+		closedAt = int(time.time()) - 30
+		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=False, close_timestamp=closedAt)
+		xml = self.generate_upload_way_with_n_nodes(cs.objId, 2)
+
+		response = self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml,
+			content_type='text/xml')
+		self.assertEqual(response.status_code, 409, response.content)
+		self.assertEqual(response.content.decode("UTF-8"), "The changeset {} was closed at {}.".format(
+			cs.objId, datetime.datetime.fromtimestamp(closedAt).isoformat()))
+
 	def test_upload_create_way_empty(self):
 
 		cs = CreateTestChangeset(self.user, tags={"foo": "invade"}, is_open=True)

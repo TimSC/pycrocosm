@@ -57,7 +57,7 @@ Settings are read from environment variables in `.env`. Create it from the templ
 
     nano .env
 
-Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. If you want to access the site from other computers, `DJANGO_ALLOWED_HOSTS` needs to be set as well. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
+Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. Every database setting in `pycrocosm/settings.py` can be replaced this way: the name, user, password, host and port of the settings database (`DJANGO_DB_*`), and the same for the map database plus its table prefixes (`DJANGO_MAP_DB_*`, which fall back to the `DJANGO_DB_*` values for user, password, host and port). `env.template` lists them all; anything left unset keeps the value in `settings.py`. If you want to access the site from other computers, `DJANGO_ALLOWED_HOSTS` needs to be set as well. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
 
 ### Build and run
 

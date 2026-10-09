@@ -1395,3 +1395,200 @@ class DbExtractTestCase(SimpleTestCase):
         root = ET.fromstring(output.getvalue())
         self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))), ids)
         self.assertEqual(root.find("node").get("version"), "2")
+
+    # Importing a file as a stored extract
+
+    def export_document(self, extract_id, encoder_class=None, attribs=None):
+        """The stored extract as an XML (or other text format) document."""
+        output = io.BytesIO()
+        encoder = (encoder_class or pgmap.PyOsmXmlEncode)(
+            output, pgmap.mapstringstring(attribs or {}))
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.ExportExtract(extract_id, "", encoder)
+        finally:
+            t.Abort()
+        return output.getvalue().decode("utf-8")
+
+    def import_document(self, document, name="imported", bbox=(), edit_ids=(-1, -1),
+                        loader=None):
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            importer = t.StartImportExtract(name, list(bbox), *edit_ids)
+            (loader or pgmap.LoadFromOsmXml)(document, importer)
+            counts = (importer.GetNumNodes(), importer.GetNumWays(), importer.GetNumRelations())
+            extract_id = importer.GetId()
+            del importer
+            t.Commit()
+            return extract_id, counts
+        except BaseException:
+            t.Abort()
+            raise
+
+    def stored_rows(self, extract_id):
+        """Everything stored for an extract that an import is expected to reproduce."""
+        queries = {
+            "extracts": "SELECT ST_AsText(bbox), use_bbox_in_query FROM {} WHERE id=%s",
+            "extract_livenodes": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, ST_AsText(geom) FROM {} WHERE extract_id=%s ORDER BY id",
+            "extract_liveways": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, members::text, ST_AsText(bbox) FROM {} WHERE extract_id=%s ORDER BY id",
+            "extract_liverelations": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, members::text, memberroles::text FROM {} WHERE extract_id=%s ORDER BY id",
+        }
+        for suffix in ("way_mems", "relation_mems_n", "relation_mems_w", "relation_mems_r"):
+            queries["extract_" + suffix] = ("SELECT id, version, index, member FROM {} "
+                                            "WHERE extract_id=%s ORDER BY id, index")
+        rows = {}
+        with self.db.cursor() as cursor:
+            for table, query in queries.items():
+                cursor.execute(sql.SQL(query).format(sql.Identifier(self.prefixes[1] + table)),
+                               [extract_id])
+                rows[table] = cursor.fetchall()
+        return rows
+
+    def extract_ids(self):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id FROM {} ORDER BY id").format(
+                sql.Identifier(self.prefixes[1] + "extracts")))
+            return [row[0] for row in cursor.fetchall()]
+
+    def populated_extract(self):
+        """A saved extract holding tagged nodes, a way that leaves the bbox and relations."""
+        tagged = pgmap.OsmNode()
+        tagged.objId = -1
+        tagged.lon, tagged.lat = 0.123456789, -0.5
+        tagged.tags["name"] = "Café \"A\" <&>"
+        tagged = self.upload("create", [tagged])[0][0]
+        inside = self.create_node(0.25, 0.5)
+        outside = self.create_node(2.5, 0.75)
+        way = self.create_way([inside, outside, tagged])
+        child = self.create_relation([("node", tagged, "stop")])
+        self.create_relation([("node", inside, ""), ("way", way, "outer"),
+                              ("relation", child, "part"), ("node", inside, "again")])
+        return self.save("original")
+
+    def test_import_reproduces_exported_extract(self):
+        original = self.populated_extract()
+        expected = self.stored_rows(original)
+        self.assertEqual([len(expected[t]) for t in ("extract_livenodes", "extract_liveways",
+                                                     "extract_liverelations")], [3, 1, 2])
+        for encoder, loader in ((pgmap.PyOsmXmlEncode, pgmap.LoadFromOsmXml),
+                                (pgmap.PyOsmJsonEncode, pgmap.LoadFromOsmJson)):
+            with self.subTest(loader=loader.__name__):
+                document = self.export_document(original, encoder)
+                imported, counts = self.import_document(document, loader=loader)
+                self.assertNotEqual(imported, original)
+                self.assertEqual(counts, (3, 1, 2))
+                self.assertEqual(self.stored_rows(imported), expected)
+                self.assertEqual(self.contents(imported), self.contents(original))
+                # Exporting the import gives back the document it came from
+                self.assertEqual(self.export_document(imported, encoder), document)
+                # Nothing in the document said which edits it is current to
+                self.assertEqual(self.checkpoint(imported), (None, None))
+                self.assertEqual(self.compare(imported)[1], [])
+
+    def test_import_takes_checkpoint_from_document_and_updates(self):
+        original = self.populated_extract()
+        ids = self.checkpoint(original)
+        document = self.export_document(original, attribs={
+            "edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])})
+        imported, _ = self.import_document(document, name="synced")
+        self.assertEqual(self.checkpoint(imported), ids)
+
+        # The import is brought up to date like any other extract
+        self.create_node(0.75, 0.25)
+        self.assertNotEqual(self.contents(imported), self.contents())
+        self.update(imported)
+        self.assert_current(imported)
+
+    def test_import_checkpoint_and_bbox_arguments_override_document(self):
+        original = self.populated_extract()
+        ids = self.checkpoint(original)
+        document = self.export_document(original, attribs={
+            "edit_activity_id": "999999", "atomic_edit_id": "999999"})
+        imported, _ = self.import_document(document, bbox=[-0.5, -0.75, 0.5, 0.75], edit_ids=ids)
+        self.assertEqual(self.checkpoint(imported), ids)
+        self.assertEqual(self.stored_rows(imported)["extracts"][0][0],
+                         "POLYGON((-0.5 -0.75,-0.5 0.75,0.5 0.75,0.5 -0.75,-0.5 -0.75))")
+        # Contents are stored as given, not filtered against the new rectangle
+        self.assertEqual(self.contents(imported), self.contents(original))
+
+    def test_import_without_checkpoint_cannot_update(self):
+        original = self.populated_extract()
+        imported, _ = self.import_document(self.export_document(original))
+        with self.assertRaisesRegex(RuntimeError, "checkpoint"):
+            self.update(imported)
+        self.assertEqual(self.contents(imported), self.contents(original))
+
+    def test_import_needs_a_bbox(self):
+        original = self.populated_extract()
+        document = self.export_document(original)
+        root = ET.fromstring(document)
+        root.remove(root.find("bounds"))
+        unbounded = ET.tostring(root, encoding="unicode")
+        with self.assertRaisesRegex(RuntimeError, "bbox"):
+            self.import_document(unbounded)
+        self.assertEqual(self.extract_ids(), [original])
+        imported, counts = self.import_document(unbounded, bbox=self.bbox)
+        self.assertEqual(counts, (3, 1, 2))
+        self.assertEqual(self.stored_rows(imported), self.stored_rows(original))
+
+    def test_import_rejects_unusable_input(self):
+        original = self.populated_extract()
+        document = self.export_document(original)
+        root = ET.fromstring(document)
+        root.append(root.find("node"))
+        cases = {
+            "duplicate object": (ET.tostring(root, encoding="unicode"), {}),
+            "truncated document": (document[:len(document) // 2], {}),
+            "bad bbox": (document, {"bbox": [1, 1, -1, -1]}),
+            "half a checkpoint": (document, {"edit_ids": (5, -1)}),
+            "bad checkpoint in document": (document.replace(
+                "<osm ", '<osm edit_activity_id="x" atomic_edit_id="1" ', 1), {}),
+        }
+        for label, (text, arguments) in cases.items():
+            with self.subTest(label):
+                with self.assertRaises(Exception):
+                    self.import_document(text, **arguments)
+                # A failed import leaves no extract behind
+                self.assertEqual(self.extract_ids(), [original])
+
+    def test_import_skips_deleted_objects_and_handles_large_batches(self):
+        data = pgmap.OsmData()
+        way = pgmap.OsmWay()
+        way.objId = 7
+        way.metaData.version = 3
+        for index in range(2500):
+            node = pgmap.OsmNode()
+            node.objId = index + 1
+            node.metaData.version = 1
+            node.lon, node.lat = index / 10000.0, 0.5
+            data.nodes.append(node)
+            way.refs.append(node.objId)
+        deleted = pgmap.OsmNode()
+        deleted.objId = 5000
+        deleted.metaData.version = 2
+        deleted.metaData.visible = False
+        data.nodes.append(deleted)
+        data.ways.append(way)
+
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            importer = t.StartImportExtract("bulk", self.bbox)
+            data.StreamTo(importer)
+            self.assertEqual((importer.GetNumNodes(), importer.GetNumWays()), (2500, 1))
+            extract_id = importer.GetId()
+            del importer
+            t.Commit()
+        except BaseException:
+            t.Abort()
+            raise
+        rows = self.stored_rows(extract_id)
+        self.assertEqual(len(rows["extract_livenodes"]), 2500)
+        self.assertEqual([row[:3] for row in rows["extract_way_mems"][:2]], [(7, 3, 0), (7, 3, 1)])
+        self.assertEqual(len(rows["extract_way_mems"]), 2500)
+        self.assertEqual(rows["extract_liveways"][0][8], "LINESTRING(0 0.5,0.2499 0.5)")
+        # Metadata the stream left out is stored as absent
+        self.assertEqual(rows["extract_livenodes"][0][1:5], (None, None, None, None))
+        self.assertEqual(self.contents(extract_id)[("way", 7)][1][0], ("nd", (("ref", "1"),)))

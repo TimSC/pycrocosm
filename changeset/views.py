@@ -1050,7 +1050,8 @@ def upload(request, changesetId):
 		return HttpResponseServerError(errStr.errStr)
 
 	if not changesetData.is_open:
-		err = "The changeset {} was closed at {}.".format(changesetData.id, changesetData.close_datetime.isoformat())
+		err = "The changeset {} was closed at {}.".format(changesetData.objId,
+			datetime.datetime.fromtimestamp(changesetData.close_timestamp).isoformat())
 		response = HttpResponse(err, content_type="text/plain")
 		response.status_code = 409
 		common.abort_transaction(t)
