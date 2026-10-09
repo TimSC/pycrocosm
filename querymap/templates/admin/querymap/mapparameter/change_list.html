@@ -1,0 +1,89 @@
+{% extends "admin/base_site.html" %}
+{% load i18n admin_urls %}
+
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; {{ opts.verbose_name_plural|capfirst }}
+</div>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+<p>These settings are kept in the map database, where pgmap's command line tools and this server both read them.
+A change takes effect at once, for everything that uses the map.</p>
+{% if error %}
+<p class="errornote">Could not read the map parameters: {{ error }}</p>
+{% else %}
+<div class="results">
+<table id="result_list">
+<thead>
+<tr><th>Parameter</th><th>Value</th><th>Meaning</th>{% if may_edit %}<th>Actions</th>{% endif %}</tr>
+</thead>
+<tbody>
+{% for parameter in parameters %}
+<tr>
+<td>{{ parameter.key }}</td>
+{% if may_edit and not parameter.protected %}
+<td>
+<form method="post" action="{% url 'admin:querymap_mapparameter_set' %}" id="set_{{ forloop.counter }}">{% csrf_token %}
+<input type="hidden" name="key" value="{{ parameter.key }}">
+{% if parameter.switch %}
+<select name="value">
+<option value="0"{% if parameter.value == "0" %} selected{% elif parameter.value is None and parameter.default == "0" %} selected{% endif %}>0</option>
+<option value="1"{% if parameter.value == "1" %} selected{% endif %}>1</option>
+</select>
+{% else %}
+<input type="text" name="value" value="{{ parameter.value|default_if_none:"" }}" maxlength="1000">
+{% endif %}
+</form>
+{% if parameter.value is None %}<span class="help">not set{% if parameter.default is not None %}; {{ parameter.default }} applies{% endif %}</span>{% endif %}
+</td>
+{% else %}
+<td>{% if parameter.value is None %}not set{% if parameter.default is not None %}; {{ parameter.default }} applies{% endif %}{% else %}{{ parameter.value }}{% endif %}</td>
+{% endif %}
+<td>{{ parameter.description }}</td>
+{% if may_edit %}
+<td>
+{% if not parameter.protected %}
+<input type="submit" form="set_{{ forloop.counter }}" value="Save">
+{% if parameter.value is not None %}
+<form method="post" action="{% url 'admin:querymap_mapparameter_remove' %}" style="display:inline">{% csrf_token %}
+<input type="hidden" name="key" value="{{ parameter.key }}">
+<input type="submit" value="Remove">
+</form>
+{% endif %}
+{% endif %}
+</td>
+{% endif %}
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+
+{% if may_edit %}
+<h2>Add a parameter</h2>
+<form method="post" action="{% url 'admin:querymap_mapparameter_set' %}" id="add_parameter">{% csrf_token %}
+<label>Name <input type="text" name="key" maxlength="100" required></label>
+<label>Value <input type="text" name="value" maxlength="1000"></label>
+<input type="submit" value="Add">
+</form>
+{% endif %}
+
+<h2>Static tables</h2>
+<p>The tables the map was imported into keep their own parameters, shown here for reference. pgmap's admin tool maintains them.</p>
+<table id="static_parameters">
+<thead><tr><th>Parameter</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+{% for parameter in static_parameters %}
+<tr><td>{{ parameter.key }}</td><td>{{ parameter.value }}</td><td>{{ parameter.description }}</td></tr>
+{% empty %}
+<tr><td colspan="3">None</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+</div>
+{% endblock %}
