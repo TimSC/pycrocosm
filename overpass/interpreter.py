@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 """Runs Overpass queries: parse, evaluate against the map, write the result."""
-from __future__ import unicode_literals
 import time
 
 from django.conf import settings

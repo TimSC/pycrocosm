@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Parser for the subset of Overpass QL this server understands.
 
 The result is a tree of the classes below, which are named after the elements
@@ -8,7 +7,6 @@ reader for the XML form would produce the same tree.
 Anything outside the subset is refused, naming the feature where it is
 recognised, because quietly ignoring part of a query returns wrong data.
 """
-from __future__ import unicode_literals
 import datetime
 import re
 
@@ -20,20 +18,20 @@ class QueryError(Exception):
 		self.line = line
 		if line is not None:
 			message = "line {}: {}".format(line, message)
-		super(QueryError, self).__init__(message)
+		super().__init__(message)
 
 class UnsupportedFeature(QueryError):
 	"""Valid Overpass QL that this server does not implement."""
 	def __init__(self, feature, line=None):
 		self.feature = feature
-		super(UnsupportedFeature, self).__init__(
+		super().__init__(
 			"{} not supported by this server".format(feature), line)
 
 # ****** The statement tree ******
 
 DEFAULT_SET = "_"
 
-class Node(object):
+class Node:
 	"""Base of the tree classes: compared and printed by their fields."""
 	fields = ()
 
@@ -264,7 +262,7 @@ NUMBER = re.compile(r"[-+]?(\d+\.?\d*([eE][-+]?\d+)?|\.\d+([eE][-+]?\d+)?)")
 INTEGER = re.compile(r"\d+")
 ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "'": "'", "\\": "\\"}
 
-class Parser(object):
+class Parser:
 	def __init__(self, text):
 		self.text = text
 		self.pos = 0

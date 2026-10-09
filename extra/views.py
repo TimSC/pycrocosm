@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.utils.dateparse import parse_datetime
@@ -51,7 +47,7 @@ def most_active_users(request):
 		userEl.attrib['relations'] = str(objectCount[i][2])
 
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 

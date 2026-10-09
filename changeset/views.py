@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
 from django.contrib.auth.decorators import login_required
@@ -13,7 +9,6 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 
 import xml.etree.ElementTree as ET
-import sys
 import re
 import math
 import datetime
@@ -24,7 +19,6 @@ import io
 from pycrocosm import common
 from pycrocosm.mapdb import get_pgmap
 from pycrocosm.parsers import DefusedXmlParser, OsmChangeXmlParser
-PY3 = sys.version_info > (3, 0)
 
 # Create your views here.
 
@@ -37,11 +31,7 @@ def CheckTags(tags):
 	return True
 
 def DecodeIfNotUnicode(s):
-	if PY3:
-		unicodeType = str
-	else:
-		unicodeType = unicode
-	if isinstance(s, unicodeType):
+	if isinstance(s, str):
 		return s
 	return s.decode('utf-8')
 
@@ -154,7 +144,7 @@ def SerializeChangesets(changesetsData, include_discussion=False, request=None, 
 
 	doc = ET.ElementTree(root)
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 def GetOsmDataIndex(osmData):
@@ -1204,7 +1194,7 @@ def upload(request, changesetId):
 	t.Commit()
 
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 @csrf_exempt

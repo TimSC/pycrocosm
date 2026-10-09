@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound, HttpResponseServerError, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
@@ -264,6 +260,6 @@ def object_bbox(request, objType, objId):
 			elObj.attrib["maxlat"] = str(bbox[3])
 	
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')

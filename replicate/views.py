@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest, JsonResponse
 from django.conf import settings
@@ -542,7 +538,7 @@ def get_edit_activity(request, objId):
 	#Write final xml
 	doc = ET.ElementTree(resultsEl)
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -621,6 +617,6 @@ def query_edit_activity_by_timestamp(request):
 	#Write final xml
 	doc = ET.ElementTree(resultsEl)
 	sio = io.BytesIO()
-	doc.write(sio, str("UTF-8")) # str work around https://bugs.python.org/issue15811
+	doc.write(sio, "UTF-8")
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')

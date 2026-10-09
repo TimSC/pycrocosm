@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, StreamingHttpResponse
 from django.conf import settings
@@ -17,7 +13,7 @@ import io
 import random
 import time
 
-class MapQueryResponse(object):
+class MapQueryResponse:
 	def __init__(self, bbox, request):
 		self.sio = io.BytesIO()
 		self.enc = common.make_osm_encoder(request, self.sio)

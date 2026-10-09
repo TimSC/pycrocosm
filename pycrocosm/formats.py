@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
 """Format suffixes on API paths, such as /api/0.6/map.json."""
-from __future__ import unicode_literals
-from __future__ import print_function
 
 from django.urls import resolve
 from django.views.decorators.csrf import csrf_exempt

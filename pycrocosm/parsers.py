@@ -1,6 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
 from rest_framework.parsers import BaseParser
 from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from defusedxml.ElementTree import parse
@@ -37,7 +34,7 @@ def decode_error_detail(err):
 		return limit_message(LIMIT_SETTING_NAMES.get(limit, limit), maximum, actual)
 	return str(err)
 
-class DecompressedStream(object):
+class DecompressedStream:
 	"""Reads the decompressed form of a compressed request body.
 
 	Nothing is decompressed beyond what each read asks for, so the upload

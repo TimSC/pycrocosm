@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
 """Runs a parsed Overpass query against the map database.
 
 The state of a running query is a collection of named sets of elements, as in
 Overpass. Elements are copied out of pgmap into plain Python objects as they
 are read, so nothing here depends on the lifetime of a pgmap container.
 """
-from __future__ import unicode_literals
 import math
 import time
 
@@ -27,23 +25,23 @@ class QueryTimeout(QueryError):
 	status = 504
 
 	def __init__(self, seconds):
-		super(QueryTimeout, self).__init__(
+		super().__init__(
 			"the query did not finish within its timeout of {} seconds".format(seconds))
 
 class TooManyElements(QueryError):
 	def __init__(self, maximum):
-		super(TooManyElements, self).__init__(
+		super().__init__(
 			"the query selects more than {} elements, the most this server allows; "
 			"use a smaller area or more specific tags".format(maximum))
 
-class Limits(object):
+class Limits:
 	"""What a query may use. See overpass.interpreter.get_limits."""
 	def __init__(self, timeout, max_elements, area_maximum):
 		self.timeout = timeout # Seconds
 		self.max_elements = max_elements
 		self.area_maximum = area_maximum # Square degrees, for a bbox that is the only selective filter
 
-class Element(object):
+class Element:
 	__slots__ = ("kind", "id", "lat", "lon", "tags", "refs", "members",
 		"version", "timestamp", "changeset", "uid", "user")
 
@@ -93,7 +91,7 @@ FILTER_OPS = {
 	HasKv.NOT_MATCHES: pgmap.OverpassTagFilter.NotMatches,
 }
 
-class MapSource(object):
+class MapSource:
 	"""Reads elements through a pgmap transaction, within the query's limits."""
 	def __init__(self, transaction, limits):
 		self.transaction = transaction
@@ -218,7 +216,7 @@ def intersect_bboxes(boxes):
 
 METRES_PER_DEGREE = 111000.0
 
-class Region(object):
+class Region:
 	"""Where a query looks: a bounding box, a distance from some positions, or both."""
 	def __init__(self, bbox=None, around=None):
 		self.bbox = bbox # None or (south, west, north, east)
@@ -238,7 +236,7 @@ class Region(object):
 			areas.append(sum(side * side / max(0.01, math.cos(math.radians(lat))) for lat, lon in points))
 		return min(areas)
 
-class Evaluator(object):
+class Evaluator:
 	def __init__(self, source, limits):
 		self.source = source
 		self.limits = limits

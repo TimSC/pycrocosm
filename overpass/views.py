@@ -1,7 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 from django.http import HttpResponse
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt

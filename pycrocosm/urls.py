@@ -1,11 +1,7 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-from __future__ import print_function
-
 """pycrocosm URL Configuration
 
 The `urlpatterns` list routes URLs to views. For more information please see:
-	https://docs.djangoproject.com/en/1.11/topics/http/urls/
+	https://docs.djangoproject.com/en/6.1/topics/http/urls/
 Examples:
 Function views
 	1. Add an import:  from my_app import views
@@ -14,14 +10,11 @@ Class-based views
 	1. Add an import:  from other_app.views import Home
 	2. Add a URL to urlpatterns:  url(r'^$', Home.as_view(), name='home')
 Including another URLconf
-	1. Import the include() function: from django.conf.urls import url, include
+	1. Import the include() function: from django.urls import include, re_path as url
 	2. Add a URL to urlpatterns:  url(r'^blog/', include('blog.urls'))
 """
 
-try:
-    from django.urls import include, re_path as url
-except:
-    from django.conf.urls import include, url
+from django.urls import include, re_path as url
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from objectinfo import views as objectinfo_views

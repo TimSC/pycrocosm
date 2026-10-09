@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
 import json
 import time
 import xml.etree.ElementTree as ET

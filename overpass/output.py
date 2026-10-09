@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 """Writes query results in the Overpass API's JSON and XML layouts.
 
 These are not the layouts of the OSM editing API: there is a different header,
 ways and relations can carry their geometry, and a count is an element.
 """
-from __future__ import unicode_literals
 import datetime
 import json
 import re
@@ -17,7 +15,7 @@ XML_ILLEGAL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 def iso_time(timestamp):
 	return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-class Shape(object):
+class Shape:
 	"""What an out statement shows of each element."""
 	def __init__(self, statement):
 		mode = statement.mode
