@@ -41,7 +41,9 @@
 <td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td>
 <td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td>
 <td>{% if extract.up_to_date %}yes{% else %}no{% endif %}</td>
-<td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a></td>
+<td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a>
+<a href="{% url 'replication:download_extract_o5m_gz_by_id' extract.id %}">.o5m.gz</a>
+<a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td>
 {% if has_update_permission or has_remove_permission %}
 <td>
 {% if has_update_permission %}

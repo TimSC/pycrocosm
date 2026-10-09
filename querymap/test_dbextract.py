@@ -990,6 +990,8 @@ class DbExtractTestCase(SimpleTestCase):
             self.assertIn('<td id="{}">{}</td>'.format(element, count), page_html)
         self.assertIn("first &lt;extract&gt;", page_html)
         self.assertIn('href="{}"'.format(reverse("replication:download_extract_gz_by_id", args=[first])), page_html)
+        for route in ("download_extract_o5m_gz_by_id", "download_extract_pbf_by_id"):
+            self.assertIn('href="{}"'.format(reverse("replication:" + route, args=[first])), page_html)
         # Read-only staff get no update or delete controls.
         self.assertNotIn("/update/", page_html)
         self.assertNotIn("/delete/", page_html)
@@ -1005,6 +1007,8 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertLess(abs(time.time() - rows[0]["performed_at"].timestamp()), 300)
         self.assertIn("first &lt;extract&gt;", html)
         self.assertIn('href="{}"'.format(reverse("replication:download_extract_gz_by_id", args=[first])), html)
+        for route in ("download_extract_o5m_gz_by_id", "download_extract_pbf_by_id"):
+            self.assertIn('href="{}"'.format(reverse("replication:" + route, args=[first])), html)
         # Read only for staff; hidden from everyone else.
         request = RequestFactory().get(url)
         request.user = Staff()
@@ -1592,3 +1596,61 @@ class DbExtractTestCase(SimpleTestCase):
         # Metadata the stream left out is stored as absent
         self.assertEqual(rows["extract_livenodes"][0][1:5], (None, None, None, None))
         self.assertEqual(self.contents(extract_id)[("way", 7)][1][0], ("nd", (("ref", "1"),)))
+
+    def test_download_extract_in_other_formats(self):
+        import gzip
+        self.populated_extract()
+        nodes = []
+        for index in range(1005):
+            node = pgmap.OsmNode()
+            node.objId = -index - 1
+            node.lon, node.lat = 0.001 * (index % 100), 0.1
+            nodes.append(node)
+        self.upload("create", nodes)
+        extract_id = self.save("formats")
+        expected = sorted((kind, ident, int(value[0]["version"]))
+                          for (kind, ident), value in self.contents(extract_id).items())
+        self.assertGreater(len(expected), 1005)
+
+        cases = (("download_extract_o5m_gz_by_id", "o5m.gz", "application/x-gzip", pgmap.LoadFromO5mBytes),
+                 ("download_extract_pbf_by_id", "pbf", "application/octet-stream", pgmap.LoadFromPbfBytes))
+        for route, extension, content_type, loader in cases:
+            with self.subTest(extension):
+                url = reverse("replication:" + route, args=[extract_id])
+                self.assertTrue(url.endswith("/extract/{}.{}".format(extract_id, extension)))
+                response = self.download(url)
+                try:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertTrue(response.streaming)
+                    self.assertEqual(response["Content-Type"], content_type)
+                    self.assertIn('filename="extract-{}.{}"'.format(extract_id, extension),
+                                  response["Content-Disposition"])
+                    data = b"".join(response.streaming_content)
+                finally:
+                    response.close()
+                if extension.endswith(".gz"):
+                    data = gzip.decompress(data)
+                decoded = pgmap.OsmData()
+                loader(data, decoded)
+                found = [("node", n.objId, n.metaData.version) for n in decoded.nodes]
+                found += [("way", w.objId, w.metaData.version) for w in decoded.ways]
+                found += [("relation", r.objId, r.metaData.version) for r in decoded.relations]
+                self.assertEqual(sorted(found), expected)
+                self.assertEqual(len(decoded.bounds), 1)
+                way = decoded.ways[0]
+                self.assertEqual(len(way.refs), 3)
+                relation = [r for r in decoded.relations if len(r.members) == 4][0]
+                self.assertEqual([m.role for m in relation.members], ["", "outer", "part", "again"])
+
+                self.assertEqual(self.download(reverse("replication:" + route, args=[99999])).status_code, 404)
+                # Closing early must release the snapshot transaction's locks.
+                early = self.download(url)
+                early.close()
+                self.update(extract_id)
+
+    def test_extract_pages_link_every_format(self):
+        extract_id = self.save("linked")
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+            html = Client().get(reverse("replication:extracts")).content.decode("utf-8")
+        for extension in ("osm.gz", "o5m.gz", "pbf"):
+            self.assertIn('/extract/{}.{}"'.format(extract_id, extension), html)

@@ -10,7 +10,9 @@ from . import views
 
 app_name = 'replicate'
 urlpatterns = [
-    url(r'^extract/([0-9]+)\.osm\.gz$', views.download_extract, {'compressed': True}, name='download_extract_gz_by_id'),
+    url(r'^extract/([0-9]+)\.osm\.gz$', views.download_extract, {'file_format': 'osm.gz'}, name='download_extract_gz_by_id'),
+    url(r'^extract/([0-9]+)\.o5m\.gz$', views.download_extract, {'file_format': 'o5m.gz'}, name='download_extract_o5m_gz_by_id'),
+    url(r'^extract/([0-9]+)\.pbf$', views.download_extract, {'file_format': 'pbf'}, name='download_extract_pbf_by_id'),
     url(r'^extract/([0-9]+)/?$', views.download_extract, name='download_extract_by_id'),
     url(r'^extract/?$', views.download_extract, name='download_extract_by_name'),
     url(r'^extracts/?$', views.extracts, name='extracts'),

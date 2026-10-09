@@ -25,7 +25,9 @@
 <tr><th>Nodes</th><td id="extract_nodes">{{ extract.nodes }}</td></tr>
 <tr><th>Ways</th><td id="extract_ways">{{ extract.ways }}</td></tr>
 <tr><th>Relations</th><td id="extract_relations">{{ extract.relations }}</td></tr>
-<tr><th>Download</th><td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a></td></tr>
+<tr><th>Download</th><td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a>
+<a href="{% url 'replication:download_extract_o5m_gz_by_id' extract.id %}">.o5m.gz</a>
+<a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td></tr>
 </tbody>
 </table>
 {% if has_update_permission or has_remove_permission %}

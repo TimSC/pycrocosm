@@ -22,13 +22,25 @@ from django.http import StreamingHttpResponse
 from django.views.decorators.http import require_GET
 
 
+# The file formats an extract can be downloaded in, by file name extension:
+# how to make the encoder, whether the encoded stream is then gzipped, and the
+# content type. PBF compresses its own blocks, so it is not gzipped again.
+EXTRACT_FORMATS = {
+    "osm": (lambda out: pgmap.PyOsmXmlEncode(out, common.xmlAttribs), False, "application/xml"),
+    "osm.gz": (lambda out: pgmap.PyOsmXmlEncode(out, common.xmlAttribs), True, "application/x-gzip"),
+    "o5m.gz": (lambda out: pgmap.PyO5mEncode(out), True, "application/x-gzip"),
+    "pbf": (lambda out: pgmap.PyPbfEncode(out), False, "application/octet-stream"),
+}
+
 class ExtractDownload:
-    """Stream bounded XML batches while keeping the snapshot transaction alive."""
-    def __init__(self, extract_id, name):
+    """Stream bounded encoded batches while keeping the snapshot transaction alive."""
+    def __init__(self, extract_id, name, make_encoder=None):
         self.map = get_pgmap()
         self.transaction = self.map.GetTransaction("ACCESS SHARE")
         self.buffer = io.BytesIO()
-        self.encoder = pgmap.PyOsmXmlEncode(self.buffer, common.xmlAttribs)
+        if make_encoder is None:
+            make_encoder = EXTRACT_FORMATS["osm"][0]
+        self.encoder = make_encoder(self.buffer)
         self.exporter = None
         try:
             self.exporter = self.transaction.StartExportExtract(extract_id, name, self.encoder)
@@ -98,8 +110,12 @@ def extracts(request):
 
 
 @require_GET
-def download_extract(request, extract_id=None, compressed=False):
-    """Download a stored snapshot by ID, or by a unique ?name= value."""
+def download_extract(request, extract_id=None, file_format="osm"):
+    """Download a stored snapshot by ID, or by a unique ?name= value.
+
+    file_format is one of the EXTRACT_FORMATS extensions.
+    """
+    make_encoder, compressed, content_type = EXTRACT_FORMATS[file_format]
     name = request.GET.get("name", "")
     if extract_id is None:
         if not name.strip():
@@ -112,7 +128,7 @@ def download_extract(request, extract_id=None, compressed=False):
         if not 0 < extract_id <= 9223372036854775807:
             return HttpResponseBadRequest("Invalid extract ID", content_type="text/plain")
     try:
-        download = ExtractDownload(extract_id, name)
+        download = ExtractDownload(extract_id, name, make_encoder)
     except RuntimeError as error:
         message = str(error).removeprefix("Standard runtime exception: ")
         if message == "Extract not found":
@@ -120,12 +136,10 @@ def download_extract(request, extract_id=None, compressed=False):
         if message == "Extract name is ambiguous; select by ID":
             return HttpResponseBadRequest(message, content_type="text/plain")
         raise
-    if compressed:
-        response = StreamingHttpResponse(GzipStream(download), content_type="application/x-gzip")
-    else:
-        response = StreamingHttpResponse(download, content_type="application/xml")
-    response["Content-Disposition"] = 'attachment; filename="extract-{}.osm{}"'.format(
-        download.extract_id, ".gz" if compressed else "")
+    response = StreamingHttpResponse(GzipStream(download) if compressed else download,
+        content_type=content_type)
+    response["Content-Disposition"] = 'attachment; filename="extract-{}.{}"'.format(
+        download.extract_id, file_format)
     return response
 
 def index(request):
