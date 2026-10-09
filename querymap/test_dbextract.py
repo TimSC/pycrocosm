@@ -137,13 +137,9 @@ class DbExtractTestCase(SimpleTestCase):
         return self.upload("modify", [way])[1][0]
 
     def set_members(self, relation, members):
-        relation.refTypeStrs.clear()
-        relation.refIds.clear()
-        relation.refRoles.clear()
+        relation.members.clear()
         for kind, obj, role in members:
-            relation.refTypeStrs.append(kind)
-            relation.refIds.append(obj.objId)
-            relation.refRoles.append(role)
+            relation.AddMember(kind, obj.objId, role)
 
     def create_relation(self, members):
         relation = pgmap.OsmRelation()
@@ -242,9 +238,7 @@ class DbExtractTestCase(SimpleTestCase):
         way = self.upload("create", [way])[1][0]
         relation = pgmap.OsmRelation()
         relation.objId = -1
-        relation.refTypeStrs.append("way")
-        relation.refIds.append(way.objId)
-        relation.refRoles.append("outer")
+        relation.AddMember("way", way.objId, "outer")
         self.upload("create", [relation])
         extract_id = self.save("download snapshot")
         expected = self.contents(extract_id)
@@ -1355,3 +1349,49 @@ class DbExtractTestCase(SimpleTestCase):
         del second
         for _ in range(3):
             self.assertEqual(query(connect()), expected)
+
+    def test_latest_edit_ids(self):
+        def latest():
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                ids = t.GetLatestEditIds()
+                return (ids[0], ids[1]), dict(t.GetLatestEditIdAttribs())
+            finally:
+                t.Abort()
+
+        def table_ids():
+            with self.db.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT COALESCE(max(id),0), COALESCE(max(atomic_edit_id),0) FROM {}").format(
+                    sql.Identifier(self.prefixes[1] + "edit_activity")))
+                return cursor.fetchone()
+
+        self.assertEqual(latest(), ((0, 0), {"edit_activity_id": "0", "atomic_edit_id": "0"}))
+        node = self.create_node(0)
+        first = latest()[0]
+        self.assertEqual(first, table_ids())
+        self.assertGreater(first[0], 0)
+        self.assertGreater(first[1], 0)
+        # These are the checkpoints a stored extract records.
+        self.assertEqual(self.checkpoint(self.save()), first)
+        self.modify_node(node)
+        ids, attribs = latest()
+        self.assertEqual(ids, table_ids())
+        self.assertGreater(ids[0], first[0])
+        self.assertGreater(ids[1], first[1])
+        self.assertEqual(attribs, {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])})
+
+        # As root attributes they describe the snapshot the data was read from.
+        output = io.BytesIO()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            encoder = pgmap.PyOsmXmlEncode(output, t.GetLatestEditIdAttribs())
+            query = t.GetQueryMgr()
+            status = query.Start(self.bbox, int(time.time()), encoder)
+            while status == 0:
+                status = query.Continue()
+            del query
+        finally:
+            t.Abort()
+        root = ET.fromstring(output.getvalue())
+        self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))), ids)
+        self.assertEqual(root.find("node").get("version"), "2")

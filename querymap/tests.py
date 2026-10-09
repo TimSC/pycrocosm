@@ -17,16 +17,10 @@ from changeset.views import GetOsmDataIndex, store_objects_with_bbox_tracking
 
 def DecodeOsmdataResponse(xml):
 	data = pgmap.OsmData()
-	dec = pgmap.OsmXmlDecodeString()
-	dec.output = data
-
+	parser = pgmap.OsmXmlParser(data)
 	for chunk in xml:
-		chunkDec = chunk.decode('utf-8')
-		dec.DecodeSubString(chunkDec, len(chunkDec), False)
-
-	dec.DecodeSubString("", 0, True)
-	dec.DecodeFinish()
-	dec.output = None
+		parser.FeedBytes(chunk, False)
+	parser.FeedBytes(b"", True)
 	return data
 
 def create_node(uid, username, nearbyNode = None, changeset = 1000, timestamp = None):
@@ -120,9 +114,7 @@ def create_relation(uid, username, refs, changeset = 1000, timestamp = None):
 	relation.metaData.visible = True
 	relation.tags["test"] = "moon"
 	for refTypeStr, refId, refRole in refs:
-		relation.refTypeStrs.append(refTypeStr)
-		relation.refIds.append(refId)
-		relation.refRoles.append(refRole)
+		relation.AddMember(refTypeStr, refId, refRole)
 
 	data = pgmap.OsmData()
 	data.relations.append(relation)
@@ -223,9 +215,7 @@ def modify_relation(uid, username, relationIn, refsIn, tagsIn):
 	for k in tagsIn:
 		relation.tags[k] = tagsIn[k]
 	for refTypeStr, refId, refRole in refsIn:
-		relation.refTypeStrs.append(refTypeStr)
-		relation.refIds.append(refId)
-		relation.refRoles.append(refRole)
+		relation.AddMember(refTypeStr, refId, refRole)
 
 	data = pgmap.OsmData()
 	data.relations.append(relation)
@@ -340,7 +330,7 @@ class QueryMapTestCase(TestCase):
 			relation2 = data.relations[relationNum]
 			relationIdSet.add(relation2.objId)
 
-			for memId, memType in zip(relation2.refIds, relation2.refTypeStrs):
+			for memId, memType in ((member.ref, member.TypeName()) for member in relation2.members):
 				if memType == "node":
 					nodeMems.add(memId)
 				if memType == "way":
@@ -419,7 +409,8 @@ class QueryMapTestCase(TestCase):
 		
 		if expected:
 			self.assertEqual(dict(relation.tags) == dict(relationIdDict[relation.objId].tags), True)
-			self.assertEqual(list(relation.refIds) == list(relationIdDict[relation.objId].refIds), True)
+			self.assertEqual([member.ref for member in relation.members],
+				[member.ref for member in relationIdDict[relation.objId].members])
 
 	def test_query_active_node(self):
 		node = create_node(self.user.id, self.user.username)
@@ -626,15 +617,15 @@ class QueryMapTestCase(TestCase):
 			relationObjToMod = relationIdDict[candidateId]
 
 			#Skip relations with zero members
-			refTypeStrs = list(relationObjToMod.refTypeStrs)
+			refTypeStrs = [member.TypeName() for member in relationObjToMod.members]
 			if len(refTypeStrs) == 0:
 				continue
 
 			#Do modification by appending first member as a new last member			
 			refTypeStrs.append(refTypeStrs[0])
-			refIds = list(relationObjToMod.refIds)
+			refIds = [member.ref for member in relationObjToMod.members]
 			refIds.append(refIds[0])
-			refRoles = list(relationObjToMod.refRoles)
+			refRoles = [member.role for member in relationObjToMod.members]
 			refRoles.append(refRoles[0])
 			modRelation = modify_relation(self.user.id, self.user.username, 
 				relationObjToMod, zip(refTypeStrs, refIds, refRoles), {"foo": "bacon"})

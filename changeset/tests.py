@@ -806,7 +806,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(wayTags, {'ghi': 'jkl'})
 
 		rel1 = GetObj(get_pgmap(), "relation", diffDict["relation"][-3933][0])
-		rel1Refs = zip(list(rel1.refTypeStrs), list(rel1.refIds), list(rel1.refRoles))
+		rel1Refs = [(member.TypeName(), member.ref, member.role) for member in rel1.members]
 		self.assertEqual(("way", diffDict["way"][-3911][0], "lmn") in rel1Refs, True)
 		self.assertEqual(("node", diffDict["node"][-3909][0], "opq") in rel1Refs, True)
 
@@ -814,7 +814,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(rel1Tags, {'rst': 'uvw'})
 
 		rel2 = GetObj(get_pgmap(), "relation", diffDict["relation"][-3934][0])
-		rel2Refs = zip(list(rel2.refTypeStrs), list(rel2.refIds), list(rel2.refRoles))
+		rel2Refs = [(member.TypeName(), member.ref, member.role) for member in rel2.members]
 		self.assertEqual(("way", diffDict["way"][-3911][0], "lmn") in rel2Refs, True)
 		self.assertEqual(("relation", diffDict["relation"][-3933][0], "opq") in rel2Refs, True)
 

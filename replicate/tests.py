@@ -24,8 +24,8 @@ def CreateIndexOsmChange(osc):
 	index = {'node':{}, 'way':{}, 'relation':{}}
 
 	for i in range(osc.blocks.size()):
-		block = osc.blocks[i]
-		action = osc.actions[i]
+		block = osc.blocks[i].data
+		action = osc.blocks[i].action
 		for j in range(block.nodes.size()):
 			node = block.nodes[j]
 

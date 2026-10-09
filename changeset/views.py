@@ -151,9 +151,9 @@ def upload_check_way_mems(action, objs):
 def upload_check_relation_mems(objs):
 	for i in range(objs.size()):
 		obj = objs[i]
-		if len(obj.refIds) > settings.RELATION_MEMBERS_MAXIMUM:
+		if len(obj.members) > settings.RELATION_MEMBERS_MAXIMUM:
 			return HttpResponseBadRequest("RELATION_MEMBERS_MAXIMUM limit exceeded; maximum is {}, got {}".format(
-				settings.RELATION_MEMBERS_MAXIMUM, len(obj.refIds)), content_type="text/plain")
+				settings.RELATION_MEMBERS_MAXIMUM, len(obj.members)), content_type="text/plain")
 	return None
 
 def upload_check_modify(objs):
@@ -295,8 +295,8 @@ def get_object_type_id_vers(block):
 
 def get_relation_members(relation):
 	chNodes, chWays, chRelations = set(), set(), set()
-	for i, refId in enumerate(relation.refIds):
-		refTypeStr = relation.refTypeStrs[i]
+	for member in relation.members:
+		refTypeStr, refId = member.TypeName(), member.ref
 		if refTypeStr == "node":
 			chNodes.add(refId)
 		if refTypeStr == "way":
@@ -484,7 +484,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			if parentId in relationObjsById.keys():
 				continue #This object is being deleted anyway
 			parent = parentRelationsForRelationsIndex[parentId]
-			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+			for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
 				if refTypeStr != "relation":
 					continue
 				if refId in relationObjsById.keys():
@@ -512,7 +512,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			if parentId in relationObjsById.keys():
 				continue #This object is being deleted anyway
 			parent = parentRelationsForWaysIndex[parentId]
-			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+			for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
 				if refTypeStr != "way":
 					continue
 				if refId in wayObjsById.keys():
@@ -564,7 +564,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
 			parent = parentRelationsForNodesIndex[parentId]
-			for refTypeStr, refId in zip(parent.refTypeStrs, parent.refIds):
+			for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
 				if refTypeStr != "node":
 					continue
 				if refId in nodeObjsById.keys():
@@ -940,7 +940,7 @@ def download(request, changesetId):
 	#print (changesetData.data.empty())
 	sio = io.BytesIO()
 	outBufWrapped = pgmap.CPyOutbuf(sio)
-	pgmap.SaveToOsmChangeXml(osmChange, True, outBufWrapped)
+	pgmap.SaveToOsmChangeXml(osmChange, outBufWrapped, True)
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -1034,9 +1034,10 @@ def upload(request, changesetId):
 
 	elementCount = 0
 	for i in range(request.data.blocks.size()):
-		action = request.data.actions[i]
-		block = request.data.blocks[i]
-		ifunused = request.data.ifunused[i]
+		changeBlock = request.data.blocks[i]
+		action = changeBlock.action
+		block = changeBlock.data
+		ifunused = changeBlock.ifUnused
 		timestamp = time.time()
 		elementCount += block.nodes.size() + block.ways.size() + block.relations.size()
 		if elementCount > settings.CHANGESETS_MAXIMUM_ELEMENTS:

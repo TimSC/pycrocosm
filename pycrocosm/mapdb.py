@@ -36,12 +36,17 @@ def make_pgmap_limits():
 		"max_attribute_bytes": int(getattr(settings, "PGMAP_XML_MAX_ATTRIBUTE_BYTES", 4096)),
 	}
 
+def make_xml_limits():
+	"""Limits for parsing uploaded XML, read from the current settings."""
+	limits = pgmap.OsmXmlLimits()
+	limits.Apply(make_pgmap_limits())
+	return limits
+
 def make_pgmap():
 	mapDbSettings = settings.MAP_DATABASE
 	return pgmap.PgMap(make_connection_string(),
 		str(mapDbSettings["PREFIX"]), str(mapDbSettings[ACTIVE_DB]),
-		str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]),
-		make_pgmap_limits())
+		str(mapDbSettings["PREFIX_MOD"]), str(mapDbSettings["PREFIX_TEST"]))
 
 def get_pgmap():
 	p = getattr(_thread_local, "pgmap", None)
