@@ -10,13 +10,31 @@ from django.shortcuts import render
 from django.http import HttpResponse
 from django.conf import settings
 from pycrocosm import common
+from changeset.views import get_changeset_query_limits
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 
 # Create your views here.
 
+def query_limits():
+	"""The limits advertised by the capabilities call that have defaults.
+
+	The notes limits describe the notes API, which this server does not have
+	yet; they are advertised because editors expect to find them.
+	"""
+	changesetsDefault, changesetsMaximum = get_changeset_query_limits()
+	return {
+		"changesets_default": changesetsDefault,
+		"changesets_maximum": changesetsMaximum,
+		"notes_default": getattr(settings, 'NOTES_DEFAULT_QUERY_LIMIT', 100),
+		"notes_maximum": getattr(settings, 'NOTES_MAXIMUM_QUERY_LIMIT', 10000),
+		"relationmembers": settings.RELATION_MEMBERS_MAXIMUM,
+	}
+
 @api_view(['GET'])
 def capabilities(request):
+
+	limits = query_limits()
 
 	if common.wants_json(request):
 		return common.json_response({
@@ -26,7 +44,12 @@ def capabilities(request):
 				"note_area": {"maximum": settings.NOTE_AREA_MAXIMUM},
 				"tracepoints": {"per_page": settings.TRACEPOINTS_PER_PAGE},
 				"waynodes": {"maximum": settings.WAYNODES_MAXIMUM},
-				"changesets": {"maximum_elements": settings.CHANGESETS_MAXIMUM_ELEMENTS},
+				"changesets": {"maximum_elements": settings.CHANGESETS_MAXIMUM_ELEMENTS,
+					"default_query_limit": limits["changesets_default"],
+					"maximum_query_limit": limits["changesets_maximum"]},
+				"notes": {"default_query_limit": limits["notes_default"],
+					"maximum_query_limit": limits["notes_maximum"]},
+				"relationmembers": {"maximum": limits["relationmembers"]},
 				"timeout": {"seconds": settings.TIMEOUT_SECONDS},
 				"status": {"database": settings.STATUS_DATABASE, "api": settings.STATUS_API,
 					"gpx": settings.STATUS_GPX},
@@ -58,6 +81,13 @@ def capabilities(request):
 	waynodes.attrib["maximum"] = str(settings.WAYNODES_MAXIMUM)
 	changesets = ET.SubElement(api, "changesets")
 	changesets.attrib["maximum_elements"] = str(settings.CHANGESETS_MAXIMUM_ELEMENTS)
+	changesets.attrib["default_query_limit"] = str(limits["changesets_default"])
+	changesets.attrib["maximum_query_limit"] = str(limits["changesets_maximum"])
+	notes = ET.SubElement(api, "notes")
+	notes.attrib["default_query_limit"] = str(limits["notes_default"])
+	notes.attrib["maximum_query_limit"] = str(limits["notes_maximum"])
+	relationmembers = ET.SubElement(api, "relationmembers")
+	relationmembers.attrib["maximum"] = str(limits["relationmembers"])
 	timeout = ET.SubElement(api, "timeout")
 	timeout.attrib["seconds"] = str(settings.TIMEOUT_SECONDS)
 	status = ET.SubElement(api, "status")

@@ -2,10 +2,11 @@
 from __future__ import unicode_literals
 from __future__ import print_function
 from rest_framework.parsers import BaseParser
-from rest_framework.exceptions import ParseError
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from defusedxml.ElementTree import parse
 from django.conf import settings
 import io
+import zlib
 import pgmap
 from pycrocosm.mapdb import make_xml_limits
 
@@ -35,6 +36,52 @@ def decode_error_detail(err):
 		_, limit, maximum, actual = err.args
 		return limit_message(LIMIT_SETTING_NAMES.get(limit, limit), maximum, actual)
 	return str(err)
+
+class DecompressedStream(object):
+	"""Reads the decompressed form of a compressed request body.
+
+	Nothing is decompressed beyond what each read asks for, so the upload
+	limits apply to the decompressed size without the body being expanded first.
+	"""
+	def __init__(self, stream, wbits):
+		self.stream = stream
+		self.decompressor = zlib.decompressobj(wbits)
+		self.finished = False
+
+	def read(self, size):
+		try:
+			while not self.finished:
+				compressed = self.decompressor.unconsumed_tail
+				atEnd = False
+				if len(compressed) == 0:
+					compressed = self.stream.read(16384)
+					atEnd = len(compressed) == 0
+				# With no input left this still returns output held back by
+				# the size of an earlier read
+				out = self.decompressor.decompress(compressed, size)
+				if atEnd and len(out) == 0 and not self.decompressor.eof:
+					raise ParseError(detail="Compressed request body ends part way through")
+				if self.decompressor.eof:
+					# Anything after the end of the compressed data is ignored
+					self.finished = True
+				if len(out) > 0:
+					return out
+		except zlib.error as err:
+			raise ParseError(detail="Request body could not be decompressed: {}".format(err))
+		return b""
+
+def body_stream(stream, parser_context):
+	"""The request body as the client wrote it, undoing any Content-Encoding."""
+	request = (parser_context or {}).get('request')
+	encoding = request.META.get('HTTP_CONTENT_ENCODING', '') if request is not None else ''
+	encoding = encoding.strip().lower()
+	if encoding in ('', 'identity'):
+		return stream
+	if encoding in ('gzip', 'x-gzip'):
+		return DecompressedStream(stream, 16 + zlib.MAX_WBITS)
+	if encoding == 'deflate':
+		return DecompressedStream(stream, zlib.MAX_WBITS)
+	raise UnsupportedMediaType(encoding, detail="Content-Encoding {} is not supported".format(encoding))
 
 def feed_upload(stream, parser):
 	"""Pass an uploaded document to a pgmap push parser in pieces.
@@ -72,18 +119,18 @@ def read_limited(stream):
 class DefusedXmlParser(BaseParser):
 	media_type = '*/*'
 	def parse(self, stream, media_type, parser_context):
-		return parse(read_limited(stream))
+		return parse(read_limited(body_stream(stream, parser_context)))
 
 class OsmDataXmlParser(BaseParser):
 	media_type = 'text/xml'
 	def parse(self, stream, media_type, parser_context):
 		data = pgmap.OsmData()
-		feed_upload(stream, pgmap.OsmXmlParser(data, make_xml_limits()))
+		feed_upload(body_stream(stream, parser_context), pgmap.OsmXmlParser(data, make_xml_limits()))
 		return data
 
 class OsmChangeXmlParser(BaseParser):
 	media_type = 'text/xml'
 	def parse(self, stream, media_type, parser_context):
 		data = pgmap.OsmChange()
-		feed_upload(stream, pgmap.OsmChangeXmlParser(data, make_xml_limits()))
+		feed_upload(body_stream(stream, parser_context), pgmap.OsmChangeXmlParser(data, make_xml_limits()))
 		return data

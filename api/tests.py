@@ -86,3 +86,15 @@ class ApiFormatTestCase(TestCase):
 		doc = json.loads(response.content)
 		self.assertEqual(doc["permissions"], [])
 		self.assertEqual(doc["version"], str(settings.API_VERSION))
+
+	def test_capabilities_limits(self):
+		xml = ET.fromstring(self.client.get("/api/0.6/capabilities").content)
+		api = json.loads(self.client.get("/api/0.6/capabilities.json").content)["api"]
+		self.assertEqual(xml.find("api/relationmembers").attrib, {"maximum": str(settings.RELATION_MEMBERS_MAXIMUM)})
+		self.assertEqual(api["relationmembers"], {"maximum": settings.RELATION_MEMBERS_MAXIMUM})
+		for name in ("changesets", "notes"):
+			for limit in ("default_query_limit", "maximum_query_limit"):
+				self.assertGreater(api[name][limit], 0)
+				self.assertEqual(xml.find("api/" + name).attrib[limit], str(api[name][limit]))
+			self.assertLessEqual(api[name]["default_query_limit"], api[name]["maximum_query_limit"])
+		self.assertEqual(xml.find("api/changesets").attrib["maximum_elements"], str(settings.CHANGESETS_MAXIMUM_ELEMENTS))

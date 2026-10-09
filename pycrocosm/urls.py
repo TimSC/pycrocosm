@@ -27,6 +27,7 @@ from django.contrib.auth import views as auth_views
 from objectinfo import views as objectinfo_views
 from pycrocosm.ratelimit import rate_limit
 from pycrocosm import formats
+from users import views as users_views
 
 login_view = rate_limit("login", "LOGIN_RATE_LIMIT_REQUESTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS")(
 	auth_views.LoginView.as_view())
@@ -36,6 +37,7 @@ urlpatterns = [
 	# preference key is free text and may itself end that way, so it is left alone.
 	url(r'^(?P<apipath>api/(?!0\.6/user/preferences/).*)\.(?P<fmt>json|xml)$', formats.with_format),
 	url(r'overpass/', include('overpass.urls', namespace='overpass')),
+	url(r'^api/0.6/users$', users_views.users, name='users'),
 	url(r'api/0.6/user/', include('users.urls')),
 	url(r'api/0.6/changeset', include('changeset.urls', namespace='changeset')),
 	url(r'api/0.6/(node|way|relation)/', include('elements.urls')),

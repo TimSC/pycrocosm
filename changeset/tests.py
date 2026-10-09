@@ -1534,3 +1534,185 @@ class ChangesetAutoCloseTestCase(TestCase):
 		if not ok:
 			print (errStr.errStr)
 		t.Commit()
+
+class ChangesetQueryAndCountsTestCase(TestCase):
+
+	def setUp(self):
+		self.username = "george"
+		self.password = "here comes the sun"
+		self.user = User.objects.create_user(self.username, 'gharrison@beatles.com', self.password)
+		self.client = Client()
+		self.client.login(username=self.username, password=self.password)
+
+	def tearDown(self):
+		self.user.delete()
+		errStr = pgmap.PgMapError()
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
+		ok = t.ResetActiveTables(errStr)
+		if not ok:
+			print (errStr.errStr)
+		t.Commit()
+
+	def listed_ids(self, query):
+		"""IDs of this user's changesets found by a query, in the order listed."""
+		response = Client().get("/api/0.6/changesets?user={}&{}".format(self.user.id, query))
+		self.assertEqual(response.status_code, 200, response.content)
+		return [int(cs.attrib["id"]) for cs in fromstring(response.content)]
+
+	def upload(self, cs, xml, **extra):
+		return self.client.post(reverse('changeset:upload', args=(cs.objId,)), xml,
+			content_type='text/xml', **extra)
+
+	def test_changeset_counts(self):
+		cs = CreateTestChangeset(self.user, is_open=True)
+		empty = CreateTestChangeset(self.user, is_open=True)
+
+		response = self.upload(cs, """<osmChange version="0.6"><create>
+			<node changeset="{0}" id="-1" lat="50.1" lon="-1.1" />
+			<node changeset="{0}" id="-2" lat="50.2" lon="-1.2" />
+			<node changeset="{0}" id="-3" lat="50.3" lon="-1.3" />
+			</create></osmChange>""".format(cs.objId))
+		self.assertEqual(response.status_code, 200, response.content)
+		ids = ParseOsmDiffToDict(fromstring(response.content))["node"]
+		response = self.upload(cs, """<osmChange version="0.6">
+			<modify><node changeset="{0}" id="{1}" version="1" lat="50.15" lon="-1.15" /></modify>
+			<delete><node changeset="{0}" id="{2}" version="1" lat="50.2" lon="-1.2" /></delete>
+			</osmChange>""".format(cs.objId, ids[-1][0], ids[-2][0]))
+		self.assertEqual(response.status_code, 200, response.content)
+
+		expected = {"comments_count": 0, "changes_count": 5, "created_count": 3,
+			"modified_count": 1, "deleted_count": 1}
+		none = dict.fromkeys(expected, 0)
+
+		xml = fromstring(Client().get("/api/0.6/changeset/{}".format(cs.objId)).content).find("changeset")
+		self.assertEqual({k: int(xml.attrib[k]) for k in expected}, expected)
+		doc = json.loads(Client().get("/api/0.6/changeset/{}.json".format(cs.objId)).content)["changeset"]
+		self.assertEqual({k: doc[k] for k in expected}, expected)
+		xml = fromstring(Client().get("/api/0.6/changeset/{}".format(empty.objId)).content).find("changeset")
+		self.assertEqual({k: int(xml.attrib[k]) for k in expected}, none)
+
+		# The list reports the same counts for each changeset
+		listed = {int(c.attrib["id"]): c for c in fromstring(
+			Client().get("/api/0.6/changesets?user={}".format(self.user.id)).content)}
+		self.assertEqual({k: int(listed[cs.objId].attrib[k]) for k in expected}, expected)
+		self.assertEqual({k: int(listed[empty.objId].attrib[k]) for k in expected}, none)
+		listed = {c["id"]: c for c in json.loads(
+			Client().get("/api/0.6/changesets.json?user={}".format(self.user.id)).content)["changesets"]}
+		self.assertEqual({k: listed[cs.objId][k] for k in expected}, expected)
+
+		# Closing a changeset reports what it held
+		response = self.client.put(reverse('changeset:close', args=(cs.objId,)))
+		self.assertEqual(response.status_code, 200)
+		xml = fromstring(response.content).find("changeset")
+		self.assertEqual(int(xml.attrib["changes_count"]), 5)
+
+	def test_changeset_query_order_limit_and_times(self):
+		base = 1500000000 # 2017-07-14T02:40:00Z
+		def iso(offset):
+			return datetime.datetime.fromtimestamp(base + offset, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+		# Opened 1000s apart; all but the newest closed 500s after opening
+		css = [CreateTestChangeset(self.user, is_open=(i == 4), open_timestamp=base + i * 1000,
+			close_timestamp=base + i * 1000 + 500, bbox=(i, i, i + 0.5, i + 0.5)).objId for i in range(5)]
+
+		self.assertEqual(self.listed_ids(""), css[::-1])
+		self.assertEqual(self.listed_ids("order=newest"), css[::-1])
+		self.assertEqual(self.listed_ids("limit=2"), [css[4], css[3]])
+		self.assertEqual(self.listed_ids("limit=2&order=oldest"), [css[0], css[1]])
+		self.assertEqual(self.listed_ids("order=oldest"), css)
+
+		# from is inclusive, to is exclusive, and to alone does nothing
+		self.assertEqual(self.listed_ids("from=" + iso(2000)), [css[4], css[3], css[2]])
+		self.assertEqual(self.listed_ids("from={}&to={}".format(iso(1000), iso(3000))), [css[2], css[1]])
+		self.assertEqual(self.listed_ids("from={}&to={}&order=oldest&limit=1".format(iso(1000), iso(3000))), [css[1]])
+		self.assertEqual(self.listed_ids("to=" + iso(2000)), css[::-1])
+		# Times may also be whole seconds, or a time with an offset
+		self.assertEqual(self.listed_ids("from={}".format(base + 3000)), [css[4], css[3]])
+		self.assertEqual(self.listed_ids("from=2017-07-14T04:30:00%2B01:00"), [css[4], css[3]])
+
+		# time=T1 finds changesets closed after T1 or still open; T2 limits by creation
+		self.assertEqual(self.listed_ids("time=" + iso(2600)), [css[4], css[3]])
+		self.assertEqual(self.listed_ids("time=" + iso(2500)), [css[4], css[3], css[2]])
+		self.assertEqual(self.listed_ids("time={},{}".format(iso(1600), iso(3000))), [css[2]])
+
+		# Changesets by ID and by area
+		self.assertEqual(self.listed_ids("changesets={},{}".format(css[3], css[0])), [css[3], css[0]])
+		self.assertEqual(self.listed_ids("bbox=1.6,1.6,3.2,3.2"), [css[3], css[2]])
+		self.assertEqual(self.listed_ids("open=true&order=oldest"), [css[4]])
+
+		for bad in ("limit=0", "limit=-1", "limit=abc", "limit=101", "order=sideways",
+			"from=yesterday", "time=1,2,3", "time=" + iso(0) + "&order=oldest",
+			"changesets=", "changesets=a,b", "bbox=1,2,3", "bbox=3,3,1,1"):
+			response = Client().get("/api/0.6/changesets?" + bad)
+			self.assertEqual(response.status_code, 400, bad)
+		self.assertEqual(Client().get("/api/0.6/changesets?user=1&display_name=george").status_code, 400)
+
+	@override_settings(CHANGESETS_DEFAULT_QUERY_LIMIT=2, CHANGESETS_MAXIMUM_QUERY_LIMIT=3)
+	def test_changeset_query_limit_settings(self):
+		css = [CreateTestChangeset(self.user, open_timestamp=1500000000 + i).objId for i in range(4)]
+		self.assertEqual(self.listed_ids(""), [css[3], css[2]])
+		self.assertEqual(self.listed_ids("limit=3"), [css[3], css[2], css[1]])
+		self.assertEqual(Client().get("/api/0.6/changesets?limit=4").status_code, 400)
+		xml = fromstring(Client().get("/api/0.6/capabilities").content).find("api/changesets")
+		self.assertEqual((xml.attrib["default_query_limit"], xml.attrib["maximum_query_limit"]), ("2", "3"))
+
+	def test_compressed_uploads(self):
+		import gzip, zlib
+		cs = CreateTestChangeset(self.user, is_open=True)
+		def change(ident):
+			return """<osmChange version="0.6"><create>
+				<node changeset="{}" id="{}" lat="50.1" lon="-1.1" />
+				</create></osmChange>""".format(cs.objId, ident).encode("utf-8")
+
+		response = self.upload(cs, gzip.compress(change(-1)), HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 200, response.content)
+		created = ParseOsmDiffToDict(fromstring(response.content))["node"][-1][0]
+		self.assertIsNotNone(GetObj(get_pgmap(), "node", created))
+
+		response = self.upload(cs, zlib.compress(change(-2)), HTTP_CONTENT_ENCODING="deflate")
+		self.assertEqual(response.status_code, 200, response.content)
+		response = self.upload(cs, change(-3), HTTP_CONTENT_ENCODING="identity")
+		self.assertEqual(response.status_code, 200, response.content)
+
+		# A body larger than any one read of the compressed or decompressed data
+		nodes = "".join('<node changeset="{}" id="-{}" lat="50.1" lon="-1.1"><tag k="note" v="{}" /></node>'.format(
+			cs.objId, i + 10, "%032x" % random.getrandbits(128)) for i in range(3000))
+		big = gzip.compress('<osmChange version="0.6"><create>{}</create></osmChange>'.format(nodes).encode("utf-8"))
+		self.assertGreater(len(big), 40000)
+		response = self.upload(cs, big, HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 200, response.content[:300])
+		self.assertEqual(len(fromstring(response.content)), 3000)
+
+		# Requests that are not what they claim to be change nothing
+		whole = gzip.compress(change(-4))
+		for body, encoding, status in ((whole[:len(whole) // 2], "gzip", 400), (change(-4), "gzip", 400),
+			(whole, "deflate", 400), (whole, "br", 415)):
+			response = self.upload(cs, body, HTTP_CONTENT_ENCODING=encoding)
+			self.assertEqual(response.status_code, status, (encoding, response.content))
+		xml = fromstring(Client().get("/api/0.6/changeset/{}".format(cs.objId)).content).find("changeset")
+		self.assertEqual(int(xml.attrib["created_count"]), 3003)
+
+		# The other XML request bodies are decompressed the same way
+		body = gzip.compress(b'<osm><changeset><tag k="comment" v="compressed" /></changeset></osm>')
+		response = self.client.put(reverse('changeset:create'), body, content_type='text/xml',
+			HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 200, response.content)
+		xml = fromstring(Client().get("/api/0.6/changeset/{}".format(int(response.content))).content)
+		self.assertEqual(xml.find("changeset/tag").attrib["v"], "compressed")
+		node = gzip.compress('<osm><node changeset="{}" lat="50.1" lon="-1.1" /></osm>'.format(cs.objId).encode("utf-8"))
+		response = self.client.post("/api/0.6/nodes", node, content_type='text/xml', HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 200, response.content)
+
+	@override_settings(XML_UPLOAD_MAXIMUM_BYTES=100000)
+	def test_compressed_upload_limit_applies_to_decompressed_size(self):
+		import gzip
+		cs = CreateTestChangeset(self.user, is_open=True)
+		# A few kilobytes compressed, far over the limit once decompressed
+		bomb = gzip.compress(b'<osmChange version="0.6"><create>' + b" " * 50000000 + b'</create></osmChange>')
+		self.assertLess(len(bomb), 100000)
+		response = self.upload(cs, bomb, HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 400)
+		self.assertIn(b"XML_UPLOAD_MAXIMUM_BYTES", response.content)
+		body = gzip.compress(b'<osm><changeset>' + b" " * 50000000 + b'</changeset></osm>')
+		response = self.client.put(reverse('changeset:create'), body, content_type='text/xml',
+			HTTP_CONTENT_ENCODING="gzip")
+		self.assertEqual(response.status_code, 400)

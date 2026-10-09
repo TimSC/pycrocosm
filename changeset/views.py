@@ -14,6 +14,8 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 
 import xml.etree.ElementTree as ET
 import sys
+import re
+import math
 import datetime
 import json
 import pgmap
@@ -43,6 +45,23 @@ def DecodeIfNotUnicode(s):
 		return s
 	return s.decode('utf-8')
 
+def ChangesetCounts(changesetData):
+	"""The count attributes of a changeset, in the order they are written.
+
+	The edit counts are those pgmap's GetChangesetChangeCounts found.
+	"""
+	created = changesetData.created_count
+	modified = changesetData.modified_count
+	deleted = changesetData.deleted_count
+	return [
+		# Changeset comments are not stored yet, so there are never any
+		("comments_count", 0),
+		("changes_count", created + modified + deleted),
+		("created_count", created),
+		("modified_count", modified),
+		("deleted_count", deleted),
+	]
+
 def SerializeChangesetToElement(changesetData, include_discussion=False):
 
 	changeset = ET.Element("changeset")
@@ -61,6 +80,8 @@ def SerializeChangesetToElement(changesetData, include_discussion=False):
 		changeset.attrib["min_lat"] = str(changesetData.y1)
 		changeset.attrib["max_lon"] = str(changesetData.x2)
 		changeset.attrib["max_lat"] = str(changesetData.y2)
+	for name, count in ChangesetCounts(changesetData):
+		changeset.attrib[name] = str(count)
 
 	for tagKey in changesetData.tags:
 		tag = ET.SubElement(changeset, "tag")
@@ -100,6 +121,7 @@ def SerializeChangesetToDict(changesetData, include_discussion=False):
 		changeset["uid"] = changesetData.uid
 	if len(changesetData.username) > 0:
 		changeset["user"] = DecodeIfNotUnicode(changesetData.username)
+	changeset.update(ChangesetCounts(changesetData))
 	if len(changesetData.tags) > 0:
 		changeset["tags"] = {DecodeIfNotUnicode(key): DecodeIfNotUnicode(changesetData.tags[key])
 			for key in changesetData.tags}
@@ -886,6 +908,7 @@ def changeset(request, changesetId):
 		return HttpResponseServerError(errStr.errStr)
 
 	if request.method == 'GET':
+		t.GetChangesetChangeCounts(changesetData)
 		t.Commit()
 
 		return SerializeChangesets([changesetData], include_discussion, request, single=True)
@@ -921,6 +944,7 @@ def changeset(request, changesetId):
 			t.Abort()
 			return HttpResponseServerError(errStr.errStr)
 
+		t.GetChangesetChangeCounts(changesetData)
 		t.Commit()
 
 		return SerializeChangesets([changesetData])
@@ -954,6 +978,7 @@ def close(request, changesetId):
 		return HttpResponse("This changeset belongs to a different user", status=409, content_type="text/plain")
 
 	t.CloseChangeset(int(changesetId), int(time.time()), errStr)
+	t.GetChangesetChangeCounts(changesetData)
 	t.Commit()
 
 	return SerializeChangesets([changesetData])
@@ -990,40 +1015,124 @@ def expand_bbox(request, changesetId):
 
 	return HttpResponse("Depricated December 2019", status=410, content_type="text/plain")
 
+def get_changeset_query_limits():
+	"""The default and the greatest number of changesets one query returns."""
+	maximum = getattr(settings, 'CHANGESETS_MAXIMUM_QUERY_LIMIT', 100)
+	return min(getattr(settings, 'CHANGESETS_DEFAULT_QUERY_LIMIT', 100), maximum), maximum
+
+def ParseQueryTime(text):
+	"""Seconds since 1970 for a time given to a changeset query.
+
+	The time is an ISO 8601 date or date and time, taken as UTC unless it
+	names an offset, or a whole number of seconds. Raises ValueError otherwise.
+	"""
+	text = text.strip()
+	if re.match(r"^[0-9]{9,}$", text):
+		return int(text)
+	if text.endswith(("Z", "z")):
+		text = text[:-1] + "+00:00"
+	parsed = datetime.datetime.fromisoformat(text)
+	if parsed.tzinfo is None:
+		parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+	return int(parsed.timestamp())
+
 @api_view(['GET'])
 def list_changesets(request):
-	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
-	user_uid = int(request.GET.get('user', 0))
-	display_name = request.GET.get('display_name', None)
-	timearg = request.GET.get('time', None)
-	isOpenOnly = request.GET.get('open', 'false') == 'true'
-	isClosedOnly = request.GET.get('closed', 'false') == 'true'
-	changesetsToGet = request.GET.get('changesets', None)
+	query = pgmap.PgChangesetQuery()
+	defaultLimit, maximumLimit = get_changeset_query_limits()
 
-	#Check display_name or uid actually exists
+	try:
+		query.user_uid = int(request.GET.get('user', 0))
+	except ValueError:
+		return HttpResponseBadRequest("Invalid user", content_type="text/plain")
+	display_name = request.GET.get('display_name', None)
+	if display_name is not None and 'user' in request.GET:
+		return HttpResponseBadRequest("Provide either the user or the display_name, but not both",
+			content_type="text/plain")
+	query.is_open_only = request.GET.get('open', 'false') == 'true'
+	query.is_closed_only = request.GET.get('closed', 'false') == 'true'
+
+	#Check display_name actually exists
 	if display_name is not None:
 		try:
 			user = User.objects.get(username=display_name)
-			user_uid = user.id
+			query.user_uid = user.id
 		except ObjectDoesNotExist:
 			return HttpResponseNotFound("User not found")
 
-	closedAfter = -1
-	openedBefore = -1
-	if timearg is not None:
-		timeargSplit = timearg.split(",")
-		if len(timeargSplit) >= 1:
-			closedAfter = int(timeargSplit[0])
-		if len(timeargSplit) >= 2:
-			openedBefore = int(timeargSplit[1])
+	bbox = request.GET.get('bbox', None) #min_lon,min_lat,max_lon,max_lat
+	if bbox is not None:
+		try:
+			bbox = [float(v) for v in bbox.split(",")]
+		except ValueError:
+			bbox = []
+		if len(bbox) != 4 or not all(math.isfinite(v) for v in bbox) or \
+			bbox[0] > bbox[2] or bbox[1] > bbox[3]:
+			return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
+		query.bbox = pgmap.vectord(bbox)
+
+	changesetsToGet = request.GET.get('changesets', None)
+	if changesetsToGet is not None:
+		try:
+			ids = [int(v) for v in changesetsToGet.split(",")]
+		except ValueError:
+			ids = []
+		if len(ids) == 0:
+			return HttpResponseBadRequest("No changesets were given to search for", content_type="text/plain")
+		query.ids = pgmap.vectori64(ids)
+
+	order = request.GET.get('order', 'newest')
+	if order not in ('newest', 'oldest'):
+		return HttpResponseBadRequest("Invalid order", content_type="text/plain")
+	query.oldestFirst = order == 'oldest'
+
+	try:
+		# time=T1 finds changesets closed after T1; time=T1,T2 those closed
+		# after T1 and created before T2
+		timearg = request.GET.get('time', None)
+		if timearg is not None:
+			if query.oldestFirst:
+				return HttpResponseBadRequest("Cannot use order=oldest with time", content_type="text/plain")
+			timeargSplit = timearg.split(",")
+			if len(timeargSplit) > 2:
+				raise ValueError(timearg)
+			query.closedAfterTimestamp = ParseQueryTime(timeargSplit[0])
+			if len(timeargSplit) == 2:
+				query.openedBeforeTimestamp = ParseQueryTime(timeargSplit[1])
+
+		# from=T1 finds changesets created at or after T1, and to=T2 limits
+		# them to those created before T2. A to without a from has no effect.
+		if 'from' in request.GET:
+			query.openedFromTimestamp = ParseQueryTime(request.GET['from'])
+			if 'to' in request.GET:
+				openedBefore = ParseQueryTime(request.GET['to'])
+				if query.openedBeforeTimestamp == -1 or openedBefore < query.openedBeforeTimestamp:
+					query.openedBeforeTimestamp = openedBefore
+	except (ValueError, OverflowError):
+		return HttpResponseBadRequest("Invalid time", content_type="text/plain")
+
+	try:
+		limit = int(request.GET.get('limit', defaultLimit))
+	except ValueError:
+		limit = 0
+	if limit < 1 or limit > maximumLimit:
+		return HttpResponseBadRequest("Changeset limit must be between 1 and {}".format(maximumLimit),
+			content_type="text/plain")
+	query.limit = limit
 
 	changesets = pgmap.vectorchangeset()
 	errStr = pgmap.PgMapError()
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
-	ok = t.GetChangesets(changesets, int(user_uid), closedAfter, openedBefore, 
-		isOpenOnly, isClosedOnly, errStr)
-
-	t.Commit()
+	try:
+		ok = t.GetChangesets(changesets, query, errStr)
+		if not ok:
+			common.abort_transaction(t)
+			return HttpResponseServerError(errStr.errStr)
+		t.GetChangesetChangeCounts(changesets)
+		t.Commit()
+	except Exception:
+		common.abort_transaction(t)
+		raise
 
 	changesetLi = []
 	for i in range(len(changesets)):
