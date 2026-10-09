@@ -117,8 +117,14 @@ class PgmapConfigTestCase(TestCase):
 
 	def test_values_by_name(self):
 		import pgmap
+		from unittest.mock import patch
+		import os
+		# pgmap reads the file the environment names
+		named = patch.dict(os.environ, {"PGMAP_CONFIG": self.path})
+		named.start()
+		self.addCleanup(named.stop)
 		def get(name, *default):
-			return pgmap.GetConfigValue(self.path, name, *default)
+			return pgmap.GetConfigValue(name, *default)
 		self.assertEqual(get("dbname"), "db_map")
 		# Spaces around a value are dropped; colons and spaces inside it are kept
 		self.assertEqual(get("dbhost"), "127.0.0.1")
@@ -135,15 +141,29 @@ class PgmapConfigTestCase(TestCase):
 		self.assertEqual(get("dbuser", "pycrocosm"), "pycrocosm")
 		self.assertEqual(get("DBNAME", "other"), "other")
 		self.assertEqual(get("a line without a colon", "none"), "none")
-		self.assertEqual(pgmap.GetConfigValue(self.path + ".missing", "dbname", "fallback"), "fallback")
-		self.assertEqual(pgmap.GetConfigValue(self.path + ".missing", "dbname"), "")
+		with patch.dict(os.environ, {"PGMAP_CONFIG": self.path + ".missing"}):
+			self.assertEqual(get("dbname", "fallback"), "fallback")
+			self.assertEqual(get("dbname"), "")
+		# With nothing named, it is config.cfg in the current directory, as for the tools
+		with patch.dict(os.environ, {"PGMAP_CONFIG": ""}):
+			here = os.getcwd()
+			os.chdir(os.path.dirname(self.path))
+			try:
+				self.assertEqual(get("dbname", "no config.cfg here"), "no config.cfg here")
+				os.symlink(self.path, "config.cfg")
+				try:
+					self.assertEqual(get("dbname", "fallback"), "db_map")
+				finally:
+					os.remove("config.cfg")
+			finally:
+				os.chdir(here)
 
 	def test_settings_use_the_config_file(self):
 		import os, pgmap
-		# What the settings module does: values from the file it names, else its defaults
-		self.assertTrue(settings.PGMAP_CONFIG.endswith(".cfg"))
+		# The settings module names the project's copy unless the environment named another
+		self.assertTrue(os.environ["PGMAP_CONFIG"].endswith(".cfg"))
 		for key in ("NAME", "USER", "PASSWORD", "HOST", "PORT", "PREFIX", "PREFIX_MOD", "PREFIX_TEST"):
 			self.assertIn(key, settings.MAP_DATABASE)
-		if os.path.exists(settings.PGMAP_CONFIG) and "DJANGO_MAP_DB_PREFIX" not in os.environ:
+		if os.path.exists(os.environ["PGMAP_CONFIG"]) and "DJANGO_MAP_DB_PREFIX" not in os.environ:
 			self.assertEqual(settings.MAP_DATABASE["PREFIX"],
-				pgmap.GetConfigValue(settings.PGMAP_CONFIG, "dbtableprefix", settings.MAP_DATABASE["PREFIX"]))
+				pgmap.GetConfigValue("dbtableprefix", settings.MAP_DATABASE["PREFIX"]))

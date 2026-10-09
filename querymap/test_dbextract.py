@@ -988,6 +988,8 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual({key: shown[key] for key in rows[0]}, rows[0])
         for element, count in (("extract_nodes", 2), ("extract_ways", 1), ("extract_relations", 0)):
             self.assertIn('<td id="{}">{}</td>'.format(element, count), page_html)
+        self.assertIn('<td id="extract_auto_update">disabled</td>', page_html)
+        self.assertIn('<td id="extract_update_url">this map</td>', page_html)
         self.assertIn("first &lt;extract&gt;", page_html)
         self.assertIn('href="{}"'.format(reverse("replication:download_extract_gz_by_id", args=[first])), page_html)
         for route in ("download_extract_o5m_gz_by_id", "download_extract_pbf_by_id"):
@@ -1654,3 +1656,194 @@ class DbExtractTestCase(SimpleTestCase):
             html = Client().get(reverse("replication:extracts")).content.decode("utf-8")
         for extension in ("osm.gz", "o5m.gz", "pbf"):
             self.assertIn('/extract/{}.{}"'.format(extract_id, extension), html)
+
+    # Automatic update settings of an extract
+
+    def extract_info(self, extract_id):
+        info = pgmap.ExtractInfo()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            self.assertTrue(t.GetExtract(extract_id, info))
+        finally:
+            t.Abort()
+        return info
+
+    def set_auto_update(self, extract_id, name, enabled, url):
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            result = t.SetExtractAutoUpdate(extract_id, name, enabled, url)
+            t.Commit()
+            return result
+        except BaseException:
+            t.Abort()
+            raise
+
+    def test_auto_update_settings(self):
+        self.create_node(0)
+        first = self.save("first")
+        second = self.save("second")
+        # A new extract is not updated automatically, and would be from this map
+        for extract_id in (first, second):
+            info = self.extract_info(extract_id)
+            self.assertEqual((info.autoUpdate, info.updateUrl), (False, ""))
+
+        self.assertEqual(self.set_auto_update(first, "", True, "https://example.org/api/0.6/"), first)
+        info = self.extract_info(first)
+        self.assertEqual((info.autoUpdate, info.updateUrl), (True, "https://example.org/api/0.6/"))
+        other = self.extract_info(second)
+        self.assertEqual((other.autoUpdate, other.updateUrl), (False, ""))
+        # By name, and each setting independently of the other
+        self.assertEqual(self.set_auto_update(0, "second", True, ""), second)
+        other = self.extract_info(second)
+        self.assertEqual((other.autoUpdate, other.updateUrl), (True, ""))
+        self.set_auto_update(first, "", False, "http://localhost:8000/")
+        info = self.extract_info(first)
+        self.assertEqual((info.autoUpdate, info.updateUrl), (False, "http://localhost:8000/"))
+
+        # The listing carries them too, and updating the extract keeps them
+        self.set_auto_update(first, "", True, "https://example.org/x?a=1&b='q'")
+        self.create_node(0.5)
+        self.update(first)
+        listed = pgmap.vectorextractinfo()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.ListExtracts(listed)
+            settings = [(e.extractId, e.autoUpdate, e.updateUrl) for e in listed]
+        finally:
+            t.Abort()
+        self.assertEqual(settings, [(first, True, "https://example.org/x?a=1&b='q'"), (second, True, "")])
+        from replicate.extracts import get_db_extract
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+            described = get_db_extract(first)
+        self.assertEqual((described["auto_update"], described["update_url"]),
+                         (True, "https://example.org/x?a=1&b='q'"))
+
+        # Only blank or a web address is accepted, and only for an extract that exists
+        for bad in ("example.org", "ftp://example.org/", "javascript:alert(1)", "https://exa mple.org/",
+                    "https://example.org/\n", "http://" + "a" * 2000):
+            with self.assertRaises(Exception, msg=bad):
+                self.set_auto_update(second, "", True, bad)
+        other = self.extract_info(second)
+        self.assertEqual((other.autoUpdate, other.updateUrl), (True, ""))
+        with self.assertRaisesRegex(RuntimeError, "Extract not found"):
+            self.set_auto_update(99999, "", True, "")
+        with self.assertRaisesRegex(RuntimeError, "Extract not found"):
+            self.set_auto_update(0, "missing", True, "")
+
+    def test_auto_update_columns_are_added_to_an_older_schema_14(self):
+        self.create_node(0)
+        extract_id = self.save("made before the columns")
+        extracts = sql.Identifier(self.prefixes[1] + "extracts")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN auto_update, DROP COLUMN update_url").format(extracts))
+        with self.assertRaises(Exception):
+            self.extract_info(extract_id)
+
+        # Asking for schema 14 again, as the admin tool does, brings the table up to date
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+        info = self.extract_info(extract_id)
+        self.assertEqual((info.name, info.autoUpdate, info.updateUrl), ("made before the columns", False, ""))
+        self.assertEqual(len(self.contents(extract_id)), 1)
+        # Doing so once more changes nothing
+        self.set_auto_update(extract_id, "", True, "https://example.org/")
+        admin = self.map.GetAdmin("")
+        try:
+            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            admin.Commit()
+        finally:
+            del admin
+        info = self.extract_info(extract_id)
+        self.assertEqual((info.autoUpdate, info.updateUrl), (True, "https://example.org/"))
+
+    # The manage.py command that updates extracts
+
+    def update_command(self, *arguments):
+        from django.core.management import call_command
+        out = io.StringIO()
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+            call_command("updateextracts", *arguments, stdout=out, no_color=True)
+        return out.getvalue().splitlines()
+
+    def test_update_command(self):
+        from django.core.management.base import CommandError
+        self.assertEqual(self.update_command(), ["No extracts are enabled for automatic updates"])
+        self.assertEqual(self.update_command("--all"), ["No extracts to update"])
+
+        self.create_node(0)
+        automatic = self.save("automatic")
+        manual = self.save("manual")
+        remote = self.save("")
+        self.set_auto_update(automatic, "", True, "")
+        self.set_auto_update(remote, "", True, "https://example.org/api/")
+        self.assertEqual(self.update_command(), [
+            "Extract {} (automatic): already up to date".format(automatic),
+            "Extract {}: skipped, updating from another API (https://example.org/api/) "
+            "is not implemented yet".format(remote),
+            "0 updated, 1 already up to date, 1 skipped, 0 failed"])
+
+        # After an edit, only the extract enabled for it is brought up to date
+        added = self.create_node(0.5)
+        key = ("node", added.objId)
+        lines = self.update_command()
+        self.assertRegex(lines[0], r"^Extract {} \(automatic\): updated in \d+\.\ds$".format(automatic))
+        self.assertEqual(lines[2], "1 updated, 0 already up to date, 1 skipped, 0 failed")
+        self.assertIn(key, self.contents(automatic))
+        self.assertNotIn(key, self.contents(manual))
+        self.assertNotIn(key, self.contents(remote))
+        self.assert_current(automatic)
+
+        # Chosen by ID, an extract is updated whatever its setting
+        lines = self.update_command("--id", str(manual))
+        self.assertRegex(lines[0], r"^Extract {} \(manual\): updated in".format(manual))
+        self.assertEqual(lines[1], "1 updated, 0 already up to date, 0 skipped, 0 failed")
+        self.assertIn(key, self.contents(manual))
+
+        # --all takes every extract; the one that updates from elsewhere is still skipped
+        another = self.create_node(0.25)
+        lines = self.update_command("--all")
+        self.assertEqual(len(lines), 4)
+        self.assertEqual(lines[3], "2 updated, 0 already up to date, 1 skipped, 0 failed")
+        for extract_id in (automatic, manual):
+            self.assertIn(("node", another.objId), self.contents(extract_id))
+        self.assertNotIn(("node", another.objId), self.contents(remote))
+        self.assertEqual(self.update_command("--id", str(automatic), "--id", str(manual))[-1],
+                         "0 updated, 2 already up to date, 0 skipped, 0 failed")
+
+        for arguments, message in ((("--id", "99999"), "No extract with ID 99999"),
+                                   (("--all", "--id", str(manual)), "not both")):
+            with self.assertRaisesRegex(CommandError, message):
+                self.update_command(*arguments)
+
+    def test_update_command_carries_on_after_a_failure(self):
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        self.create_node(0)
+        broken = self.save("broken")
+        working = self.save("working")
+        for extract_id in (broken, working):
+            self.set_auto_update(extract_id, "", True, "")
+        # Without a checkpoint an extract cannot be updated
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET edit_activity_id=NULL, atomic_edit_id=NULL WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "extracts")), [broken])
+        added = self.create_node(0.5)
+
+        out = io.StringIO()
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+            with self.assertRaisesRegex(CommandError, "1 extract could not be updated"):
+                call_command("updateextracts", stdout=out, no_color=True)
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "Extract {} (broken): failed, Extract has no established "
+                                   "synchronization checkpoint".format(broken))
+        self.assertRegex(lines[1], r"^Extract {} \(working\): updated in".format(working))
+        self.assertEqual(lines[2], "1 updated, 0 already up to date, 0 skipped, 1 failed")
+        self.assertIn(("node", added.objId), self.contents(working))

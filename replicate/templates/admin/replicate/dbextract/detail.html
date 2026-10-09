@@ -18,6 +18,8 @@
 <tr><th>Name</th><td>{{ extract.name|default:"-" }}</td></tr>
 <tr><th>Bbox (west, south, east, north)</th><td>{{ extract.bbox|join:", " }}</td></tr>
 <tr><th>Query mode</th><td>{{ extract.query_mode }}</td></tr>
+<tr><th>Automatic updates</th><td id="extract_auto_update">{% if extract.auto_update %}enabled{% else %}disabled{% endif %}</td></tr>
+<tr><th>Update from</th><td id="extract_update_url">{{ extract.update_url|default:"this map" }}</td></tr>
 <tr><th>Last saved or updated</th><td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td></tr>
 <tr><th>Edit activity checkpoint</th><td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td></tr>
 <tr><th>Atomic edit checkpoint</th><td>{{ extract.atomic_edit_id|default_if_none:"not set" }}</td></tr>

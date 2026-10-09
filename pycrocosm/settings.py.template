@@ -41,6 +41,14 @@ def _env_bool(name, default):
 		return default
 	return value.strip().lower() in ("1", "true", "yes", "on")
 
+def _env_list(name, default):
+	"""The items of a comma separated environment variable, or the default if it is not set."""
+	value = os.environ.get(name)
+	if value is None or value.strip() == "":
+		return default
+	# Spaces separate items as well, which is how this was once written in .env
+	return value.replace(",", " ").split()
+
 def _env_first(names, default):
 	for name in names:
 		if os.environ.get(name):
@@ -50,7 +58,9 @@ def _env_first(names, default):
 # The DEBUG environment variable (1/true/yes/on, or 0/false/no/off) replaces this default
 DEBUG = _env_bool("DEBUG", True)
 
-ALLOWED_HOSTS = []
+# Host names this site may be reached by. DJANGO_ALLOWED_HOSTS replaces the
+# list, as names separated by commas: localhost,127.0.0.1,[::1]
+ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", [])
 
 # Application definition
 
@@ -120,17 +130,15 @@ WSGI_APPLICATION = 'pycrocosm.wsgi.application'
 # ****** Settings shared with pgmap ******
 # The map database's name, login and table prefixes are kept in pgmap's
 # config.cfg, where pgmap's command line tools read them. MAP_DATABASE fetches
-# them from there through the pgmap module, not repeating them here. The second
-# argument of _pgmap_config is what applies if config.cfg does not exist or
-# does not give a value. PGMAP_CONFIG in the environment names a different
-# file. The settings database below is separate: it takes nothing from pgmap,
-# and is set by the DJANGO_DB_* environment variables.
+# them from there with pgmap.GetConfigValue, not repeating them here. Its
+# second argument is what applies if config.cfg does not exist or does not
+# give a value. pgmap reads the file named by PGMAP_CONFIG, which is set here
+# to the copy in this project unless the environment already names another.
+# The settings database below is separate: it takes nothing from pgmap, and is
+# set by the DJANGO_DB_* environment variables.
 
 import pgmap
-PGMAP_CONFIG = os.environ.get('PGMAP_CONFIG', os.path.join(BASE_DIR, 'pgmap', 'config.cfg'))
-
-def _pgmap_config(name, default):
-	return pgmap.GetConfigValue(PGMAP_CONFIG, name, default)
+os.environ.setdefault('PGMAP_CONFIG', os.path.join(BASE_DIR, 'pgmap', 'config.cfg'))
 
 DATABASES = {
 	'default': {
@@ -146,14 +154,14 @@ DATABASES = {
 }
 
 MAP_DATABASE = {
-	'NAME': _pgmap_config('dbname', 'db_map'),
-	'USER': _pgmap_config('dbuser', 'pycrocosm'),
-	'PASSWORD': _pgmap_config('dbpass', 'password'),
-	'HOST': _pgmap_config('dbhost', '127.0.0.1'),
-	'PORT': '5432',
-	'PREFIX': _pgmap_config('dbtableprefix', "planet_static_"),
-	'PREFIX_TEST': _pgmap_config('dbtabletestprefix', "planet_test_"),
-	'PREFIX_MOD': _pgmap_config('dbtablemodifyprefix', "planet_mod_"),
+	'NAME': pgmap.GetConfigValue('dbname', 'db_map'),
+	'USER': pgmap.GetConfigValue('dbuser', 'pycrocosm'),
+	'PASSWORD': pgmap.GetConfigValue('dbpass', 'password'),
+	'HOST': pgmap.GetConfigValue('dbhost', '127.0.0.1'),
+	'PORT': pgmap.GetConfigValue('dbport', '5432'),
+	'PREFIX': pgmap.GetConfigValue('dbtableprefix', "planet_static_"),
+	'PREFIX_TEST': pgmap.GetConfigValue('dbtabletestprefix', "planet_test_"),
+	'PREFIX_MOD': pgmap.GetConfigValue('dbtablemodifyprefix', "planet_mod_"),
 }
 
 # ****** Database settings from the environment ******

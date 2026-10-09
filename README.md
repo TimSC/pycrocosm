@@ -51,7 +51,7 @@ If you use a firewall such as ufw, also allow port 5432 from Docker:
 
 ### Configuration
 
-The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else.
+The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue(name, default)`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else.
 
 The Django settings database takes nothing from `config.cfg`: it is set by the `DJANGO_DB_*` environment variables. Those and the other settings are read from `.env`, whose values also take precedence over `config.cfg` for the map database. Create it from the template and edit it:
 
@@ -59,7 +59,7 @@ The Django settings database takes nothing from `config.cfg`: it is set by the `
 
     nano .env
 
-Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. Every database setting in `pycrocosm/settings.py` can be replaced this way: the name, user, password, host and port of the settings database (`DJANGO_DB_*`), and the same for the map database plus its table prefixes (`DJANGO_MAP_DB_*`, which fall back to the `DJANGO_DB_*` values for user, password, host and port). `env.template` lists them all; anything left unset keeps the value in `settings.py`. If you want to access the site from other computers, `DJANGO_ALLOWED_HOSTS` needs to be set as well. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
+Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. Every database setting in `pycrocosm/settings.py` can be replaced this way: the name, user, password, host and port of the settings database (`DJANGO_DB_*`), and the same for the map database plus its table prefixes (`DJANGO_MAP_DB_*`, which fall back to the `DJANGO_DB_*` values for user, password, host and port). `env.template` lists them all; anything left unset keeps the value in `settings.py`. If you want to access the site from other computers, add their names for it to `DJANGO_ALLOWED_HOSTS`, a comma separated list. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
 
 ### Build and run
 
@@ -184,6 +184,15 @@ existing tables. This targeted suite does not need a Django test database.
 The tests create a temporary `test_db_settings` database, so the pycrocosm user needs permission to create databases:
 
      sudo -u postgres psql -c "ALTER USER pycrocosm CREATEDB;"
+
+Updating database extracts
+--------------------------
+
+Extracts stored in the map database (see the admin pages, and pgmap's README) are brought up to date with the map by:
+
+	python3 manage.py updateextracts
+
+Run it from a scheduler such as cron to keep them current. Without options it updates only the extracts enabled for automatic updates; `--all` updates every extract and `--id N` (which may be repeated) updates particular ones, both whatever their setting. Each extract is updated in its own transaction, so one that fails does not hold back the others; the command then finishes with an error status. An extract set to update from another API is skipped, because that is not implemented yet.
 
 Overpass queries
 ----------------

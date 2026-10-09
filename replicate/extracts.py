@@ -16,6 +16,9 @@ def describe_db_extract(info):
 		"edit_activity_id": info.editActivityId if info.editActivityId >= 0 else None,
 		"atomic_edit_id": info.atomicEditId if info.atomicEditId >= 0 else None,
 		"up_to_date": not info.pendingActivity,
+		# What is wanted for keeping the extract up to date; nothing acts on it yet
+		"auto_update": info.autoUpdate,
+		"update_url": info.updateUrl,
 	}
 	if info.nodes >= 0:
 		extract.update({"nodes": info.nodes, "ways": info.ways, "relations": info.relations})
