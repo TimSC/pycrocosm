@@ -183,6 +183,32 @@ The tests create a temporary `test_db_settings` database, so the pycrocosm user 
 
      sudo -u postgres psql -c "ALTER USER pycrocosm CREATEDB;"
 
+Overpass queries
+----------------
+
+The server answers a subset of [Overpass QL](https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL) at `/api/interpreter` (also `/overpass/api/interpreter`). Send the query as the `data` parameter of a GET or POST, or as the body of a POST:
+
+	curl -d 'data=[out:json];nwr[amenity=pub](50.78,-1.10,50.80,-1.05);out center;' http://localhost:8000/api/interpreter
+
+To use [Overpass Turbo](https://overpass-turbo.eu/), set its server to the address ending in `/api/`.
+
+What is understood:
+
+* Settings: `[out:xml]` or `[out:json]`, `[timeout:]`, `[bbox:south,west,north,east]`, and `[bbox]` with a separate `bbox=west,south,east,north` parameter. `[maxsize:]` is accepted and ignored.
+* Queries for `node`, `way`, `rel`/`relation`, `nwr`, `nw`, `nr` and `wr`, with the tag filters `[k]`, `[!k]`, `[k=v]`, `[k!=v]`, `[k~regex]` and `[k!~regex]` (add `,i` to ignore case), a bounding box `(south,west,north,east)`, IDs `(id)` or `(id:a,b)`, and input sets `.name`.
+* Named sets with `->.name`, unions `( ...; )`, a set as a statement `.name;`, and the recursion statements `>`, `>>`, `<` and `<<`.
+* `out` with `ids`, `skel`, `body`, `tags` or `meta`; `geom`, `bb` or `center`; `count`; and a maximum number of elements. `qt` is accepted and ignored: output is in ID order.
+
+Everything else in the language, such as areas, `around`, `foreach` and CSV output, is refused with a message naming the feature. Overpass XML queries are not read.
+
+Differences from the main Overpass servers worth knowing:
+
+* A way or relation is in a bounding box if one of its nodes is (for a relation, a node of a member way counts). A way that only crosses the box is not found.
+* A query must have something to search by: a bounding box no larger than `OVERPASS_AREA_MAXIMUM`, an ID, an input set, or a filter of the form `[k]` or `[k=v]`. The other tag filters alone would read the whole map and are refused.
+* Finding every way in a bounding box takes about as long as downloading that area from `/api/0.6/map`. Queries with a `[k]` or `[k=v]` filter are much quicker.
+
+The limits are set by `OVERPASS_TIMEOUT_DEFAULT`, `OVERPASS_TIMEOUT_MAXIMUM`, `OVERPASS_ELEMENTS_MAXIMUM`, `OVERPASS_RATE_LIMIT_REQUESTS` and `OVERPASS_RATE_LIMIT_WINDOW_SECONDS`, described in `settings.py.template`. The older XAPI calls under `/overpass/xapi/` run on the same code.
+
 Highly loaded servers
 ---------------------
 

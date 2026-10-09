@@ -28,6 +28,7 @@ from objectinfo import views as objectinfo_views
 from pycrocosm.ratelimit import rate_limit
 from pycrocosm import formats
 from users import views as users_views
+from overpass import views as overpass_views
 
 login_view = rate_limit("login", "LOGIN_RATE_LIMIT_REQUESTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS")(
 	auth_views.LoginView.as_view())
@@ -36,6 +37,7 @@ urlpatterns = [
 	# A .json or .xml suffix on an API path selects the response format. A user
 	# preference key is free text and may itself end that way, so it is left alone.
 	url(r'^(?P<apipath>api/(?!0\.6/user/preferences/).*)\.(?P<fmt>json|xml)$', formats.with_format),
+	url(r'^api/interpreter$', overpass_views.interpreter, name='overpass_interpreter'),
 	url(r'overpass/', include('overpass.urls', namespace='overpass')),
 	url(r'^api/0.6/users$', users_views.users, name='users'),
 	url(r'api/0.6/user/', include('users.urls')),

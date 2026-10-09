@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Map extracts</title>
+</head>
+<body>
+<h1>Map extracts</h1>
+
+<p><a href="{% url 'frontpage:index' %}">Front page</a></p>
+
+{% if error %}
+<p>The list of extracts is not available at the moment.</p>
+{% elif not extracts %}
+<p>No extracts are available.</p>
+{% else %}
+<p>Each extract is a snapshot of the map inside a rectangle, as gzipped OSM XML.</p>
+<table border="1" cellpadding="4">
+<thead>
+<tr><th>Name</th><th>Bbox (west, south, east, north)</th><th>Last updated</th><th>Download</th></tr>
+</thead>
+<tbody>
+{% for extract in extracts %}
+<tr>
+<td>{{ extract.name|default:"(unnamed)" }}</td>
+<td>{{ extract.bbox|join:", " }}</td>
+<td>{{ extract.performed_at|date:"Y-m-d H:i" }} UTC</td>
+<td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a>
+<a href="{% url 'replication:download_extract_o5m_gz_by_id' extract.id %}">.o5m.gz</a>
+<a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+</body>
+</html>

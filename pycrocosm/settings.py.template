@@ -209,7 +209,18 @@ ATTRIBUTION = ""
 LICENSE = "https://creativecommons.org/licenses/by-sa/2.0/"
 
 AREA_MAXIMUM = 0.25
+# Overpass queries (/api/interpreter) and XAPI. The area limit, in square
+# degrees, applies to a search by bounding box alone; a search for an exact tag
+# may cover any area.
 OVERPASS_AREA_MAXIMUM = AREA_MAXIMUM
+# Seconds a query may run if it does not say, and the most it may ask for
+OVERPASS_TIMEOUT_DEFAULT = 180
+OVERPASS_TIMEOUT_MAXIMUM = 180
+# The most elements one query may select or return
+OVERPASS_ELEMENTS_MAXIMUM = 100000
+# Queries allowed per client address in each window; zero turns the limit off
+OVERPASS_RATE_LIMIT_REQUESTS = int(os.environ.get('OVERPASS_RATE_LIMIT_REQUESTS', 60))
+OVERPASS_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get('OVERPASS_RATE_LIMIT_WINDOW_SECONDS', 60))
 NOTE_AREA_MAXIMUM = 25
 TRACEPOINTS_PER_PAGE = 50000
 WAYNODES_MAXIMUM = 2000000

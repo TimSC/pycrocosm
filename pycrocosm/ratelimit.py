@@ -10,15 +10,23 @@ from functools import wraps
 def get_client_ip(request):
 	return request.META.get('REMOTE_ADDR', '')
 
-def rate_limit(group, limit_setting, window_setting, methods=('POST',)):
+def rate_limit(group, limit_setting, window_setting, methods=('POST',), defaults=None):
+	"""Limit how often one client address may call a view.
+
+	defaults, if given, is the (limit, window) used when the settings are not defined.
+	"""
 	def decorator(view_func):
 		@wraps(view_func)
 		def wrapped(request, *args, **kwargs):
 			if methods is not None and request.method not in methods:
 				return view_func(request, *args, **kwargs)
 
-			limit = getattr(settings, limit_setting)
-			window = getattr(settings, window_setting)
+			if defaults is None:
+				limit = getattr(settings, limit_setting)
+				window = getattr(settings, window_setting)
+			else:
+				limit = getattr(settings, limit_setting, defaults[0])
+				window = getattr(settings, window_setting, defaults[1])
 			if limit <= 0 or window <= 0:
 				return view_func(request, *args, **kwargs)
 
