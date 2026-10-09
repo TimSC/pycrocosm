@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 from __future__ import print_function
+import json
 
 from django.test import TestCase
 from django.test import Client
@@ -411,6 +412,42 @@ class QueryMapTestCase(TestCase):
 			self.assertEqual(dict(relation.tags) == dict(relationIdDict[relation.objId].tags), True)
 			self.assertEqual([member.ref for member in relation.members],
 				[member.ref for member in relationIdDict[relation.objId].members])
+
+	def test_query_map_json(self):
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("way", way.objId, "outer"), ("node", node.objId, "")])
+		bbox = [node.lon-0.0001, node.lat-0.0001, node.lon+0.0001, node.lat+0.0001]
+		query = "?bbox={}".format(",".join(str(c) for c in bbox))
+
+		response = Client().get("/api/0.6/map.json" + query)
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "application/json")
+		doc = json.loads(b"".join(response.streaming_content))
+		self.assertEqual(doc["version"], "0.6")
+		self.assertEqual(sorted(doc["bounds"]), ["maxlat", "maxlon", "minlat", "minlon"])
+		self.assertAlmostEqual(doc["bounds"]["minlon"], bbox[0], places=7)
+		self.assertAlmostEqual(doc["bounds"]["maxlat"], bbox[3], places=7)
+
+		elements = {(e["type"], e["id"]): e for e in doc["elements"]}
+		self.assertIn(("node", node.objId), elements)
+		self.assertIn(("node", node2.objId), elements)
+		self.assertEqual(elements[("way", way.objId)]["nodes"], [node.objId, node2.objId])
+		self.assertEqual(elements[("relation", relation.objId)]["members"], [
+			{"type": "way", "ref": way.objId, "role": "outer"}, {"type": "node", "ref": node.objId, "role": ""}])
+		self.assertAlmostEqual(elements[("node", node.objId)]["lat"], node.lat, places=7)
+		self.assertEqual(elements[("node", node.objId)]["tags"], dict(node.tags))
+
+		# The JSON and XML answers hold the same objects
+		xml = DecodeOsmdataResponse(Client().get("/api/0.6/map" + query).streaming_content)
+		xmlKeys = ({("node", n.objId) for n in xml.nodes} | {("way", w.objId) for w in xml.ways} |
+			{("relation", r.objId) for r in xml.relations})
+		self.assertEqual(set(elements), xmlKeys)
+
+		# An area with nothing in it is still a complete document
+		empty = json.loads(b"".join(Client().get("/api/0.6/map.json?bbox=10,10,10.001,10.001").streaming_content))
+		self.assertEqual(empty["elements"], [])
 
 	def test_query_active_node(self):
 		node = create_node(self.user.id, self.user.username)

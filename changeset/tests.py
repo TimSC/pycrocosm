@@ -249,6 +249,61 @@ class ChangesetTestCase(TestCase):
 		self.assertEqual(foundSecond, True)
 		self.assertEqual(csout.find("discussion"), None)
 		
+	def test_get_changeset_json(self):
+		teststr = u"Съешь же ещё этих мягких французских булок да выпей чаю"
+		opened = int(time.time()) - 600
+		cs = CreateTestChangeset(self.user, tags={"foo": "bar", 'test': teststr},
+			bbox=(-1.0893202,50.7942715,-1.0803509,50.7989372), open_timestamp=opened)
+
+		response = Client().get("/api/0.6/changeset/{}.json".format(cs.objId))
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "application/json")
+		doc = json.loads(response.content)
+		self.assertEqual(doc["version"], "0.6")
+		out = doc["changeset"]
+		self.assertEqual(out["id"], cs.objId)
+		self.assertEqual(out["uid"], self.user.id)
+		self.assertEqual(out["user"], self.user.username)
+		self.assertIs(out["open"], True)
+		self.assertNotIn("closed_at", out)
+		self.assertEqual(out["created_at"],
+			datetime.datetime.fromtimestamp(opened, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+		self.assertEqual((out["min_lon"], out["min_lat"], out["max_lon"], out["max_lat"]),
+			(-1.0893202,50.7942715,-1.0803509,50.7989372))
+		self.assertEqual(out["tags"], {"foo": "bar", "test": teststr})
+		self.assertNotIn("comments", out)
+
+		withDiscussion = json.loads(Client().get(
+			"/api/0.6/changeset/{}.json?include_discussion=true".format(cs.objId)).content)
+		self.assertEqual(withDiscussion["changeset"]["comments"], [])
+
+		# A closed changeset says when, and one without edits has no bbox
+		closed = CreateTestChangeset(self.user, is_open=False, open_timestamp=opened, close_timestamp=opened+60)
+		out = json.loads(Client().get("/api/0.6/changeset/{}.json".format(closed.objId)).content)["changeset"]
+		self.assertIs(out["open"], False)
+		self.assertIn("closed_at", out)
+		self.assertNotIn("min_lon", out)
+
+		self.assertEqual(Client().get("/api/0.6/changeset/999999999.json").status_code, 404)
+
+	def test_get_changeset_list_json(self):
+		cs = CreateTestChangeset(self.user, is_open=True, open_timestamp=int(time.time())-60)
+		cs2 = CreateTestChangeset(self.user, is_open=False, open_timestamp=int(time.time())-120)
+
+		response = Client().get("/api/0.6/changesets.json")
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "application/json")
+		listed = {c["id"]: c for c in json.loads(response.content)["changesets"]}
+		self.assertIn(cs.objId, listed)
+		self.assertIn(cs2.objId, listed)
+		self.assertIs(listed[cs.objId]["open"], True)
+		self.assertIs(listed[cs2.objId]["open"], False)
+
+		# Query parameters still apply with the suffix
+		onlyOpen = {c["id"] for c in json.loads(Client().get("/api/0.6/changesets.json?open=true").content)["changesets"]}
+		self.assertIn(cs.objId, onlyOpen)
+		self.assertNotIn(cs2.objId, onlyOpen)
+
 	def test_get_changeset_missing(self):
 		anonClient = Client()
 		response = anonClient.get(reverse('changeset:changeset', args=(0,)))

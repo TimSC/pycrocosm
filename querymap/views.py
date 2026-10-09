@@ -18,9 +18,9 @@ import random
 import time
 
 class MapQueryResponse(object):
-	def __init__(self, bbox):
+	def __init__(self, bbox, request):
 		self.sio = io.BytesIO()
-		self.enc = pgmap.PyOsmXmlEncode(self.sio, common.xmlAttribs)
+		self.enc = common.make_osm_encoder(request, self.sio)
 		
 		#Don't let map or transaction objects go out of scope while query is running
 		self.p = get_pgmap()
@@ -100,7 +100,8 @@ def index(request):
 		response["Error"] = err
 		return response
 
-	return StreamingHttpResponse(iter(MapQueryResponse(bbox)), content_type='text/xml')
+	return StreamingHttpResponse(iter(MapQueryResponse(bbox, request)),
+		content_type=common.response_content_type(request))
 
 @gzip_page #Control gzip on a per-page basis because of BREACH vun. This page contains no secrets.
 @csrf_exempt #Contain no secrets to avoid BREACH vun (and this page is never POSTed anyway).
@@ -133,9 +134,9 @@ def historic_map(request):
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
+	enc = common.make_osm_encoder(request, sio)
 	ret = t.GetHistoricMapQuery(bbox, dt2, enc)
 
 	t.Commit()
 
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return HttpResponse(sio.getvalue(), content_type=common.response_content_type(request))

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 from __future__ import print_function
+import json
 
 from django.test import TestCase
 from django.test import Client
@@ -43,6 +44,41 @@ class UsersTestCase(TestCase):
 		self.assertEqual(int(userout.attrib["id"]) == self.user.id, True)
 		self.assertEqual("account_created" in userout.attrib, True)
 		self.assertEqual("display_name" in userout.attrib, True)
+
+	def test_get_details_json(self):
+		response = self.client.get("/api/0.6/user/details.json")
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "application/json")
+		doc = json.loads(response.content)
+		self.assertEqual(doc["version"], "0.6")
+		user = doc["user"]
+		self.assertEqual(user["id"], self.user.id)
+		self.assertEqual(user["display_name"], self.user.username)
+		self.assertIn("account_created", user)
+
+		# The same details as the XML form
+		xml = fromstring(self.client.get(reverse('users:details')).content).find("user")
+		self.assertEqual(str(user["id"]), xml.attrib["id"])
+		self.assertEqual(user["display_name"], xml.attrib["display_name"])
+		self.assertEqual(user["account_created"], xml.attrib["account_created"])
+
+		self.assertIn(Client().get("/api/0.6/user/details.json").status_code, (401, 403))
+
+	def test_get_preferences_json(self):
+		response = self.client.get("/api/0.6/user/preferences.json")
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual(response["Content-Type"], "application/json")
+		self.assertEqual(json.loads(response.content)["preferences"], {"foo": "bar"})
+
+		byHeader = self.client.get(reverse('users:preferences'), HTTP_ACCEPT="application/json")
+		self.assertEqual(json.loads(byHeader.content)["preferences"], {"foo": "bar"})
+
+	def test_preference_key_may_end_in_json(self):
+		# A key is free text, so a trailing .json is part of the key, not a format
+		response = self.client.put("/api/0.6/user/preferences/layout.json", "wide", content_type='text/plain')
+		self.assertEqual(response.status_code, 200)
+		prefs = json.loads(self.client.get("/api/0.6/user/preferences.json").content)["preferences"]
+		self.assertEqual(prefs.get("layout.json"), "wide")
 
 	def test_get_details_anon(self):
 		anonClient = Client()

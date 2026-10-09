@@ -14,6 +14,7 @@ from .models import UserData, UserPreference
 import xml.etree.ElementTree as ET
 from rest_framework.parsers import BaseParser
 from pycrocosm.parsers import DefusedXmlParser
+from pycrocosm import common
 
 import io
 import sys
@@ -30,6 +31,26 @@ class PlainTextParser(BaseParser):
 def details(request):
 
 	userRecord = request.user
+
+	if common.wants_json(request):
+		# The same information as the XML below
+		user = {
+			"id": userRecord.id,
+			"display_name": userRecord.username,
+			"account_created": userRecord.date_joined.isoformat(),
+			"description": userRecord.userdata.description,
+			"contributor_terms": {"agreed": False, "pd": False},
+			"roles": [],
+			"changesets": {"count": 12345},
+			"traces": {"count": 12345},
+			"blocks": {"received": {"count": 0, "active": 0}},
+			"languages": ["en"],
+			"messages": {"received": {"count": 1, "unread": 0}, "sent": {"count": 1}},
+		}
+		if userRecord.userdata.home_zoom >= 0:
+			user["home"] = {"lat": userRecord.userdata.home_lat, "lon": userRecord.userdata.home_lon,
+				"zoom": userRecord.userdata.home_zoom}
+		return common.json_response({"user": user}, legal=False)
 
 	root = ET.Element('osm')
 	doc = ET.ElementTree(root)
@@ -91,6 +112,9 @@ def preferences(request):
 
 	userRecord = request.user
 	prefs = UserPreference.objects.filter(user=userRecord)
+
+	if request.method == 'GET' and common.wants_json(request):
+		return common.json_response({"preferences": {pref.key: pref.value for pref in prefs}}, legal=False)
 
 	if request.method == 'GET':
 		root = ET.Element('osm')

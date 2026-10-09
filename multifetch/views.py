@@ -5,7 +5,9 @@ from __future__ import print_function
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseNotFound
 from django.conf import settings
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
+from elements import views as element_views
 
 from pycrocosm.mapdb import get_pgmap
 from pycrocosm import common
@@ -30,7 +32,11 @@ def index(request, objType):
 	osmData = pgmap.OsmData()
 	t.GetObjectsById(objType[:-1], objIds, osmData);
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
+
+@csrf_exempt
+def collection(request, objType):
+	"""/api/0.6/[nodes|ways|relations]: GET fetches several elements, POST creates one."""
+	if request.method == 'POST':
+		return element_views.create_plural(request, objType)
+	return index(request, objType)

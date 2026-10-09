@@ -81,7 +81,45 @@ def SerializeChangesetToElement(changesetData, include_discussion=False):
 
 	return changeset
 
-def SerializeChangesets(changesetsData, include_discussion=False):
+def JsonTimestamp(timestamp):
+	return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def SerializeChangesetToDict(changesetData, include_discussion=False):
+	changeset = {"id": changesetData.objId}
+	if changesetData.open_timestamp != 0:
+		changeset["created_at"] = JsonTimestamp(changesetData.open_timestamp)
+	changeset["open"] = bool(changesetData.is_open)
+	if not changesetData.is_open and changesetData.close_timestamp != 0:
+		changeset["closed_at"] = JsonTimestamp(changesetData.close_timestamp)
+	if changesetData.bbox_set:
+		changeset["min_lat"] = changesetData.y1
+		changeset["min_lon"] = changesetData.x1
+		changeset["max_lat"] = changesetData.y2
+		changeset["max_lon"] = changesetData.x2
+	if changesetData.uid != 0:
+		changeset["uid"] = changesetData.uid
+	if len(changesetData.username) > 0:
+		changeset["user"] = DecodeIfNotUnicode(changesetData.username)
+	if len(changesetData.tags) > 0:
+		changeset["tags"] = {DecodeIfNotUnicode(key): DecodeIfNotUnicode(changesetData.tags[key])
+			for key in changesetData.tags}
+	if include_discussion:
+		# Changeset comments are not stored yet, so there are none to list
+		changeset["comments"] = []
+	return changeset
+
+def SerializeChangesets(changesetsData, include_discussion=False, request=None, single=False):
+	"""Respond with changesets as XML, or as JSON if the request asked for it.
+
+	single selects the JSON layout for one changeset, which is an object
+	instead of a list.
+	"""
+	if request is not None and common.wants_json(request):
+		changesets = [SerializeChangesetToDict(c, include_discussion) for c in changesetsData]
+		if single:
+			return common.json_response({"changeset": changesets[0]})
+		return common.json_response({"changesets": changesets})
+
 	root = ET.Element('osm')
 	root.attrib["version"] = str(settings.API_VERSION)
 	for key, value in zip(["generator", "copyright", "attribution", "license"], 
@@ -850,7 +888,7 @@ def changeset(request, changesetId):
 	if request.method == 'GET':
 		t.Commit()
 
-		return SerializeChangesets([changesetData], include_discussion)
+		return SerializeChangesets([changesetData], include_discussion, request, single=True)
 
 	if request.method == 'PUT':
 		
@@ -990,7 +1028,7 @@ def list_changesets(request):
 	changesetLi = []
 	for i in range(len(changesets)):
 		changesetLi.append(changesets[i])
-	return SerializeChangesets(changesetLi)
+	return SerializeChangesets(changesetLi, request=request)
 
 @csrf_exempt
 @api_view(['POST'])

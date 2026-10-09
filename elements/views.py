@@ -20,7 +20,7 @@ import time
 from pycrocosm.parsers import DefusedXmlParser, OsmDataXmlParser
 from changeset.views import upload_block
 
-def upload_single_object(action, request, obj, objType, t):
+def upload_single_object(action, request, obj, objType, t, created=None):
 
 	#Additional validate of input
 	if(request.data.nodes.size() != (objType == "node")
@@ -73,6 +73,12 @@ def upload_single_object(action, request, obj, objType, t):
 		return ret
 
 	t.Commit()
+
+	#Tell the caller which ID a created object was given
+	if created is not None:
+		for idMap in (createdNodeIds, createdWayIds, createdRelationIds):
+			for oldId in idMap:
+				created[oldId] = idMap[oldId]
 	return True
 
 # Create your views here.
@@ -91,10 +97,7 @@ def element(request, objType, objId):
 		if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 			return HttpResponseNotFound("{} {} not found".format(objType, objId))
 
-		sio = io.BytesIO()
-		enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-		osmData.StreamTo(enc)
-		return HttpResponse(sio.getvalue(), content_type='text/xml')
+		return common.osm_data_response(request, osmData)
 
 	if request.method in ['PUT', 'DELETE']:
 		t = get_pgmap().GetTransaction("EXCLUSIVE")
@@ -118,24 +121,38 @@ def element(request, objType, objId):
 
 		return HttpResponse("", content_type='text/plain')
 
+def create_object(request, objType):
+	"""Create the one element in the request body and respond with its new ID."""
+	objs = {"node": request.data.nodes, "way": request.data.ways, "relation": request.data.relations}[objType]
+	if len(objs) != 1:
+		return HttpResponseBadRequest("Wrong number of objects")
+	obj = objs[0]
+
+	t = get_pgmap().GetTransaction("EXCLUSIVE")
+	created = {}
+	ret = upload_single_object("created", request, obj, objType, t, created)
+	if ret != True:
+		common.abort_transaction(t)
+		return ret
+
+	newId = list(created.values())[0] if len(created) == 1 else ""
+	return HttpResponse(str(newId), content_type='text/plain')
+
+# Deprecated by the API in favour of POST /api/0.6/[nodes|ways|relations]
 @csrf_exempt
 @api_view(['PUT'])
 @permission_classes((IsAuthenticated, ))
 @parser_classes((OsmDataXmlParser,))
 def create(request, objType):
-	t = get_pgmap().GetTransaction("EXCLUSIVE")
+	return create_object(request, objType)
 
-	obj = None
-	if objType == "node": obj = request.data.nodes[0]
-	if objType == "way": obj = request.data.ways[0]
-	if objType == "relation": obj = request.data.relations[0]
-
-	ret = upload_single_object("created", request, obj, objType, t)
-	if ret != True:
-		common.abort_transaction(t)
-		return ret
-
-	return HttpResponse("", content_type='text/plain')
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes((IsAuthenticated, ))
+@parser_classes((OsmDataXmlParser,))
+def create_plural(request, objType):
+	"""POST /api/0.6/[nodes|ways|relations]"""
+	return create_object(request, objType[:-1])
 
 @api_view(['GET'])
 def relations_for_obj(request, objType, objId):
@@ -150,10 +167,7 @@ def relations_for_obj(request, objType, objId):
 	osmData = pgmap.OsmData()
 	t.GetRelationsForObjs(objType, [int(objId)], osmData)
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
 
 @api_view(['GET'])
 def ways_for_node(request, objType, objId):
@@ -168,10 +182,7 @@ def ways_for_node(request, objType, objId):
 	osmData = pgmap.OsmData()
 	t.GetWaysForNodes([int(objId)], osmData);	
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
 
 @api_view(['GET'])
 def full_obj(request, objType, objId):
@@ -191,10 +202,7 @@ def full_obj(request, objType, objId):
 			# The object once existed, therefore it was deleted.
 			return HttpResponse("Gone", status=410, content_type="text/plain")
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
 
 @api_view(['GET'])
 def object_version(request, objType, objId, objVer):
@@ -207,10 +215,7 @@ def object_version(request, objType, objId, objVer):
 	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 		return HttpResponseNotFound("{} {} {} not found".format(objType, objId, objVer))
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
 
 @api_view(['GET'])
 def object_history(request, objType, objId):
@@ -222,10 +227,7 @@ def object_history(request, objType, objId):
 	if len(osmData.nodes) + len(osmData.ways) + len(osmData.relations) == 0:
 		return HttpResponseNotFound("{} {} not found".format(objType, objId))
 
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	osmData.StreamTo(enc)
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return common.osm_data_response(request, osmData)
 
 @api_view(['GET'])
 def object_bbox(request, objType, objId):
