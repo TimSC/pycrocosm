@@ -13,7 +13,8 @@ from pycrocosm.mapdb import get_pgmap
 from querymap.tests import DecodeOsmdataResponse
 from . import ql
 from .ql import (QueryError, UnsupportedFeature, OsmScript, Query, HasKv, BboxQuery, IdQuery,
-	ItemFilter, Item, Union, Recurse, Print)
+	ItemFilter, Item, Union, Recurse, Print, RecurseFilter, Around, User, Newer, Changed, Difference,
+	CsvFormat)
 from .evaluator import Limits, QueryTimeout
 from .interpreter import evaluate
 
@@ -91,6 +92,62 @@ class ParserTestCase(SimpleTestCase):
 		self.assertEqual(self.statements("way[name=x]->.foo; .foo out body;"),
 			[Query(("way",), [HasKv(HasKv.EQUALS, "name", "x")], "foo"), Print("foo")])
 
+	def test_linked_spatial_and_meta_filters(self):
+		self.assertEqual(self.statements("rel[ref=E61]; node(r); way(r.a:\"outer\"); way(bn); rel(bw.x:stop); node(w); rel(br.y);")[1:], [
+			Query(("node",), [RecurseFilter("r")]),
+			Query(("way",), [RecurseFilter("r", "a", "outer")]),
+			Query(("way",), [RecurseFilter("bn")]),
+			Query(("relation",), [RecurseFilter("bw", "x", "stop")]),
+			Query(("node",), [RecurseFilter("w")]),
+			Query(("relation",), [RecurseFilter("br", "y")])])
+		self.assertEqual(self.statements('node(w.w1)(w.w2); nwr(r.relation:"");'), [
+			Query(("node",), [RecurseFilter("w", "w1"), RecurseFilter("w", "w2")]),
+			Query(NWR, [RecurseFilter("r", "relation", "")])])
+
+		self.assertEqual(self.statements("node(around:10); node(around.stops:100)[highway=bus_stop]; nwr(around:500.5,53.34,-6.25);"), [
+			Query(("node",), [Around(10.0)]),
+			Query(("node",), [Around(100.0, "stops"), HasKv(HasKv.EQUALS, "highway", "bus_stop")]),
+			Query(NWR, [Around(500.5, "_", 53.34, -6.25)])])
+
+		self.assertEqual(self.statements('nwr(user:"Roland Olbricht", bob); node(uid:65282,7)(1,2,3,4);'), [
+			Query(NWR, [User(names=["Roland Olbricht", "bob"])]),
+			Query(("node",), [User(uids=[65282, 7]), BboxQuery(1.0, 2.0, 3.0, 4.0)])])
+		self.assertEqual(self.statements('node(newer:"2026-01-01T00:00:00Z"); '
+			'way(changed:"2026-01-01T00:00:00Z"); rel(changed:"2026-01-01T00:00:00Z","2026-02-01T00:00:00+01:00");'), [
+			Query(("node",), [Newer(1767225600)]),
+			Query(("way",), [Changed(1767225600)]),
+			Query(("relation",), [Changed(1767225600, 1769900400)])])
+
+		for bad in ("node(around:-1);", "node(around:10,91,0);", "node(around);", "node(around:10,1);",
+			"node(uid:x);", "node(user:);", "node(newer:2026);", 'node(newer:"last week");',
+			'node(changed:"2026-01-01","x");', "node(w:);", "node(r.);"):
+			with self.assertRaises(QueryError, msg=bad) as caught:
+				ql.parse(bad)
+			self.assertNotIsInstance(caught.exception, UnsupportedFeature, bad)
+
+	def test_difference(self):
+		self.assertEqual(self.statements("(node[name=Foo]; - node(50.0,7.0,51.0,8.0);)->.a;"), [Difference(
+			Query(("node",), [HasKv(HasKv.EQUALS, "name", "Foo")]),
+			Query(("node",), [BboxQuery(50.0, 7.0, 51.0, 8.0)]), "a")])
+		self.assertEqual(self.statements("(.banks; - .near;);"), [Difference(Item("banks"), Item("near"))])
+		self.assertEqual(self.statements("((.a; .b;); - (.c; - .d;););"),
+			[Difference(Union([Item("a"), Item("b")]), Difference(Item("c"), Item("d")))])
+		for bad in ("(- .a;);", "(.a; - .b; .c;);", "(.a; - .b; - .c;);", "(.a; .b; - .c;);", "(.a; -);"):
+			with self.assertRaises(QueryError, msg=bad):
+				ql.parse(bad)
+
+	def test_csv_setting(self):
+		script = ql.parse('[out:csv(::id,::type,"name")];node[a];out;')
+		self.assertEqual((script.output, script.csv), ("csv", CsvFormat(["::id", "::type", "name"])))
+		self.assertEqual(ql.parse('[out:csv( ::"id", amenity, "contact:phone", ::"count:nodes", ::count:ways, ::count ; '
+			'false ; "|" )][timeout:5];node[a];out;').csv,
+			CsvFormat(["::id", "amenity", "contact:phone", "::count:nodes", "::count:ways", "::count"], False, "|"))
+		self.assertEqual(ql.parse("[out:csv(name;true)];node[a];out;").csv, CsvFormat(["name"], True, "\t"))
+		for bad in ("[out:csv];node[a];out;", "[out:csv()];node[a];out;", "[out:csv(::colour)];node[a];out;",
+			"[out:csv(name;yes)];node[a];out;", "[out:csv(name;true;|)];node[a];out;"):
+			with self.assertRaises(QueryError, msg=bad):
+				ql.parse(bad)
+
 	def test_out(self):
 		self.assertEqual(self.statements("out;"), [Print()])
 		self.assertEqual(self.statements("out;"), self.statements("._ out body asc;"))
@@ -141,19 +198,18 @@ class ParserTestCase(SimpleTestCase):
 	def test_unsupported_features_are_named(self):
 		cases = (
 			('area[name="Troisdorf"]; way(area)[highway][name]; out;', "area queries"),
-			("node[name=Bristol]; node(around:10); out;", "around filters"),
-			("rel[ref=E61]; node(r); out;", "recurse filters"),
-			("node(1,2,3,4); way(bn); out;", "recurse filters"),
-			("node[a]->.b; node(w.b); out;", "recurse filters"),
-			('nwr(user:"Roland Olbricht"); out;', "user filters"),
-			("nwr(uid:65282); out;", "uid filters"),
-			('node(newer:"2026-01-01T00:00:00Z")(1,2,3,4); out;', "newer filters"),
 			("node(1,2,3,4)(if:count_tags() > 0); out;", "if: filters"),
-			("(node[a]; - node(1,2,3,4);); out;", "difference statements"),
 			("way[name=Foo]; foreach { (._; >;); out; }", "foreach loops"),
 			("node[a]; for (t[\"name\"]) { out; }", "for loops"),
 			("node[a]; if (count(nodes) > 0) { out; }", "if statements"),
 			("node(1); complete(100) { nwr[amenity=pub](around:500); }; out;", "complete loops"),
+			("way[a]; node(w:1); out;", "by position"),
+			("node(around:100,1,2,3,4); out;", "along a line"),
+			('nwr(user_touched:"x"); out;', "user_touched filters"),
+			("node(poly:\"1 2 3 4 5 6\"); out;", "poly filters"),
+			("node(area.a); out;", "area filters"),
+			("node(way_link:1); out;", "way_link filters"),
+			("[out:custom];node[a];out;", "out:custom output"),
 			("node[a]; make stat number=count(ways); out;", "make statements"),
 			("node[a]; convert rel ::id = id(); out;", "convert statements"),
 			("is_in(50.7,7.2); out;", "is_in"),
@@ -161,7 +217,6 @@ class ParserTestCase(SimpleTestCase):
 			("wr[leisure=golf_course]; map_to_area ->.golf; out;", "map_to_area"),
 			("timeline(relation,2632934); out;", "timeline statements"),
 			("derived[name=x]; out;", "derived elements"),
-			("[out:csv(name)];node[a];out;", "out:csv output"),
 			('[date:"2014-05-06T00:00:00Z"];node(1,2,3,4);out;', "the date setting"),
 			('[diff:"2012-09-14T15:00:00Z"];node(1,2,3,4);out;', "the diff setting"),
 			('nwr[~"^name"~"x"];out;', "regular expression for the key"),
@@ -198,6 +253,13 @@ class InterpreterTestCase(TestCase):
 	"""
 
 	def setUp(self):
+		# Unless a test says otherwise, the map is treated as not storing a box
+		# for each way and relation, whatever the test database's own setting.
+		from unittest.mock import patch
+		from .evaluator import MapSource
+		patcher = patch.object(MapSource, "stores_bboxes", return_value=False)
+		patcher.start()
+		self.addCleanup(patcher.stop)
 		self.n1 = self.create_node(10.1, 20.1, amenity="pub", name="The Crown")
 		self.n2 = self.create_node(10.2, 20.2, amenity="cafe", name="Café Été", **{"addr:housenumber": "12"})
 		self.n3 = self.create_node(10.3, 20.3)
@@ -221,12 +283,14 @@ class InterpreterTestCase(TestCase):
 	# *** Building the map ***
 
 	def store(self, obj, tags):
+		# Tags named _uid, _user and _timestamp set who made the edit, and when
+		tags = dict(tags)
 		obj.objId = -1
 		obj.metaData.version = 1
-		obj.metaData.timestamp = 1700000000
+		obj.metaData.timestamp = tags.pop("_timestamp", 1700000000)
 		obj.metaData.changeset = 1000
-		obj.metaData.uid = 7
-		obj.metaData.username = "mapper"
+		obj.metaData.uid = tags.pop("_uid", 7)
+		obj.metaData.username = tags.pop("_user", "mapper")
 		obj.metaData.visible = True
 		for key, value in tags.items():
 			obj.tags[key] = value
@@ -339,8 +403,8 @@ class InterpreterTestCase(TestCase):
 		for query in ("node[amenity!=pub];out;", "node[!amenity];out;", 'nwr[name~"^The"];out;',
 			'way[name!~"x"];out;', "node;out;"):
 			self.refused(query, "needs a bounding box")
-		self.refused("node(0,0,50,50);out;", "bounding box is too large")
-		self.refused("[bbox:0,0,50,50];node[amenity!=pub];out;", "bounding box is too large")
+		self.refused("node(0,0,50,50);out;", "too large to search")
+		self.refused("[bbox:0,0,50,50];node[amenity!=pub];out;", "too large to search")
 		# An exact tag makes any area searchable
 		self.assertEqual(self.found("node[amenity=pub](0,0,50,50);out;") & self.nodes,
 			self.n(self.n1, self.n4, self.n5))
@@ -430,6 +494,63 @@ class InterpreterTestCase(TestCase):
 			self.refused("way[highway=primary](9,19,13,23);out;", "more than")
 		finally:
 			evaluator.TAG_FIRST_MAXIMUM = original
+		# With many nodes in the box, the search by tag comes first; the answers are the same
+		original = evaluator.REGION_FIRST_MAXIMUM
+		evaluator.REGION_FIRST_MAXIMUM = 0
+		try:
+			self.assertEqual(self.found("way[highway=primary](10.15,20.15,10.25,20.25);out;"), self.w(self.w1))
+			self.assertEqual(self.found("way[highway](10.25,20.25,10.35,20.35);out;"), self.w(self.w1, self.w2))
+			self.assertEqual(self.found("way[highway=primary](10.35,20.35,10.45,20.45);out;"), set())
+			self.assertEqual(self.found("rel[type=route](10.15,20.15,10.25,20.25);out;"), self.r(self.r1))
+			self.assertEqual(self.found("rel[type=network](10.35,20.35,10.45,20.45);out;"), self.r(self.r2))
+			self.assertEqual(self.found("rel[type=route](10.35,20.35,10.45,20.45);out;"), set())
+			self.assertEqual(self.found("way[highway](around:100,10.3,20.3);out;"), self.w(self.w1, self.w2))
+			self.assertEqual(self.found("way[highway=residential](around:100,10.1,20.1);out;"), set())
+			self.assertEqual(self.found("rel[type](around:100,10.4,20.4);out;"), self.r(self.r2))
+			self.assertEqual(self.found("way(id:{})(around:100,10.4,20.4);out;".format(self.w2)), self.w(self.w2))
+		finally:
+			evaluator.REGION_FIRST_MAXIMUM = original
+
+	def test_bounding_boxes_on_a_map_that_stores_them(self):
+		from unittest.mock import patch
+		from .evaluator import MapSource
+		self.assertIn(get_pgmap().GetTransaction("ACCESS SHARE").UseBboxInQuery(), (True, False))
+		calls = []
+		real_ways_of_nodes = MapSource.ways_of_nodes
+
+		def counting(source, ids):
+			calls.append(len(ids))
+			return real_ways_of_nodes(source, ids)
+
+		with patch.object(MapSource, "stores_bboxes", return_value=True), \
+			patch.object(MapSource, "ways_of_nodes", counting):
+			# Ways and relations are found by their own boxes, without going through nodes
+			self.assertEqual(self.found("way(10.15,20.15,10.25,20.25);out;"), self.w(self.w1))
+			self.assertEqual(self.found("way(10.25,20.25,10.35,20.35);out;"), self.w(self.w1, self.w2))
+			self.assertEqual(self.found("way[highway=primary](10.25,20.25,10.35,20.35);out;"), self.w(self.w1))
+			self.assertEqual(self.found("way[highway!=primary](10.25,20.25,10.35,20.35);out;"), self.w(self.w2))
+			self.assertEqual(self.found("way[highway=primary](10.35,20.35,10.45,20.45);out;"), set())
+			self.assertEqual(self.found("way(id:{})(10.25,20.25,10.35,20.35);out;".format(self.w2)), self.w(self.w2))
+			self.assertEqual(self.found("rel(10.35,20.35,10.45,20.45);out;"), self.r(self.r2))
+			self.assertEqual(self.found("rel[type=route](10.15,20.15,10.25,20.25);out;"), self.r(self.r1))
+			self.assertEqual(self.found("rel[type=route](10.35,20.35,10.45,20.45);out;"), set())
+			self.assertEqual(self.found("nwr({});out;".format(BBOX)), self.n(self.n1, self.n2, self.n3, self.n4) |
+				self.w(self.w1, self.w2) | self.r(self.r1, self.r2))
+			self.assertEqual(self.found("way[highway=primary](9,19,13,23);out;") & self.w(self.w1, self.w2), self.w(self.w1))
+			response = self.ask("[out:json][bbox:10.35,20.35,10.45,20.45];wr[type];out ids;")
+			self.assertEqual(json.loads(response.content)["elements"], [{"type": "relation", "id": self.r2}])
+			# A way whose box overlaps the area is found even with no node in it
+			self.assertEqual(self.found("way(10.24,20.14,10.26,20.16);out;"), self.w(self.w1))
+			self.assertEqual(calls, [])
+			# The rules for what may be searched are unchanged
+			self.refused("way(0,0,50,50);out;", "too large to search")
+			self.refused("way[highway!=primary];out;", "needs a bounding box")
+			# Distances are still measured from nodes
+			self.assertEqual(self.found("way(around:100,10.3,20.3);out;"), self.w(self.w1, self.w2))
+			self.assertGreater(len(calls), 0)
+		# Without stored boxes the same way is not found
+		with patch.object(MapSource, "stores_bboxes", return_value=False):
+			self.assertEqual(self.found("way(10.24,20.14,10.26,20.16);out;"), set())
 
 	def test_recursion(self):
 		def after(first, second):
@@ -469,6 +590,221 @@ class InterpreterTestCase(TestCase):
 		# A relation with all its members, as in the wiki's union example
 		self.assertEqual(self.found("(rel[ref=E61]({});node(id:{})->.nodes;>;);out;".format(BBOX, self.n5)),
 			members | self.r(self.r1) | self.n(self.n5))
+
+	def test_recurse_filters(self):
+		route, network = "rel({});".format(self.r1), "rel({});".format(self.r2)
+		way1, way2 = "way({});".format(self.w1), "way({});".format(self.w2)
+		# Down from relations to their members, by type and by role
+		self.assertEqual(self.found(route + "node(r);out;"), self.n(self.n1))
+		self.assertEqual(self.found(route + "way(r);out;"), self.w(self.w1))
+		self.assertEqual(self.found(route + "rel(r);out;"), set())
+		self.assertEqual(self.found(route + "nwr(r);out;"), self.n(self.n1) | self.w(self.w1))
+		self.assertEqual(self.found(network + "nwr(r);out;"), self.w(self.w2) | self.r(self.r1))
+		self.assertEqual(self.found(route + 'node(r:"stop");out;'), self.n(self.n1))
+		self.assertEqual(self.found(route + "node(r:stop);out;"), self.n(self.n1))
+		self.assertEqual(self.found(route + 'node(r:"platform");out;'), set())
+		self.assertEqual(self.found(route + 'way(r:"route");out;'), self.w(self.w1))
+		self.assertEqual(self.found(network + 'nwr(r:"");out;'), self.w(self.w2) | self.r(self.r1))
+		self.assertEqual(self.found(network + 'nwr(r:"route");out;'), set())
+		# Down from ways to their nodes
+		self.assertEqual(self.found(way1 + "node(w);out;"), self.n(self.n1, self.n2, self.n3))
+		self.assertEqual(self.found(way1 + "node(w)[amenity=cafe];out;"), self.n(self.n2))
+		self.assertEqual(self.found(way1 + "node(w)(10.25,20.25,10.35,20.35);out;"), self.n(self.n3))
+		self.assertEqual(self.found(way1 + "way(w);out;"), set())
+		self.assertEqual(self.found(way1 + "nwr(w);out;"), self.n(self.n1, self.n2, self.n3))
+		# Up from nodes, ways and relations to what holds them
+		node3, node1 = "node({});".format(self.n3), "node({});".format(self.n1)
+		self.assertEqual(self.found(node3 + "way(bn);out;"), self.w(self.w1, self.w2))
+		self.assertEqual(self.found(node3 + "way(bn)[highway=residential];out;"), self.w(self.w2))
+		self.assertEqual(self.found(node3 + "rel(bn);out;"), set())
+		self.assertEqual(self.found(node1 + "rel(bn);out;"), self.r(self.r1))
+		self.assertEqual(self.found(node1 + "wr(bn);out;"), self.w(self.w1) | self.r(self.r1))
+		self.assertEqual(self.found(node1 + 'rel(bn:"stop");out;'), self.r(self.r1))
+		self.assertEqual(self.found(node1 + 'rel(bn:"route");out;'), set())
+		self.assertEqual(self.found(node1 + "node(bn);out;"), set())
+		self.assertEqual(self.found(way1 + "rel(bw);out;"), self.r(self.r1))
+		self.assertEqual(self.found(way1 + 'rel(bw:"route");out;'), self.r(self.r1))
+		self.assertEqual(self.found(way1 + 'rel(bw:"");out;'), set())
+		self.assertEqual(self.found(way2 + 'rel(bw:"");out;'), self.r(self.r2))
+		self.assertEqual(self.found(route + "rel(br);out;"), self.r(self.r2))
+		self.assertEqual(self.found(network + "rel(br);out;"), set())
+		self.assertEqual(self.found(route + "way(bw);out;"), set())
+		# Named sets, and nodes shared by two sets of ways
+		sets = way1 + "._->.a;" + way2 + "._->.b;" + route + "._->.c;"
+		self.assertEqual(self.found(sets + "node(w.a);out;"), self.n(self.n1, self.n2, self.n3))
+		self.assertEqual(self.found(sets + "node(w.a)(w.b);out;"), self.n(self.n3))
+		self.assertEqual(self.found(sets + "node(w.b)(r.c);out;"), set())
+		self.assertEqual(self.found(sets + "node(w.a)(r.c);out;"), self.n(self.n1))
+		self.assertEqual(self.found(sets + "node(w.nothing);out;"), set())
+		# The wiki's examples: bus stops of a route, and its ways with their nodes
+		self.assertEqual(self.found("rel[ref=E61]({});node(r);out;".format(BBOX)), self.n(self.n1))
+		self.assertEqual(self.found("rel[ref=E61]({});way(r);node(w);out;".format(BBOX)), self.n(self.n1, self.n2, self.n3))
+		self.assertEqual(self.found("(rel[ref=E61]({});node(r)->.nodes;way(r);node(w););out;".format(BBOX)),
+			self.r(self.r1) | self.w(self.w1) | self.n(self.n1, self.n2, self.n3))
+		self.assertEqual(self.found("node({});way(bn);out;".format(BBOX)), self.w(self.w1, self.w2))
+		self.assertEqual(self.found("node({});way(bn);way._[highway=primary];out;".format(BBOX)), self.w(self.w1))
+
+	def test_difference(self):
+		box = "({})".format(BBOX)
+		self.assertEqual(self.found("(node{0}; - node[amenity=pub]{0};);out;".format(box)), self.n(self.n2, self.n3))
+		self.assertEqual(self.found("(nwr{0}; - way{0};);out;".format(box)),
+			self.n(self.n1, self.n2, self.n3, self.n4) | self.r(self.r1, self.r2))
+		self.assertEqual(self.found("(node[amenity=pub]{0}; - node{0};);out;".format(box)), set())
+		self.assertEqual(self.found("(node[amenity=pub]{0}; - way{0};);out;".format(box)), self.n(self.n1, self.n4))
+		query = "node{0}->.all; node[amenity]{0}->.amenities;".format(box)
+		self.assertEqual(self.found(query + "(.all; - .amenities;);out;"), self.n(self.n3))
+		# Sent to a named set, the result leaves the default set alone
+		self.assertEqual(self.found(query + "(.all; - .amenities;)->.rest; out;"), set())
+		self.assertEqual(self.found(query + "(.all; - .amenities;)->.rest; .rest out;"), self.n(self.n3))
+		# Each side is an ordinary statement, with its usual effect on the sets
+		self.assertEqual(self.found("(node{0}->.kept; - node[amenity]{0};); .kept out;".format(box)),
+			self.n(self.n1, self.n2, self.n3, self.n4))
+		# Old objects: everything, less what is newer than a date
+		self.assertEqual(self.found('node{0}->.all;(.all; - node.all(newer:"2020-01-01T00:00:00Z"););out;'.format(box)), set())
+		self.assertEqual(self.found('node{0}->.all;(.all; - node.all(newer:"2030-01-01T00:00:00Z"););out;'.format(box)),
+			self.n(self.n1, self.n2, self.n3, self.n4))
+
+	def test_user_and_time_filters(self):
+		from django.contrib.auth.models import User as Account
+		box = "({})".format(BBOX)
+		# An account ID that cannot be mistaken for the other user IDs used here
+		account = Account.objects.create(id=555001, username="renamed mapper")
+		other = self.create_node(10.11, 20.11, _uid=8, _user="other mapper", _timestamp=1800000000)
+		renamed = self.create_node(10.12, 20.12, _uid=9, _user="renamed mapper")
+		by_account = self.create_node(10.13, 20.13, _uid=account.id, _user="name at the time")
+		original = self.n(self.n1, self.n2, self.n3, self.n4)
+
+		self.assertEqual(self.found("node(uid:7){};out;".format(box)), original)
+		self.assertEqual(self.found("node(uid:8){};out;".format(box)), self.n(other))
+		self.assertEqual(self.found("node(uid:8,7){};out;".format(box)), original | self.n(other))
+		self.assertEqual(self.found("node(uid:999){};out;".format(box)), set())
+		self.assertEqual(self.found('node(user:"other mapper"){};out;'.format(box)), self.n(other))
+		self.assertEqual(self.found('node(user:mapper,"other mapper"){};out;'.format(box)), original | self.n(other))
+		self.assertEqual(self.found('node(user:"Other Mapper"){};out;'.format(box)), set())
+		# A name finds edits stored under it, and edits by this server's account of that name
+		self.assertEqual(self.found('node(user:"renamed mapper"){};out;'.format(box)), self.n(renamed, by_account))
+		self.assertEqual(self.found('node(user:"name at the time"){};out;'.format(box)), self.n(by_account))
+		self.assertEqual(self.found("node(uid:7)[amenity=pub]{};out;".format(box)), self.n(self.n1, self.n4))
+		self.assertEqual(self.found("wr(uid:7){};out;".format(box)), self.w(self.w1, self.w2) | self.r(self.r1, self.r2))
+		self.assertEqual(self.found("wr(uid:8){};out;".format(box)), set())
+		self.assertEqual(self.found("way(uid:7)(id:{});out;".format(self.w1)), self.w(self.w1))
+		self.assertEqual(self.found("way(uid:8)(id:{});out;".format(self.w1)), set())
+
+		# 1700000000 is 2023-11-14T22:13:20Z and 1800000000 is 2027-01-15T08:00:00Z
+		self.assertEqual(self.found('node(newer:"2025-01-01T00:00:00Z"){};out;'.format(box)), self.n(other))
+		self.assertEqual(self.found('node(newer:"2023-11-14T22:13:20Z"){};out;'.format(box)), self.n(other))
+		self.assertEqual(self.found('node(newer:"2023-11-14T22:13:19Z")(uid:7){};out;'.format(box)), original)
+		self.assertEqual(self.found('node(newer:"2028-01-01T00:00:00Z"){};out;'.format(box)), set())
+		self.assertEqual(self.found('node(changed:"2023-11-14T22:13:20Z")(uid:7,8){};out;'.format(box)), original | self.n(other))
+		self.assertEqual(self.found('node(changed:"2023-11-14T22:13:21Z"){};out;'.format(box)), self.n(other))
+		self.assertEqual(self.found('node(changed:"2020-01-01T00:00:00Z","2025-01-01T00:00:00Z")(uid:7){};out;'.format(box)), original)
+		self.assertEqual(self.found('node(changed:"2025-01-01T00:00:00Z","2027-01-15T08:00:00Z"){};out;'.format(box)), self.n(other))
+		self.assertEqual(self.found('way(newer:"2020-01-01T00:00:00Z"){};out;'.format(box)), self.w(self.w1, self.w2))
+		self.assertEqual(self.found('way(newer:"2025-01-01T00:00:00Z"){};out;'.format(box)), set())
+
+		# Neither can be looked up alone
+		self.refused("nwr(uid:7);out;", "needs a bounding box")
+		self.refused('nwr(user:"mapper");out;', "needs a bounding box")
+		self.refused('node(newer:"2025-01-01T00:00:00Z");out;', "needs a bounding box")
+		self.refused("node(uid:7)(user:mapper){};out;".format(box), "more than one user or uid filter")
+		self.assertEqual(self.found("node(uid:8)[amenity];out;") & self.nodes, set())
+
+	def test_around(self):
+		near = self.create_node(10.1005, 20.1) # About 55 metres north of n1
+		further = self.create_node(10.1, 20.1012) # About 131 metres east of n1
+		self.assertEqual(self.found("node(around:100,10.1,20.1);out;"), self.n(self.n1, near))
+		self.assertEqual(self.found("node(around:200,10.1,20.1);out;"), self.n(self.n1, near, further))
+		self.assertEqual(self.found("node(around:50,10.1,20.1);out;"), self.n(self.n1))
+		self.assertEqual(self.found("node(around:0,10.1,20.1);out;"), self.n(self.n1))
+		self.assertEqual(self.found("node(around:100,10.15,20.15);out;"), set())
+		self.assertEqual(self.found("node(around:200,10.1,20.1)[amenity];out;"), self.n(self.n1))
+		self.assertEqual(self.found("node(around:200,10.1,20.1)[!amenity];out;"), self.n(near, further))
+		self.assertEqual(self.found("node(around:200,10.1,20.1)(10.1001,20,10.2,20.2);out;"), self.n(near))
+		self.assertEqual(self.found("node(around:200,10.1,20.1)(10.3,20,10.4,20.2);out;"), set())
+		self.assertEqual(self.found("node(around:200,10.1,20.1)(id:{});out;".format(further)), self.n(further))
+		response = self.ask("[out:json][bbox:10.1001,20,10.2,20.2];node(around:200,10.1,20.1);out ids;")
+		self.assertEqual(json.loads(response.content)["elements"], [{"type": "node", "id": near}])
+
+		# Around the elements of a set, which are part of the result if they match
+		pub = "node({});".format(self.n1)
+		self.assertEqual(self.found(pub + "node(around:100);out;"), self.n(self.n1, near))
+		self.assertEqual(self.found(pub + "._->.pub; node({});".format(self.n5) + "node(around.pub:200);out;"),
+			self.n(self.n1, near, further))
+		self.assertEqual(self.found(pub + "node(around:200)[!amenity];out;"), self.n(near, further))
+		self.assertEqual(self.found("node[amenity=pub]({});node(around:100);out;".format(BBOX)), self.n(self.n1, self.n4, near))
+		self.assertEqual(self.found("node(around.nothing:100);out;"), set())
+		self.assertEqual(self.found("node(999999999999);node(around:100);out;"), set())
+		# A way is measured from its nodes
+		self.assertEqual(self.found("way({});node(around:100);out;".format(self.w2)), self.n(self.n3, self.n4))
+		self.assertEqual(self.found("rel({});node(around:100);out;".format(self.r1)),
+			self.n(self.n1, self.n2, self.n3, near))
+
+		# Ways and relations are near a position if one of their nodes is
+		self.assertEqual(self.found("way(around:100,10.1,20.1);out;"), self.w(self.w1))
+		self.assertEqual(self.found("way(around:100,10.3,20.3);out;"), self.w(self.w1, self.w2))
+		self.assertEqual(self.found("way(around:100,10.3,20.3)[highway=residential];out;"), self.w(self.w2))
+		self.assertEqual(self.found("way[highway=residential](around:100,10.1,20.1);out;"), set())
+		self.assertEqual(self.found("rel(around:100,10.1,20.1);out;"), self.r(self.r1))
+		self.assertEqual(self.found("rel(around:100,10.4,20.4);out;"), self.r(self.r2))
+		self.assertEqual(self.found("nwr(around:100,10.4,20.4);out;"), self.n(self.n4) | self.w(self.w2) | self.r(self.r2))
+		# Pubs with no cafe within a kilometre: the wiki's "banks far from police" pattern
+		self.assertEqual(self.found("node[amenity=pub]({0})->.pubs;node[amenity=cafe]({0})->.cafes;"
+			"node.pubs(around.cafes:1000)->.close;(.pubs; - .close;);out;".format(BBOX)), self.n(self.n1, self.n4))
+		self.assertEqual(self.found("node[amenity=pub]({0})->.pubs;node[amenity=cafe]({0})->.cafes;"
+			"node.pubs(around.cafes:20000)->.close;(.pubs; - .close;);out;".format(BBOX)), self.n(self.n4))
+
+		# A large circle is like a large box: it needs an exact tag to go with it
+		self.refused("node(around:100000,10.1,20.1);out;", "too large to search")
+		self.assertEqual(self.found("node[amenity=cafe](around:100000,10.1,20.1);out;"), self.n(self.n2))
+		self.refused("node(around:10,10.1,20.1)(around:10,10.2,20.2);out;", "more than one around filter")
+		from . import evaluator
+		original = evaluator.AROUND_POSITIONS_MAXIMUM
+		evaluator.AROUND_POSITIONS_MAXIMUM = 2
+		try:
+			self.refused("way({});node(around:10);out;".format(self.w1), "at most 2 positions")
+			self.assertEqual(self.found("way({});node(around:10);out;".format(self.w2)), self.n(self.n3, self.n4))
+		finally:
+			evaluator.AROUND_POSITIONS_MAXIMUM = original
+
+	def csv(self, query):
+		response = self.ask(query)
+		self.assertEqual(response.status_code, 200, response.content)
+		self.assertEqual(response["Content-Type"], "text/csv; charset=utf-8")
+		return response.content.decode("utf-8")
+
+	def test_csv(self):
+		ids = sorted([self.n1, self.n2, self.n3, self.n4])
+		rows = {self.n1: "node\tThe Crown\tpub", self.n2: "node\tCafé Été\tcafe", self.n3: "node\t\t", self.n4: "node\tthe\tpub"}
+		self.assertEqual(self.csv("[out:csv(::id,::type,name,amenity)];node({});out;".format(BBOX)),
+			"@id\t@type\tname\tamenity\n" +
+			"".join("{}\t{}\n".format(i, rows[i]) for i in ids))
+		self.assertEqual(self.csv('[out:csv("name";false)];node[amenity=pub]({});out;'.format(BBOX)),
+			"".join(name + "\n" for i, name in sorted([(self.n1, "The Crown"), (self.n4, "the")])))
+		self.assertEqual(self.csv('[out:csv(::otype, ::id, "addr:housenumber"; true; "|")];nwr(id:{});out;'.format(self.n2)).split("\n")[:2],
+			["@otype|@id|addr:housenumber", "1|{}|12".format(self.n2)])
+
+		# Positions: of nodes, and of anything printed with its center
+		self.assertEqual(self.csv("[out:csv(::type,::lat,::lon;false)];node({});out;".format(self.n1)), "node\t10.1000000\t20.1000000\n")
+		self.assertEqual(self.csv("[out:csv(::type,::lat,::lon;false)];way({});out;".format(self.w2)), "way\t\t\n")
+		self.assertEqual(self.csv("[out:csv(::type,::lat,::lon;false)];way({});out center;".format(self.w2)),
+			"way\t10.3500000\t20.3500000\n")
+		self.assertEqual(self.csv("[out:csv(::otype,highway;false)];wr({});out;".format(self.w2)).split("\n")[0], "2\tresidential")
+		# Metadata appears only with out meta, and tags not with out ids
+		fields = "[out:csv(::id,::version,::timestamp,::changeset,::uid,::user,name;false)];node({});".format(self.n1)
+		self.assertEqual(self.csv(fields + "out meta;"),
+			"{}\t1\t2023-11-14T22:13:20Z\t1000\t7\tmapper\tThe Crown\n".format(self.n1))
+		self.assertEqual(self.csv(fields + "out;"), "{}\t\t\t\t\t\tThe Crown\n".format(self.n1))
+		self.assertEqual(self.csv(fields + "out ids;"), "{}\t\t\t\t\t\t\n".format(self.n1))
+
+		# Counts, as in the wiki's check that a listing is complete
+		text = self.csv('[out:csv(::type,::id,"name",::count)];node[amenity=pub]({});out;out count;'.format(BBOX))
+		self.assertEqual(text.split("\n"), ["@type\t@id\tname\t@count"] +
+			["node\t{}\t{}\t".format(i, name) for i, name in sorted([(self.n1, "The Crown"), (self.n4, "the")])] +
+			["count\t0\t\t2", ""])
+		self.assertEqual(self.csv('[out:csv(::count, ::"count:nodes", ::"count:ways", ::count:relations;false)];'
+			"nwr({});out count;".format(BBOX)), "8\t4\t2\t2\n")
+		self.assertEqual(self.csv("[out:csv(name)];node(999999999999);out;"), "name\n")
+		self.refused("[out:csv(name)];node[amenity!=pub];out;", "needs a bounding box")
 
 	def test_output_verbosity(self):
 		def one(mode, kind, ident):
@@ -775,7 +1111,7 @@ class InterpreterTestCase(TestCase):
 
 		for bad, fragment in (("lake[a=b]", "Object type not recognized"), ("node", "Specify either a bbox"),
 			("node[bbox=1,2,3]", "Invalid bbox"), ("node[bbox=20,10,x,11]", "Invalid bbox"),
-			("node[bbox=20,11,21,10]", "Invalid bbox"), ("node[bbox=0,0,50,50]", "bounding box is too large")):
+			("node[bbox=20,11,21,10]", "Invalid bbox"), ("node[bbox=0,0,50,50]", "too large to search")):
 			response = Client().get("/overpass/xapi/" + bad)
 			self.assertEqual(response.status_code, 400, bad)
 			self.assertIn(fragment, response.content.decode("utf-8"))

@@ -52,6 +52,8 @@ def execute(text, url_bbox=None):
 			raise QueryError("the query has a [bbox] setting, but no bbox parameter came with it")
 		script.bbox = parse_url_bbox(url_bbox)
 	result = evaluate(script)
+	if script.output == "csv":
+		return output.write_csv(result, script.csv), "text/csv; charset=utf-8"
 	if script.output == "json":
 		return output.write_json(result, settings.GENERATOR, settings.COPYRIGHT, time.time()), "application/json"
 	return output.write_xml(result, settings.GENERATOR, settings.COPYRIGHT, time.time()), "application/osm3s+xml"

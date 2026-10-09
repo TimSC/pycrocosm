@@ -220,3 +220,53 @@ def write_xml(output, generator, copyright, now, root_attribs=None):
 	out.append("")
 	out.append("</osm>")
 	return "\n".join(out).encode("utf-8")
+
+# ****** CSV ******
+
+OTYPES = {"node": 1, "way": 2, "relation": 3}
+META_FIELDS = ("version", "timestamp", "changeset", "uid", "user")
+
+def csv_value(field, element, shape, geometry):
+	if not field.startswith("::"):
+		return element.tags.get(field, "") if shape.tags else ""
+	name = field[2:]
+	if name == "id":
+		return str(element.id)
+	if name == "type":
+		return element.kind
+	if name == "otype":
+		return str(OTYPES[element.kind])
+	if name in ("lat", "lon"):
+		# Known for nodes, and for anything printed with its center
+		point = None
+		if element.kind == "node" and shape.coords:
+			point = (element.lat, element.lon)
+		elif element.kind != "node" and shape.geometry == "center":
+			bounds = bounds_of(element_points(element, geometry))
+			point = None if bounds is None else center_of(bounds)
+		if point is None:
+			return ""
+		return coord(point[0] if name == "lat" else point[1])
+	if name in META_FIELDS and shape.meta:
+		return "{}".format(dict(meta_fields(element)).get(name, ""))
+	return ""
+
+def write_csv(output, csv_format):
+	"""Tabular output: a row for each element, and for each count. Values are
+	written as they are, without quoting, as Overpass writes them."""
+	lines = []
+	if csv_format.header:
+		lines.append(csv_format.separator.join(
+			"@" + f[2:] if f.startswith("::") else f for f in csv_format.columns))
+	for statement, content, geometry in output:
+		if statement.mode == "count":
+			counts = {"::type": "count", "::id": "0", "::count": str(sum(content.values())),
+				"::count:nodes": str(content["node"]), "::count:ways": str(content["way"]),
+				"::count:relations": str(content["relation"]), "::count:areas": "0"}
+			lines.append(csv_format.separator.join(counts.get(f, "") for f in csv_format.columns))
+			continue
+		shape = Shape(statement)
+		for element in content:
+			lines.append(csv_format.separator.join(
+				csv_value(f, element, shape, geometry) for f in csv_format.columns))
+	return ("\n".join(lines) + "\n").encode("utf-8")

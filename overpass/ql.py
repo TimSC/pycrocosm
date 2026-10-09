@@ -9,6 +9,7 @@ Anything outside the subset is refused, naming the feature where it is
 recognised, because quietly ignoring part of a query returns wrong data.
 """
 from __future__ import unicode_literals
+import datetime
 import re
 
 class QueryError(Exception):
@@ -49,16 +50,30 @@ class Node(object):
 
 class OsmScript(Node):
 	"""A whole query: its settings and statements."""
-	fields = ("output", "timeout", "maxsize", "bbox", "bbox_from_url", "statements")
+	fields = ("output", "csv", "timeout", "maxsize", "bbox", "bbox_from_url", "statements")
 
 	def __init__(self, statements, output="xml", timeout=None, maxsize=None, bbox=None,
-		bbox_from_url=False):
+		bbox_from_url=False, csv=None):
 		self.statements = statements
-		self.output = output # "xml" or "json"
+		self.output = output # "xml", "json" or "csv"
+		self.csv = csv # For csv, a CsvFormat
 		self.timeout = timeout # Seconds, or None if not given
 		self.maxsize = maxsize
 		self.bbox = bbox # None or (south, west, north, east)
 		self.bbox_from_url = bbox_from_url # [bbox] with the area in the bbox URL parameter
+
+class CsvFormat(Node):
+	"""The columns of CSV output. A field is a tag key, or a special field
+	such as "::id", always written with its two colons."""
+	fields = ("columns", "header", "separator")
+
+	def __init__(self, columns, header=True, separator="\t"):
+		self.columns = tuple(columns)
+		self.header = header
+		self.separator = separator
+
+CSV_SPECIAL_FIELDS = ("id", "type", "otype", "lat", "lon", "version", "timestamp", "changeset",
+	"uid", "user", "count", "count:nodes", "count:ways", "count:relations", "count:areas")
 
 class Query(Node):
 	"""node, way, rel, nwr and so on, with filters."""
@@ -100,6 +115,53 @@ class ItemFilter(Node):
 	def __init__(self, set):
 		self.set = set
 
+class RecurseFilter(Node):
+	"""Restricts a query to elements linked to those of a set.
+
+	type is "w" (nodes of the set's ways), "r" (members of its relations),
+	"bn", "bw" or "br" (ways or relations that have its nodes, ways or relations
+	as members). role, unless None, is the role the member must have.
+	"""
+	fields = ("type", "set", "role")
+
+	def __init__(self, type, set=DEFAULT_SET, role=None):
+		self.type = type
+		self.set = set
+		self.role = role
+
+class Around(Node):
+	"""Within radius metres of a position, or of the elements of a set."""
+	fields = ("radius", "set", "lat", "lon")
+
+	def __init__(self, radius, set=DEFAULT_SET, lat=None, lon=None):
+		self.radius = radius
+		self.set = set # Used unless lat and lon are given
+		self.lat = lat
+		self.lon = lon
+
+class User(Node):
+	"""Last edited by one of these users."""
+	fields = ("uids", "names")
+
+	def __init__(self, uids=(), names=()):
+		self.uids = tuple(uids)
+		self.names = tuple(names)
+
+class Newer(Node):
+	"""Last edited after a time, in seconds since 1970."""
+	fields = ("than",)
+
+	def __init__(self, than):
+		self.than = than
+
+class Changed(Node):
+	"""Last edited at or after a time and, unless until is None, at or before another."""
+	fields = ("since", "until")
+
+	def __init__(self, since, until=None):
+		self.since = since
+		self.until = until
+
 class Item(Node):
 	"""A set used as a statement, as in (._; >;)."""
 	fields = ("set", "into")
@@ -113,6 +175,15 @@ class Union(Node):
 
 	def __init__(self, statements, into=DEFAULT_SET):
 		self.statements = list(statements)
+		self.into = into
+
+class Difference(Node):
+	"""The result of the first statement without that of the second."""
+	fields = ("first", "second", "into")
+
+	def __init__(self, first, second, into=DEFAULT_SET):
+		self.first = first
+		self.second = second
 		self.into = into
 
 class Recurse(Node):
@@ -167,22 +238,12 @@ UNSUPPORTED_STATEMENTS = {
 }
 
 UNSUPPORTED_FILTERS = {
-	"around": "around filters are",
 	"poly": "poly filters are",
 	"area": "area filters are",
 	"pivot": "pivot filters are",
-	"user": "user filters are",
-	"uid": "uid filters are",
 	"user_touched": "user_touched filters are",
 	"uid_touched": "uid_touched filters are",
-	"newer": "newer filters are",
-	"changed": "changed filters are",
 	"if": "if: filters are",
-	"r": "recurse filters such as (r) are",
-	"w": "recurse filters such as (w) are",
-	"bn": "recurse filters such as (bn) are",
-	"bw": "recurse filters such as (bw) are",
-	"br": "recurse filters such as (br) are",
 	"way_link": "way_link filters are",
 	"way_cnt": "way_cnt filters are",
 }
@@ -383,11 +444,13 @@ class Parser(object):
 			self.expect(":")
 			if name == "out":
 				value = self.match(IDENTIFIER)
-				if value in ("csv", "custom", "popup"):
+				if value in ("custom", "popup"):
 					raise self.unsupported("out:{} output is".format(value))
-				if value not in ("xml", "json"):
-					raise self.error("the out setting must be xml or json")
+				if value not in ("xml", "json", "csv"):
+					raise self.error("the out setting must be xml, json or csv")
 				script.output = value
+				if value == "csv":
+					script.csv = self.csv_format()
 			elif name in ("timeout", "maxsize"):
 				value = self.match(INTEGER)
 				if value is None:
@@ -402,6 +465,40 @@ class Parser(object):
 			else:
 				raise self.error("unknown setting {}".format(name))
 			self.expect("]")
+
+	def csv_format(self):
+		"""The bracketed part of [out:csv(field, ...; header; separator)]."""
+		self.expect("(")
+		columns = [self.csv_field()]
+		while self.accept(","):
+			columns.append(self.csv_field())
+		header, separator = True, "\t"
+		if self.accept(";"):
+			word = self.match(IDENTIFIER)
+			if word not in ("true", "false"):
+				raise self.error("the header option of out:csv must be true or false")
+			header = word == "true"
+			if self.accept(";"):
+				separator = self.string()
+				if separator is None:
+					raise self.error("the separator of out:csv must be a quoted string")
+		self.expect(")")
+		return CsvFormat(columns, header, separator)
+
+	def csv_field(self):
+		if not self.accept("::"):
+			return self.text_value("a field name")
+		name = self.string()
+		if name is None:
+			name = self.match(IDENTIFIER)
+			# ::count:nodes may be written without quotes
+			if name == "count" and self.peek(":") and not self.peek("::"):
+				self.pos += 1
+				name += ":" + (self.match(IDENTIFIER) or "")
+		if name not in CSV_SPECIAL_FIELDS:
+			raise self.error("unknown special field for out:csv; the known ones are " +
+				", ".join("::" + f for f in CSV_SPECIAL_FIELDS))
+		return "::" + name
 
 	def statement(self, in_union):
 		self.skip()
@@ -442,16 +539,27 @@ class Parser(object):
 		raise self.error("expected a statement but found {}".format(self.found()))
 
 	def union(self):
+		"""A union ( a; b; ... ) or a difference ( a; - b; )."""
 		statements = []
+		difference = False
 		while not self.accept(")"):
 			if self.at_end():
 				raise self.error("union is not closed")
-			if self.peek("-"):
-				raise self.unsupported("difference statements, written (a; - b;), are")
+			if self.accept("-"):
+				if len(statements) != 1 or difference:
+					raise self.error("a difference is written (a; - b;), with exactly two statements")
+				difference = True
+			elif difference and len(statements) == 2:
+				raise self.error("a difference is written (a; - b;), with exactly two statements")
 			statements.append(self.statement(True))
 		if len(statements) == 0:
 			raise self.error("union is empty")
-		statement = Union(statements, self.into())
+		if difference:
+			if len(statements) != 2:
+				raise self.error("a difference is written (a; - b;), with exactly two statements")
+			statement = Difference(statements[0], statements[1], self.into())
+		else:
+			statement = Union(statements, self.into())
 		self.expect(";")
 		return statement
 
@@ -513,6 +621,15 @@ class Parser(object):
 				ids.append(self.object_id())
 			self.expect(")")
 			return IdQuery(ids)
+		if word in ("w", "r", "bn", "bw", "br"):
+			self.pos += len(word)
+			return self.recurse_filter(word)
+		if word == "around":
+			self.pos += len(word)
+			return self.around_filter()
+		if word in ("user", "uid", "newer", "changed"):
+			self.pos += len(word)
+			return self.meta_filter(word)
 		if word in UNSUPPORTED_FILTERS:
 			raise self.unsupported(UNSUPPORTED_FILTERS[word])
 		if word is not None:
@@ -531,6 +648,80 @@ class Parser(object):
 			self.expect(")")
 			return IdQuery(ids)
 		raise self.error("expected one ID or the four coordinates south,west,north,east in the brackets")
+
+	def filter_set(self):
+		"""An optional .name directly after a filter's keyword."""
+		if self.peek(".") :
+			self.pos += 1
+			return self.set_name()
+		return DEFAULT_SET
+
+	def recurse_filter(self, kind):
+		set_name = self.filter_set()
+		role = None
+		if self.accept(":"):
+			role = self.string()
+			if role is None:
+				if self.match(NUMBER) is not None:
+					raise self.unsupported("recurse filters by position in a way or relation are")
+				role = self.text_value("a role")
+		self.expect(")")
+		return RecurseFilter(kind, set_name, role)
+
+	def around_filter(self):
+		set_name = self.filter_set()
+		self.expect(":")
+		radius = self.number()
+		if radius < 0:
+			raise self.error("the radius of an around filter must not be negative")
+		if self.accept(")"):
+			return Around(radius, set_name)
+		self.expect(",")
+		lat = self.number()
+		self.expect(",")
+		lon = self.number()
+		if self.peek(","):
+			raise self.unsupported("around filters along a line of several positions are")
+		self.expect(")")
+		if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+			raise self.error("the position of an around filter is out of range; the order is latitude,longitude")
+		return Around(radius, DEFAULT_SET, lat, lon)
+
+	def timestamp(self):
+		"""A quoted date such as "2026-01-01T00:00:00Z", as seconds since 1970."""
+		text = self.string()
+		if text is None:
+			raise self.error("expected a quoted date but found {}".format(self.found()))
+		value = text.strip()
+		if value.endswith(("Z", "z")):
+			value = value[:-1] + "+00:00"
+		try:
+			parsed = datetime.datetime.fromisoformat(value)
+		except ValueError:
+			raise self.error('"{}" is not a date of the form YYYY-MM-DDThh:mm:ssZ'.format(text))
+		if parsed.tzinfo is None:
+			parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+		return int(parsed.timestamp())
+
+	def meta_filter(self, kind):
+		self.expect(":")
+		if kind == "uid":
+			uids = [self.object_id()]
+			while self.accept(","):
+				uids.append(self.object_id())
+			statement = User(uids=uids)
+		elif kind == "user":
+			names = [self.text_value("a user name")]
+			while self.accept(","):
+				names.append(self.text_value("a user name"))
+			statement = User(names=names)
+		elif kind == "newer":
+			statement = Newer(self.timestamp())
+		else:
+			since = self.timestamp()
+			statement = Changed(since, self.timestamp() if self.accept(",") else None)
+		self.expect(")")
+		return statement
 
 	def object_id(self):
 		value = self.match(INTEGER)
