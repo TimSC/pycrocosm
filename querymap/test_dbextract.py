@@ -1319,3 +1319,39 @@ class DbExtractTestCase(SimpleTestCase):
             broken = Client().get(url)
         self.assertEqual(broken.status_code, 500)
         self.assertNotIn("secret detail", broken.content.decode("utf-8"))
+
+    def test_map_query_on_several_connections(self):
+        # Prepared statements belong to one connection. Each server thread has
+        # its own, so a query must work on every connection, old or new.
+        node = self.create_node(0)
+
+        def query(connection):
+            output = io.BytesIO()
+            encoder = pgmap.PyOsmXmlEncode(output, common.xmlAttribs)
+            t = connection.GetTransaction("ACCESS SHARE")
+            try:
+                mgr = t.GetQueryMgr()
+                status = mgr.Start(self.bbox, int(time.time()), encoder)
+                while status == 0:
+                    status = mgr.Continue()
+                del mgr
+                self.assertEqual(status, 1)
+                # The meta lookup also uses a prepared statement.
+                error = pgmap.PgMapError()
+                self.assertEqual(t.GetMetaValue("schema_version", error), "14")
+            finally:
+                t.Abort()
+            return set(self.decode_contents(output.getvalue()))
+
+        def connect():
+            return pgmap.PgMap(self.connection_string, self.prefixes[0],
+                               self.prefixes[1], self.prefixes[1], self.prefixes[2])
+
+        expected = {("node", node.objId)}
+        second = connect()
+        for connection in (self.map, second, self.map, second):
+            self.assertEqual(query(connection), expected)
+        # Connections created after earlier ones have closed must work too.
+        del second
+        for _ in range(3):
+            self.assertEqual(query(connect()), expected)
