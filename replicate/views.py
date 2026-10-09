@@ -10,6 +10,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 #from defusedxml.ElementTree import fromstring
 import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
+from .extracts import list_db_extracts
 from pycrocosm import common
 import json
 import pgmap
@@ -83,6 +84,17 @@ class GzipStream:
 
     def close(self):
         self.source.close()
+
+
+@require_GET
+def extracts(request):
+    """Public list of the stored extracts, with download links."""
+    try:
+        listing, error = list_db_extracts(), None
+    except Exception as err:
+        listing, error = [], str(err)
+    return render(request, 'replicate/extracts.html', {'extracts': listing, 'error': error},
+        status=500 if error else 200)
 
 
 @require_GET

@@ -148,6 +148,9 @@ Set server to read only mode:
 Download a stored extract
 -------------------------
 
+The stored extracts are listed publicly, with download links, at
+http://localhost:8000/replication/extracts and that page is linked from the front page.
+
 Download a complete database extract as OSM XML using either its ID or its unique name:
 
      curl -o extract.osm http://localhost:8000/replication/extract/1

@@ -13,6 +13,7 @@ urlpatterns = [
     url(r'^extract/([0-9]+)\.osm\.gz$', views.download_extract, {'compressed': True}, name='download_extract_gz_by_id'),
     url(r'^extract/([0-9]+)/?$', views.download_extract, name='download_extract_by_id'),
     url(r'^extract/?$', views.download_extract, name='download_extract_by_name'),
+    url(r'^extracts/?$', views.extracts, name='extracts'),
     url(r'^now$', views.timenow, name='timenow'),
 	url(r'^(minute|hour|day)/$', views.catalog, name='catalog'),
 	url(r'^(minute|hour|day)/([0-9]+)/$', views.catalog2, name='catalog2'),

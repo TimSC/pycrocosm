@@ -954,7 +954,7 @@ class DbExtractTestCase(SimpleTestCase):
         def page(user=Staff()):
             request = RequestFactory().get(url)
             request.user = user
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 response = model_admin.changelist_view(request)
                 return response, response.render().content.decode("utf-8")
 
@@ -983,7 +983,7 @@ class DbExtractTestCase(SimpleTestCase):
         def detail(extract_id, user=Staff()):
             request = RequestFactory().get(detail_url)
             request.user = user
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 response = model_admin.detail_view(request, extract_id)
                 return response, response.render().content.decode("utf-8")
 
@@ -1051,7 +1051,7 @@ class DbExtractTestCase(SimpleTestCase):
             request._messages = CookieStorage(request)
             # As the test client does; RequestFactory posts carry no CSRF token.
             request._dont_enforce_csrf_checks = True
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 response = model_admin.add_view(request)
             if response.status_code == 200:
                 response.render()
@@ -1088,7 +1088,7 @@ class DbExtractTestCase(SimpleTestCase):
         # Without a CSRF token the post is refused before anything is stored.
         request = RequestFactory().post(url, valid)
         request.user = Superuser()
-        with patch("replicate.admin.get_pgmap", return_value=self.map):
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
             self.assertEqual(model_admin.add_view(request).status_code, 403)
         self.assertEqual(stored(), [])
 
@@ -1115,7 +1115,7 @@ class DbExtractTestCase(SimpleTestCase):
         for user, offered in ((Superuser(), True), (Staff(), False)):
             request = RequestFactory().get("/")
             request.user = user
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 html = model_admin.changelist_view(request).render().content.decode("utf-8")
             self.assertEqual(url in html, offered)
 
@@ -1145,7 +1145,7 @@ class DbExtractTestCase(SimpleTestCase):
             request.user = user
             request._messages = CookieStorage(request)
             request._dont_enforce_csrf_checks = csrf
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 response = view(request, extract_id)
                 if response.status_code == 200:
                     response.render()
@@ -1225,7 +1225,7 @@ class DbExtractTestCase(SimpleTestCase):
         for user, update, delete in ((updater, True, False), (deleter, False, True), (User(), False, False)):
             request = RequestFactory().get("/")
             request.user = user
-            with patch("replicate.admin.get_pgmap", return_value=self.map):
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
                 html = model_admin.changelist_view(request).render().content.decode("utf-8")
             self.assertEqual(listing + "{}/update/".format(second) in html, update)
             self.assertEqual(listing + "{}/delete/".format(second) in html, delete)
@@ -1275,3 +1275,47 @@ class DbExtractTestCase(SimpleTestCase):
                     sql.Identifier(self.prefixes[1] + "extract_livenodes")))
             finally:
                 cursor.execute("ROLLBACK")
+
+    def test_public_extract_list(self):
+        url = reverse("replication:extracts")
+        self.assertTrue(url.endswith("/replication/extracts"))
+
+        def page():
+            # No login: the anonymous test client must be able to read it.
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
+                response = Client().get(url)
+            return response, response.content.decode("utf-8")
+
+        response, html = page()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("No extracts are available", html)
+        self.create_node(0)
+        first = self.save("first <extract>")
+        second = self.save("")
+        response, html = page()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("first &lt;extract&gt;", html)
+        self.assertIn("(unnamed)", html)
+        self.assertIn("-1.0, -1.0, 1.0, 1.0", html)
+        for extract_id in (first, second):
+            link = reverse("replication:download_extract_gz_by_id", args=[extract_id])
+            self.assertIn('href="{}"'.format(link), html)
+            download = self.download(link)
+            self.assertEqual(download.status_code, 200)
+            download.close()
+        # Nothing for administrators, and no internal checkpoints, is exposed.
+        self.assertNotIn("/admin/", html)
+        self.assertNotIn("checkpoint", html.lower())
+        self.assertEqual(Client().post(url).status_code, 405)
+
+        # The front page links to the list.
+        with patch("frontpage.views.get_pgmap", return_value=self.map):
+            front = Client().get(reverse("frontpage:index"))
+        self.assertEqual(front.status_code, 200)
+        self.assertIn('href="{}"'.format(url), front.content.decode("utf-8"))
+
+        # A database failure gives an error page without internal details.
+        with patch("replicate.extracts.get_pgmap", side_effect=RuntimeError("secret detail")):
+            broken = Client().get(url)
+        self.assertEqual(broken.status_code, 500)
+        self.assertNotIn("secret detail", broken.content.decode("utf-8"))
