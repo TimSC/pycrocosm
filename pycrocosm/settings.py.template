@@ -114,28 +114,43 @@ WSGI_APPLICATION = 'pycrocosm.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/1.11/ref/settings/#databases
 
+# ****** Settings shared with pgmap ******
+# The map database's name, login and table prefixes are kept in pgmap's
+# config.cfg, where pgmap's command line tools read them. MAP_DATABASE fetches
+# them from there through the pgmap module, not repeating them here. The second
+# argument of _pgmap_config is what applies if config.cfg does not exist or
+# does not give a value. PGMAP_CONFIG in the environment names a different
+# file. The settings database below is separate: it takes nothing from pgmap,
+# and is set by the DJANGO_DB_* environment variables.
+
+import pgmap
+PGMAP_CONFIG = os.environ.get('PGMAP_CONFIG', os.path.join(BASE_DIR, 'pgmap', 'config.cfg'))
+
+def _pgmap_config(name, default):
+	return pgmap.GetConfigValue(PGMAP_CONFIG, name, default)
+
 DATABASES = {
 	'default': {
 		#'ENGINE': 'django.db.backends.sqlite3',
 		#'NAME': os.path.join(BASE_DIR, 'db.sqlite3'),
 		'ENGINE': 'django.db.backends.postgresql',
 		'NAME': 'db_settings',
-		'USER': 'pycrocosm', #SCRIPT_REPLACE_dbuser
-		'PASSWORD': 'password', #SCRIPT_REPLACE_dbpass
-		'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
+		'USER': 'pycrocosm',
+		'PASSWORD': 'password',
+		'HOST': '127.0.0.1',
 		'PORT': '5432',
 	},
 }
 
 MAP_DATABASE = {
-	'NAME': 'db_map', #SCRIPT_REPLACE_dbname
-	'USER': 'pycrocosm', #SCRIPT_REPLACE_dbuser
-	'PASSWORD': 'password', #SCRIPT_REPLACE_dbpass
-	'HOST': '127.0.0.1', #SCRIPT_REPLACE_dbhost
+	'NAME': _pgmap_config('dbname', 'db_map'),
+	'USER': _pgmap_config('dbuser', 'pycrocosm'),
+	'PASSWORD': _pgmap_config('dbpass', 'password'),
+	'HOST': _pgmap_config('dbhost', '127.0.0.1'),
 	'PORT': '5432',
-	'PREFIX': "planet_static_", #SCRIPT_REPLACE_dbtableprefix
-	'PREFIX_TEST': "planet_test_", #SCRIPT_REPLACE_dbtabletestprefix
-	'PREFIX_MOD': "planet_mod_", #SCRIPT_REPLACE_dbtablemodifyprefix
+	'PREFIX': _pgmap_config('dbtableprefix', "planet_static_"),
+	'PREFIX_TEST': _pgmap_config('dbtabletestprefix', "planet_test_"),
+	'PREFIX_MOD': _pgmap_config('dbtablemodifyprefix', "planet_mod_"),
 }
 
 # ****** Database settings from the environment ******

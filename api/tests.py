@@ -98,3 +98,56 @@ class ApiFormatTestCase(TestCase):
 				self.assertEqual(xml.find("api/" + name).attrib[limit], str(api[name][limit]))
 			self.assertLessEqual(api[name]["default_query_limit"], api[name]["maximum_query_limit"])
 		self.assertEqual(xml.find("api/changesets").attrib["maximum_elements"], str(settings.CHANGESETS_MAXIMUM_ELEMENTS))
+
+class PgmapConfigTestCase(TestCase):
+	"""Settings shared with pgmap's command line tools are read from its config file."""
+
+	def setUp(self):
+		import tempfile, os
+		handle, self.path = tempfile.mkstemp(suffix=".cfg")
+		with os.fdopen(handle, "w") as out:
+			out.write("dbname:db_map\n"
+				"dbhost:  127.0.0.1  \n"
+				"dbpass:a:b c:\n"
+				"empty:\n"
+				"spaced key:x\n"
+				"#dump_path:/old/place\n"
+				"dump_path:/first\n"
+				"\n"
+				"a line without a colon\n"
+				"dump_path:/second\r\n"
+				"last:no newline")
+		self.addCleanup(os.remove, self.path)
+
+	def test_values_by_name(self):
+		import pgmap
+		def get(name, *default):
+			return pgmap.GetConfigValue(self.path, name, *default)
+		self.assertEqual(get("dbname"), "db_map")
+		# Spaces around a value are dropped; colons and spaces inside it are kept
+		self.assertEqual(get("dbhost"), "127.0.0.1")
+		self.assertEqual(get("dbpass"), "a:b c:")
+		self.assertEqual(get("last"), "no newline")
+		# A later line replaces an earlier one, and a commented line is another name
+		self.assertEqual(get("dump_path"), "/second")
+		self.assertEqual(get("#dump_path"), "/old/place")
+		self.assertEqual(get("spaced key"), "x")
+		# A name that is there with nothing after it is empty, not the default
+		self.assertEqual(get("empty", "fallback"), "")
+		# Without a line for the name, or without the file, the default applies
+		self.assertEqual(get("dbuser"), "")
+		self.assertEqual(get("dbuser", "pycrocosm"), "pycrocosm")
+		self.assertEqual(get("DBNAME", "other"), "other")
+		self.assertEqual(get("a line without a colon", "none"), "none")
+		self.assertEqual(pgmap.GetConfigValue(self.path + ".missing", "dbname", "fallback"), "fallback")
+		self.assertEqual(pgmap.GetConfigValue(self.path + ".missing", "dbname"), "")
+
+	def test_settings_use_the_config_file(self):
+		import os, pgmap
+		# What the settings module does: values from the file it names, else its defaults
+		self.assertTrue(settings.PGMAP_CONFIG.endswith(".cfg"))
+		for key in ("NAME", "USER", "PASSWORD", "HOST", "PORT", "PREFIX", "PREFIX_MOD", "PREFIX_TEST"):
+			self.assertIn(key, settings.MAP_DATABASE)
+		if os.path.exists(settings.PGMAP_CONFIG) and "DJANGO_MAP_DB_PREFIX" not in os.environ:
+			self.assertEqual(settings.MAP_DATABASE["PREFIX"],
+				pgmap.GetConfigValue(settings.PGMAP_CONFIG, "dbtableprefix", settings.MAP_DATABASE["PREFIX"]))

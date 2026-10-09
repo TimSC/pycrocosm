@@ -51,7 +51,9 @@ If you use a firewall such as ufw, also allow port 5432 from Docker:
 
 ### Configuration
 
-Settings are read from environment variables in `.env`. Create it from the template and edit it:
+The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else.
+
+The Django settings database takes nothing from `config.cfg`: it is set by the `DJANGO_DB_*` environment variables. Those and the other settings are read from `.env`, whose values also take precedence over `config.cfg` for the map database. Create it from the template and edit it:
 
     cp env.template .env
 

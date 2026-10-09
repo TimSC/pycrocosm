@@ -71,7 +71,6 @@ jobs:
             sudo su postgres -c "psql -c \"CREATE DATABASE db_settings;\""
             sudo su postgres -c "psql -c \"GRANT ALL PRIVILEGES ON DATABASE db_settings to pycrocosm;\""
             cp pycrocosm/settings.py.template pycrocosm/settings.py
-            python3 syncdbsettings.py
             python3 manage.py migrate
 
         
