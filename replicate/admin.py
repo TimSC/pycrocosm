@@ -8,7 +8,8 @@ from django.urls import path, reverse
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_POST
-from .extracts import list_db_extracts, get_db_extract, save_db_extract, change_db_extract
+from .extracts import (list_db_extracts, get_db_extract, save_db_extract, change_db_extract,
+	set_db_extract_auto_update)
 from .models import DbExtract
 
 class DbExtractForm(forms.Form):
@@ -63,6 +64,7 @@ class DbExtractAdmin(admin.ModelAdmin):
 		return [
 			path("<int:extract_id>/", view(self.detail_view), name="replicate_dbextract_detail"),
 			path("<int:extract_id>/update/", view(self.update_view), name="replicate_dbextract_update"),
+			path("<int:extract_id>/automatic/", view(self.automatic_view), name="replicate_dbextract_automatic"),
 			path("<int:extract_id>/delete/", view(self.remove_view), name="replicate_dbextract_remove"),
 		] + super().get_urls()
 
@@ -133,6 +135,24 @@ class DbExtractAdmin(admin.ModelAdmin):
 			self.message_user(request, "Could not update extract {}: {}".format(extract_id, err),
 				level=messages.ERROR)
 		return self.changelist_redirect()
+
+	@method_decorator(csrf_protect)
+	@method_decorator(require_POST)
+	def automatic_view(self, request, extract_id):
+		"""Set whether one extract is updated automatically, and where from."""
+		if not self.has_extract_permission(request, "change"):
+			raise PermissionDenied
+		enabled = request.POST.get("auto_update") == "on"
+		update_url = request.POST.get("update_url", "").strip()
+		try:
+			set_db_extract_auto_update(extract_id, enabled, update_url)
+			self.message_user(request, "Automatic updates of database extract {} are now {}.".format(
+				extract_id, "enabled" if enabled else "disabled"))
+		except Exception as err:
+			message = str(err).replace("Standard runtime exception: ", "").replace("Standard exception: ", "")
+			self.message_user(request, "Could not change extract {}: {}".format(extract_id, message),
+				level=messages.ERROR)
+		return HttpResponseRedirect(reverse("admin:replicate_dbextract_detail", args=[extract_id]))
 
 	@method_decorator(csrf_protect)
 	def remove_view(self, request, extract_id):

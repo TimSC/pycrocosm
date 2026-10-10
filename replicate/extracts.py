@@ -69,6 +69,16 @@ def save_db_extract(bbox, name):
 		t.Abort()
 		raise
 
+def set_db_extract_auto_update(extract_id, enabled, update_url):
+	"""Set whether an extract is updated automatically, and the API to update it from (blank for this map)."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		t.SetExtractAutoUpdate(extract_id, "", bool(enabled), update_url)
+		t.Commit()
+	except BaseException:
+		t.Abort()
+		raise
+
 def change_db_extract(method, extract_id):
 	"""Run PgTransaction.UpdateExtract or DeleteExtract on one extract and commit."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")

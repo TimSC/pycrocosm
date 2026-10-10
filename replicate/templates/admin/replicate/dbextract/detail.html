@@ -32,6 +32,19 @@
 <a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td></tr>
 </tbody>
 </table>
+{% if has_update_permission %}
+<h2>Automatic updates</h2>
+<form method="post" action="{% url 'admin:replicate_dbextract_automatic' extract.id %}" id="extract_automatic_form">{% csrf_token %}
+<p><label><input type="checkbox" name="auto_update"{% if extract.auto_update %} checked{% endif %}>
+Keep this extract up to date automatically</label><br>
+<span class="help">The scheduled <code>manage.py updateextracts</code> command updates the extracts that have this set.</span></p>
+<p><label>Update from <input type="url" name="update_url" value="{{ extract.update_url }}" size="60" maxlength="2000"
+placeholder="this map"></label><br>
+<span class="help">Leave blank to update from this map. An address of another server's API can be recorded here,
+but updating from one is not implemented yet: an extract with an address is skipped.</span></p>
+<p><input type="submit" value="Save"></p>
+</form>
+{% endif %}
 {% if has_update_permission or has_remove_permission %}
 <div class="submit-row">
 {% if has_update_permission %}

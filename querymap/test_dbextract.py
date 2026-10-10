@@ -1919,3 +1919,89 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertRegex(lines[1], r"^Extract {} \(working\): updated in".format(working))
         self.assertEqual(lines[2], "1 updated, 0 already up to date, 0 skipped, 1 failed")
         self.assertIn(("node", added.objId), self.contents(working))
+
+    def test_admin_sets_automatic_updates(self):
+        from django.contrib import admin
+        from django.contrib.messages.storage.cookie import CookieStorage
+        from django.core.exceptions import PermissionDenied
+        from django.test import RequestFactory
+        from replicate.models import DbExtract
+
+        class User:
+            is_active = is_staff = is_authenticated = True
+            is_superuser = is_anonymous = False
+            pk = id = 1
+            def __init__(self, *perms): self.perms = {"replicate." + perm for perm in perms}
+            def has_perm(self, perm, obj=None): return perm in self.perms
+            def has_module_perms(self, app_label): return True
+            def get_username(self): return "staff"
+            def get_short_name(self): return "staff"
+            def has_usable_password(self): return True
+
+        model_admin = admin.site._registry[DbExtract]
+        self.create_node(0)
+        extract_id = self.save("settable")
+        other = self.save("other")
+        editor, viewer = User("change_dbextract"), User()
+
+        def post(data, user=editor, target=extract_id):
+            request = RequestFactory().post("/", data)
+            request.user = user
+            request._messages = CookieStorage(request)
+            request._dont_enforce_csrf_checks = True
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
+                response = model_admin.automatic_view(request, target)
+            return response, [str(message) for message in request._messages]
+
+        def detail(user=editor):
+            request = RequestFactory().get("/")
+            request.user = user
+            with patch("replicate.extracts.get_pgmap", return_value=self.map):
+                return model_admin.detail_view(request, extract_id).render().content.decode("utf-8")
+
+        def stored(target=extract_id):
+            info = self.extract_info(target)
+            return info.autoUpdate, info.updateUrl
+
+        # The page offers the settings to those who may change extracts
+        html = detail()
+        self.assertIn('id="extract_automatic_form"', html)
+        self.assertIn(reverse("admin:replicate_dbextract_automatic", args=[extract_id]), html)
+        self.assertNotIn(" checked", html)
+        self.assertNotIn('id="extract_automatic_form"', detail(viewer))
+
+        response, notes = post({"auto_update": "on", "update_url": ""})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("admin:replicate_dbextract_detail", args=[extract_id]))
+        self.assertEqual(notes, ["Automatic updates of database extract {} are now enabled.".format(extract_id)])
+        self.assertEqual(stored(), (True, ""))
+        self.assertEqual(stored(other), (False, ""))
+        html = detail()
+        self.assertIn('name="auto_update" checked', html)
+        self.assertIn('<td id="extract_auto_update">enabled</td>', html)
+        # The update command now takes this extract
+        self.assertIn("Extract {} (settable): already up to date".format(extract_id), self.update_command())
+
+        response, notes = post({"auto_update": "on", "update_url": "  https://example.org/api/  "})
+        self.assertEqual(stored(), (True, "https://example.org/api/"))
+        self.assertIn('value="https://example.org/api/"', detail())
+        # An unticked box is not sent at all, and turns the setting off
+        response, notes = post({"update_url": ""})
+        self.assertEqual(notes, ["Automatic updates of database extract {} are now disabled.".format(extract_id)])
+        self.assertEqual(stored(), (False, ""))
+
+        # What pgmap refuses is reported, and nothing changes
+        response, notes = post({"auto_update": "on", "update_url": "ftp://example.org/"})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(notes, ["Could not change extract {}: Update URL must be blank or begin with "
+                                 "http:// or https://".format(extract_id)])
+        self.assertEqual(stored(), (False, ""))
+        response, notes = post({"auto_update": "on"}, target=99999)
+        self.assertEqual(notes, ["Could not change extract 99999: Extract not found"])
+
+        with self.assertRaises(PermissionDenied):
+            post({"auto_update": "on"}, user=viewer)
+        self.assertEqual(stored(), (False, ""))
+        request = RequestFactory().get("/")
+        request.user = editor
+        self.assertEqual(model_admin.automatic_view(request, extract_id).status_code, 405)
