@@ -3,3 +3,4 @@
 pycrocosm/settings.py
 pycrocosm.ini
 .env
+static/planet/

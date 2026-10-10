@@ -226,6 +226,13 @@ STATICFILES_DIRS = [
 # https://developer.mozilla.org/en-US/docs/Learn/Server-side/Django/Authentication
 LOGIN_REDIRECT_URL = '/'
 
+# Planet dumps, made by "manage.py dumpplanet": the folder they go in, and
+# the name each is given, in which strftime codes stand for the time (UTC) the
+# dump was started. The end of the name selects the format: .osm, .o5m, .pbf
+# or .json, optionally followed by .gz to compress it.
+PLANET_DUMP_DIR = os.path.join(BASE_DIR, 'static', 'planet')
+PLANET_DUMP_FILENAME = 'fosm-planet_%Y%m%d%H%M%S.o5m'
+
 #Stop django adding slashes to URLs that are missing
 APPEND_SLASH = False
 
