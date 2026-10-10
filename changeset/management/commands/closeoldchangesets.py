@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand, CommandError
+from pycrocosm.singlerun import one_at_a_time
 import pgmap
 import time
 from pycrocosm.mapdb import get_pgmap
@@ -9,6 +10,7 @@ class Command(BaseCommand):
 	def add_arguments(self, parser):
 		pass
 
+	@one_at_a_time
 	def handle(self, *args, **options):
 		t = get_pgmap().GetTransaction("EXCLUSIVE")
 		errStr = pgmap.PgMapError()

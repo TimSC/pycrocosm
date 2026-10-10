@@ -167,3 +167,105 @@ class PgmapConfigTestCase(TestCase):
 		if os.path.exists(os.environ["PGMAP_CONFIG"]) and "DJANGO_MAP_DB_PREFIX" not in os.environ:
 			self.assertEqual(settings.MAP_DATABASE["PREFIX"],
 				pgmap.GetConfigValue("dbtableprefix", settings.MAP_DATABASE["PREFIX"]))
+
+class SingleRunTestCase(TestCase):
+	"""Scheduled commands do not start while their previous run is still going."""
+
+	def other_session(self):
+		"""A second connection to the settings database, as another process would have."""
+		import psycopg2
+		from django.db import connection
+		other = psycopg2.connect(**connection.get_connection_params())
+		other.autocommit = True
+		self.addCleanup(other.close)
+		return other
+
+	def hold(self, session, name):
+		from pycrocosm.singlerun import lock_number
+		with session.cursor() as cursor:
+			cursor.execute("SELECT pg_try_advisory_lock(%s)", [lock_number(name)])
+			return cursor.fetchone()[0]
+
+	def release(self, session, name):
+		from pycrocosm.singlerun import lock_number
+		with session.cursor() as cursor:
+			cursor.execute("SELECT pg_advisory_unlock(%s)", [lock_number(name)])
+
+	def test_lock_is_held_for_the_block_only(self):
+		from pycrocosm.singlerun import single_run, lock_number
+		other = self.other_session()
+		with single_run("test task") as free:
+			self.assertIs(free, True)
+			# Another process cannot take it, but can take a different one
+			self.assertFalse(self.hold(other, "test task"))
+			self.assertTrue(self.hold(other, "another task"))
+		self.assertTrue(self.hold(other, "test task"))
+		# Now the other process has it, and this one is told so without waiting
+		with single_run("test task") as free:
+			self.assertIs(free, False)
+		self.assertFalse(self.hold(self.other_session(), "test task"))
+		self.release(other, "test task")
+		with single_run("test task") as free:
+			self.assertIs(free, True)
+		# It is released even when the work fails
+		with self.assertRaises(ValueError):
+			with single_run("test task"):
+				raise ValueError("failed")
+		self.assertTrue(self.hold(other, "test task"))
+		self.assertNotEqual(lock_number("a"), lock_number("b"))
+		self.assertEqual(lock_number("a"), lock_number("a"))
+
+	def test_lock_dies_with_its_process(self):
+		from pycrocosm.singlerun import single_run
+		crashed = self.other_session()
+		self.assertTrue(self.hold(crashed, "test task"))
+		with single_run("test task") as free:
+			self.assertIs(free, False)
+		crashed.close() # As when a command is killed: nothing is left to clear up
+		with single_run("test task") as free:
+			self.assertIs(free, True)
+
+	def test_file_lock_without_postgresql(self):
+		import fcntl, os, tempfile
+		from pycrocosm.singlerun import single_run
+		name = "test task {}".format(os.getpid())
+		path = os.path.join(tempfile.gettempdir(), "pycrocosm-{}.lock".format(name))
+		self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+		with single_run(name, use_database=False) as free:
+			self.assertIs(free, True)
+			with open(path, "w") as rival:
+				with self.assertRaises(OSError):
+					fcntl.flock(rival, fcntl.LOCK_EX | fcntl.LOCK_NB)
+			with single_run(name, use_database=False) as second:
+				self.assertIs(second, False)
+		with single_run(name, use_database=False) as free:
+			self.assertIs(free, True)
+
+	def test_commands_do_nothing_while_an_earlier_run_goes_on(self):
+		import io
+		from unittest.mock import patch
+		from django.core.management import call_command
+		# Loaded before anything is patched, so that they keep the real functions
+		import changeset.management.commands.closeoldchangesets
+		import querymap.management.commands.dumpplanet
+		import replicate.management.commands.updateextracts
+		other = self.other_session()
+		for command, target in (("closeoldchangesets", "changeset.management.commands.closeoldchangesets.get_pgmap"),
+			("updateextracts", "replicate.extracts.get_pgmap"),
+			("dumpplanet", "querymap.management.commands.dumpplanet.get_pgmap")):
+			self.assertTrue(self.hold(other, command))
+			out = io.StringIO()
+			# The map is not touched: reaching it would fail the test
+			with patch(target, side_effect=AssertionError("the command ran")):
+				call_command(command, stdout=out, no_color=True)
+			self.assertEqual(out.getvalue(),
+				"An earlier {} is still running, so this run does nothing\n".format(command))
+			self.release(other, command)
+
+		# With the lock free the command runs: here, far enough to ask for the map
+		out = io.StringIO()
+		with patch("replicate.extracts.get_pgmap", side_effect=RuntimeError("asked for the map")):
+			with self.assertRaisesRegex(RuntimeError, "asked for the map"):
+				call_command("updateextracts", stdout=out, no_color=True)
+		# and has let go of the lock afterwards, though it failed
+		self.assertTrue(self.hold(other, "updateextracts"))

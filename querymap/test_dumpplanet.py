@@ -22,6 +22,9 @@ class DumpPlanetTestCase(SimpleTestCase):
 	tested is the command: where it writes, the name it gives, and what it refuses.
 	"""
 
+	# Only for the lock that keeps two runs of the command apart
+	databases = {"default"}
+
 	def setUp(self):
 		self.folder = tempfile.mkdtemp()
 		self.addCleanup(shutil.rmtree, self.folder, True)

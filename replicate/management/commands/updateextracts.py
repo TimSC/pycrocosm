@@ -1,6 +1,7 @@
 import time
 
 from django.core.management.base import BaseCommand, CommandError
+from pycrocosm.singlerun import one_at_a_time
 from replicate.extracts import list_db_extracts, change_db_extract
 
 class Command(BaseCommand):
@@ -14,6 +15,7 @@ class Command(BaseCommand):
 			help="Update this extract, whether or not it is enabled for automatic updates. "
 				"May be given more than once.")
 
+	@one_at_a_time
 	def handle(self, *args, **options):
 		if options["all"] and options["id"]:
 			raise CommandError("Give --all or --id, not both")

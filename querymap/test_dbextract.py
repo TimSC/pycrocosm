@@ -23,6 +23,8 @@ from pycrocosm.mapdb import make_connection_string
 
 class DbExtractTestCase(SimpleTestCase):
     bbox = [-1.0, -1.0, 1.0, 1.0]
+    # Only for the lock that keeps two runs of the update command apart
+    databases = {"default"}
 
     def setUp(self):
         base = "extract_test_" + uuid.uuid4().hex[:12] + "_"

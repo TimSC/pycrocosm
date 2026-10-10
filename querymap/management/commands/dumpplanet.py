@@ -4,6 +4,7 @@ import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from pycrocosm.singlerun import one_at_a_time
 from pycrocosm import common
 from pycrocosm.mapdb import get_pgmap
 
@@ -17,6 +18,7 @@ class Command(BaseCommand):
 		parser.add_argument("--filename", help="File name pattern, instead of PLANET_DUMP_FILENAME; "
 			"strftime codes stand for the time the dump starts, in UTC")
 
+	@one_at_a_time
 	def handle(self, *args, **options):
 		folder = options["dir"] or settings.PLANET_DUMP_DIR
 		pattern = options["filename"] or settings.PLANET_DUMP_FILENAME

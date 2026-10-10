@@ -185,6 +185,25 @@ The tests create a temporary `test_db_settings` database, so the pycrocosm user 
 
      sudo -u postgres psql -c "ALTER USER pycrocosm CREATEDB;"
 
+Scheduled tasks
+---------------
+
+Three jobs are meant to be run regularly, for instance by cron:
+
+| Command | What it does | A sensible interval |
+|---|---|---|
+| `python3 manage.py closeoldchangesets` | Closes changesets left open for more than a day | Hourly |
+| `python3 manage.py updateextracts` | Brings the stored database extracts enabled for automatic updates up to date with the map (see below) | Every few minutes to daily, as fresh as the extracts need to be |
+| `python3 manage.py dumpplanet` | Writes a dump of the whole map (see below) | Monthly |
+
+With the Docker setup, a crontab for them could be:
+
+	5 * * * *    cd /path/to/pycrocosm && docker compose exec -T web python3 manage.py closeoldchangesets
+	*/15 * * * * cd /path/to/pycrocosm && docker compose exec -T web python3 manage.py updateextracts
+	30 2 1 * *   cd /path/to/pycrocosm && docker compose exec -T web python3 manage.py dumpplanet
+
+None of these commands runs twice at once. Each takes a lock named after itself in the settings database when it starts; if an earlier run of the same command still holds it, the new one prints a line saying so and finishes straight away, successfully, without touching the map. So a schedule shorter than a job takes does no harm: the extra runs are skipped. The lock belongs to the running process, so a command that is killed or crashes leaves nothing to clear up, and different commands do not wait for each other.
+
 Planet dumps
 ------------
 
@@ -203,7 +222,7 @@ Extracts stored in the map database (see the admin pages, and pgmap's README) ar
 
 	python3 manage.py updateextracts
 
-Run it from a scheduler such as cron to keep them current. Without options it updates only the extracts enabled for automatic updates; `--all` updates every extract and `--id N` (which may be repeated) updates particular ones, both whatever their setting. Each extract is updated in its own transaction, so one that fails does not hold back the others; the command then finishes with an error status. An extract set to update from another API is skipped, because that is not implemented yet.
+Without options it updates only the extracts enabled for automatic updates; `--all` updates every extract and `--id N` (which may be repeated) updates particular ones, both whatever their setting. Each extract is updated in its own transaction, so one that fails does not hold back the others; the command then finishes with an error status. An extract set to update from another API is skipped, because that is not implemented yet.
 
 Overpass queries
 ----------------
