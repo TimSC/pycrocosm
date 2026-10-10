@@ -1,0 +1,24 @@
+# SITE_ADDRESS is the name the site is reached by, such as maps.example.org.
+# For a public name Caddy gets a certificate from Let's Encrypt and renews it.
+# For localhost it makes one of its own, which browsers warn about.
+{$SITE_ADDRESS} {
+	# Files that exist in the project's static folder, the planet dumps among
+	# them, are sent straight from disk. Other /static/ addresses, such as the
+	# admin pages' style sheets, go on to the application like everything else.
+	@on_disk {
+		path /static/*
+		file {
+			root /srv/pycrocosm
+		}
+	}
+	handle @on_disk {
+		root * /srv/pycrocosm
+		file_server
+	}
+
+	# Everything else is the application. Caddy tells it the original host,
+	# address and scheme in the X-Forwarded-* headers.
+	handle {
+		reverse_proxy {$UPSTREAM}
+	}
+}

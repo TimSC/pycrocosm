@@ -2,7 +2,7 @@ import json
 import xml.etree.ElementTree as ET
 
 from django.conf import settings
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.test import Client
 
 # Create your tests here.
@@ -269,3 +269,37 @@ class SingleRunTestCase(TestCase):
 				call_command("updateextracts", stdout=out, no_color=True)
 		# and has let go of the lock afterwards, though it failed
 		self.assertTrue(self.hold(other, "updateextracts"))
+
+class BehindHttpsProxyTestCase(TestCase):
+	"""What the application needs to be told when a reverse proxy provides HTTPS."""
+
+	def login(self):
+		from django.contrib.auth.models import User
+		User.objects.create_user("proxied", "proxied@example.com", "password")
+		client = Client(enforce_csrf_checks=True)
+		# As the proxy passes requests on: plain HTTP, saying what the visitor used
+		through_proxy = {"HTTP_HOST": "maps.example.org", "HTTP_X_FORWARDED_PROTO": "https"}
+		page = client.get("/accounts/login/", **through_proxy)
+		self.assertEqual(page.status_code, 200)
+		token = page.cookies["csrftoken"].value
+		return client.post("/accounts/login/", {"username": "proxied", "password": "password",
+			"csrfmiddlewaretoken": token}, HTTP_ORIGIN="https://maps.example.org", **through_proxy)
+
+	@override_settings(ALLOWED_HOSTS=["maps.example.org"], LOGIN_RATE_LIMIT_REQUESTS=0)
+	def test_login_is_refused_until_the_proxy_is_declared(self):
+		# The form came from https://maps.example.org but arrives as plain HTTP
+		self.assertEqual(self.login().status_code, 403)
+
+	@override_settings(ALLOWED_HOSTS=["maps.example.org"], LOGIN_RATE_LIMIT_REQUESTS=0,
+		CSRF_TRUSTED_ORIGINS=["https://maps.example.org"],
+		SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https"))
+	def test_login_works_with_the_proxy_settings(self):
+		response = self.login()
+		self.assertEqual(response.status_code, 302, response.content[:300])
+
+	def test_settings_are_off_unless_asked_for(self):
+		import os
+		if not os.environ.get("DJANGO_BEHIND_HTTPS_PROXY"):
+			self.assertIsNone(settings.SECURE_PROXY_SSL_HEADER)
+		if not os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS"):
+			self.assertEqual(settings.CSRF_TRUSTED_ORIGINS, [])

@@ -62,6 +62,16 @@ DEBUG = _env_bool("DEBUG", True)
 # list, as names separated by commas: localhost,127.0.0.1,[::1]
 ALLOWED_HOSTS = _env_list("DJANGO_ALLOWED_HOSTS", [])
 
+# Behind a reverse proxy that provides HTTPS (see the caddy folder), the site's
+# own address has to be trusted for forms, as https://maps.example.org in
+# DJANGO_CSRF_TRUSTED_ORIGINS, separated by commas if there are several.
+CSRF_TRUSTED_ORIGINS = _env_list("DJANGO_CSRF_TRUSTED_ORIGINS", [])
+# DJANGO_BEHIND_HTTPS_PROXY=1 says that every request comes through such a
+# proxy, so its word (the X-Forwarded-Proto header) is taken for whether the
+# visitor used HTTPS. Leave it off otherwise: anyone can send that header.
+if _env_bool("DJANGO_BEHIND_HTTPS_PROXY", False):
+	SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # Application definition
 
 INSTALLED_APPS = [
