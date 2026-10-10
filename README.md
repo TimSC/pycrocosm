@@ -77,7 +77,7 @@ Create the Django specific tables:
 
     docker compose run --rm web python3 manage.py migrate
 
-Optionally, create an admin user:
+Optionally, create an admin user, who can log in to the admin panel (see below):
 
     docker compose run --rm web python3 manage.py createsuperuser
 
@@ -104,6 +104,17 @@ Also set `DEBUG=0` in `.env`. gunicorn does not serve static files, so put a rev
 
 * nginx: see [nginx/README.md](nginx/README.md), which sets it up with uwsgi under systemd.
 * Caddy, which obtains and renews its HTTPS certificates by itself: see [caddy/README.md](caddy/README.md), a ready-made Docker Compose setup.
+
+Admin panel
+-----------
+
+The admin panel is at `/admin/`: http://127.0.0.1:8000/admin/ on a local install. Log in with an account that has staff status, such as the one made by `createsuperuser` above. Besides Django's own pages for users and groups, it has:
+
+* **Database extracts**: the extracts stored in the map database. List them, see one's details and object counts, download it, save a new one, bring one up to date, delete one, and set whether it is updated automatically.
+* **Map parameters**: the settings pgmap keeps in the map database, such as `useBboxInQuery` and `readonly`, which can be changed there.
+* **OAuth2 applications and authorizations**, and **user preferences**.
+
+Staff accounts can look at the extracts and map parameters; changing them needs a superuser or the matching permission. After upgrading, run `manage.py migrate` so that new admin pages and their permissions are registered.
 
 Read only mode
 --------------
