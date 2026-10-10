@@ -15,7 +15,9 @@ def describe_db_extract(info):
 		"performed_at": datetime.datetime.fromtimestamp(info.performedAt, datetime.timezone.utc),
 		"edit_activity_id": info.editActivityId if info.editActivityId >= 0 else None,
 		"atomic_edit_id": info.atomicEditId if info.atomicEditId >= 0 else None,
-		"up_to_date": not info.pendingActivity,
+		# Whether this map has edits the extract lacks. That says nothing about an
+		# extract kept up from another server's map, so then it is not known.
+		"up_to_date": None if info.updateUrl else not info.pendingActivity,
 		# What is wanted for keeping the extract up to date; nothing acts on it yet
 		"auto_update": info.autoUpdate,
 		"update_url": info.updateUrl,
@@ -78,6 +80,28 @@ def set_db_extract_auto_update(extract_id, enabled, update_url):
 	except BaseException:
 		t.Abort()
 		raise
+
+def update_db_extract(extract_id, fetch=None):
+	"""Bring one extract up to date: from this map, or from the other server
+	named by its update URL, without reading this map. fetch, for tests,
+	stands in for reading a web address.
+
+	Returns a short description of what was done.
+	"""
+	from .remoteupdate import update_extract_from_remote
+	extract = get_db_extract(extract_id)
+	if extract is None:
+		raise RuntimeError("Extract not found")
+	if extract["update_url"]:
+		applied = update_extract_from_remote(get_pgmap(), extract, fetch)
+		if applied == 0:
+			return "already up to date with {}".format(extract["update_url"])
+		return "updated from {} ({} activity row{})".format(extract["update_url"], applied,
+			"" if applied == 1 else "s")
+	if extract["up_to_date"]:
+		return "already up to date"
+	change_db_extract("UpdateExtract", extract_id)
+	return "updated"
 
 def change_db_extract(method, extract_id):
 	"""Run PgTransaction.UpdateExtract or DeleteExtract on one extract and commit."""

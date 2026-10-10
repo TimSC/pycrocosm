@@ -707,6 +707,23 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	t.GetObjectsById("way", list(relatedWayIds), relatedObjs)
 	t.GetObjectsById("relation", list(relatedRelationIds), relatedObjs)
 
+	#Get the relations that hold the related nodes. This edit does not touch
+	#them, but whatever follows the edit activity to keep a copy of part of
+	#the map needs them: a related node can be new to that copy, brought in
+	#as part of a way, and then the relations holding it belong there too.
+	relatedParentsFound = pgmap.OsmData()
+	if len(relatedNodeIds) > 0:
+		t.GetRelationsForObjs("node", list(relatedNodeIds), relatedParentsFound)
+	relatedParents = pgmap.OsmData()
+	relatedParentIds = set()
+	for i in range(relatedParentsFound.relations.size()):
+		rel = relatedParentsFound.relations[i]
+		#Leave out those already recorded as edited or as affected parents
+		if rel.objId in knownRelationIds or rel.objId in relatedParentIds:
+			continue
+		relatedParentIds.add(rel.objId)
+		relatedParents.relations.append(rel)
+
 	#Update changeset bbox based on edits
 	# "Nodes: Any change to a node, including deletion, adds the node's old and new location to the bbox.
 	# Ways: Any change to a way, including deletion, adds all of the way's nodes to the bbox.
@@ -804,6 +821,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
 	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
 	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)
+	relatedParentsTypes, relatedParentsIdVers = get_object_type_id_vers(relatedParents)
 
 	bbox = pgmap.vectord()
 	activity = pgmap.EditActivity()
@@ -824,6 +842,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	activity.affectedparentsIdVer = pgmap.vectorpairi64i64(affectedParentsIdVers)
 	activity.relatedType = pgmap.vectorstring(relatedObjsTypes)
 	activity.relatedIdVer = pgmap.vectorpairi64i64(relatedObjsIdVers)
+	activity.relatedparentsType = pgmap.vectorstring(relatedParentsTypes)
+	activity.relatedparentsIdVer = pgmap.vectorpairi64i64(relatedParentsIdVers)
+	activity.relatedparentsRecorded = True
 	activity.changeset = int(changesetId)
 	activity.timestamp = int(timestamp)
 	activity.uid = uid

@@ -9,7 +9,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_protect
 from django.views.decorators.http import require_POST
 from .extracts import (list_db_extracts, get_db_extract, save_db_extract, change_db_extract,
-	set_db_extract_auto_update)
+	set_db_extract_auto_update, update_db_extract)
 from .models import DbExtract
 
 class DbExtractForm(forms.Form):
@@ -129,8 +129,8 @@ class DbExtractAdmin(admin.ModelAdmin):
 			raise PermissionDenied
 		try:
 			# Runs in this request; a large extract takes a long time.
-			change_db_extract("UpdateExtract", extract_id)
-			self.message_user(request, "Updated database extract {}.".format(extract_id))
+			outcome = update_db_extract(extract_id)
+			self.message_user(request, "Database extract {}: {}.".format(extract_id, outcome))
 		except Exception as err:
 			self.message_user(request, "Could not update extract {}: {}".format(extract_id, err),
 				level=messages.ERROR)

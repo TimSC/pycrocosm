@@ -2,7 +2,7 @@ import time
 
 from django.core.management.base import BaseCommand, CommandError
 from pycrocosm.singlerun import one_at_a_time
-from replicate.extracts import list_db_extracts, change_db_extract
+from replicate.extracts import list_db_extracts, update_db_extract
 
 class Command(BaseCommand):
 	help = ("Bring stored database extracts up to date with the map. Without options, only "
@@ -31,38 +31,33 @@ class Command(BaseCommand):
 		else:
 			selected = [extract for extract in extracts if extract["auto_update"]]
 
-		updated, current, skipped, failed = 0, 0, 0, 0
+		updated, current, failed = 0, 0, 0
 		for extract in selected:
 			label = "Extract {}".format(extract["id"])
 			if extract["name"]:
 				label += " ({})".format(extract["name"])
-			if extract["update_url"]:
-				# The setting exists ahead of the feature
-				self.stdout.write(self.style.WARNING("{}: skipped, updating from another API ({}) "
-					"is not implemented yet".format(label, extract["update_url"])))
-				skipped += 1
-				continue
-			if extract["up_to_date"]:
-				self.stdout.write("{}: already up to date".format(label))
-				current += 1
-				continue
 			start = time.time()
 			try:
-				# One transaction for each extract: a failure leaves the others updated
-				change_db_extract("UpdateExtract", extract["id"])
+				# One extract at a time, each committing its own work: a failure
+				# leaves the others updated. An extract with an update URL is
+				# brought up to date from that server, the rest from this map.
+				outcome = update_db_extract(extract["id"])
 			except Exception as err:
 				message = str(err).replace("Standard runtime exception: ", "")
 				self.stdout.write(self.style.ERROR("{}: failed, {}".format(label, message)))
 				failed += 1
 				continue
-			self.stdout.write(self.style.SUCCESS("{}: updated in {:.1f}s".format(label, time.time() - start)))
-			updated += 1
+			if outcome.startswith("already"):
+				self.stdout.write("{}: {}".format(label, outcome))
+				current += 1
+			else:
+				self.stdout.write(self.style.SUCCESS("{}: {} in {:.1f}s".format(label, outcome, time.time() - start)))
+				updated += 1
 
 		if len(selected) == 0:
 			self.stdout.write("No extracts to update" if options["all"] or options["id"] else
 				"No extracts are enabled for automatic updates")
 		else:
-			self.stdout.write("{} updated, {} already up to date, {} skipped, {} failed".format(
-				updated, current, skipped, failed))
+			self.stdout.write("{} updated, {} already up to date, {} failed".format(updated, current, failed))
 		if failed:
 			raise CommandError("{} extract{} could not be updated".format(failed, "" if failed == 1 else "s"))

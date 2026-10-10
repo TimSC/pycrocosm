@@ -1,6 +1,7 @@
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseServerError, HttpResponseNotFound, HttpResponseBadRequest, JsonResponse
 from django.conf import settings
+from django.urls import reverse
 from django.utils.dateparse import parse_datetime, parse_date
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 #from defusedxml.ElementTree import fromstring
@@ -207,12 +208,33 @@ def download_extract(request, extract_id=None, file_format="osm"):
     return response
 
 def index(request):
-	return HttpResponse("<a href='minute/'>Minutely</a> <a href='hour/'>Hourly</a> <a href='day/'>Daily</a>")
+	# The most recent edit activity record, as an example of asking for records.
+	# All of them together could be the whole history of the map.
+	latest = 1
+	try:
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
+		try:
+			latest = max(1, t.GetLatestEditIds()[0])
+		finally:
+			common.abort_transaction(t)
+	except Exception:
+		pass # The page is still useful without it
+	return HttpResponse(
+		"<p><a href='{front}'>Front page</a></p>"
+		"<p><a id='changesets' href='{history}'>Recent changesets in html format</a></p>"
+		"<p><a id='extracts' href='extracts'>Map extracts to download</a></p>"
+		"<p><a id='planet' href='planet'>Planet dumps to download</a></p>".format(
+			front=reverse('frontpage:index'), history=reverse('objectinfo:history')) +
+		"<p>Diffs: <a href='minute/'>Minutely</a> <a href='hour/'>Hourly</a> <a href='day/'>Daily</a></p>"
+		"<p>Edit activity API: <a id='edit_ids' href='edit_ids'>latest edit IDs</a>, "
+		"<a id='edit_activities' href='edit_activities?first_id={0}&amp;last_id={0}'>the most recent record</a>. "
+		"Records are asked for by a range of IDs, as in "
+		"<code>edit_activities?first_id=1&amp;last_id=50</code>.</p>".format(latest))
 
 def catalog(request, timebase):
 
 	timenow = int(time.time())
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 
 	elapsed = timenow - epochts
 	if elapsed < 0: elapsed = 0
@@ -236,7 +258,7 @@ def catalog(request, timebase):
 def catalog2(request, timebase, cat1):
 
 	timenow = int(time.time())
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 
 	if timebase == "minute":
 		pageStep = 60000000
@@ -269,7 +291,7 @@ def catalog2(request, timebase, cat1):
 def catalog3(request, timebase, cat1, cat2):
 
 	timenow = int(time.time())
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 
 	if timebase == "minute":
 		pageStep = 60000000
@@ -303,7 +325,7 @@ def catalog3(request, timebase, cat1, cat2):
 def getoscdiff(timebase, cat1, cat2, cat3):
 
 	timenow = int(time.time())
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 
 	if timebase == "minute":
 		pageStep = 60000000
@@ -345,7 +367,7 @@ def diffgz(request, timebase, cat1, cat2, cat3):
 def state(request, timebase, cat1, cat2, cat3):
 
 	timenow = int(time.time())
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 
 	if timebase == "minute":
 		pageStep = 60000000
@@ -362,7 +384,7 @@ def state(request, timebase, cat1, cat2, cat3):
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
-	ts = datetime.datetime.utcfromtimestamp(pageStartTimestamp)
+	ts = datetime.datetime.fromtimestamp(pageStartTimestamp, datetime.timezone.utc)
 
 	out = []
 	out.append(ts.strftime("#%a %b %d %X UTC %Y\n"))
@@ -372,7 +394,7 @@ def state(request, timebase, cat1, cat2, cat3):
 
 def TimestampToPath(ts, timebase):
 	
-	epochts = int(time.mktime(settings.REPLICATE_EPOCH.timetuple()))
+	epochts = utc_epoch(settings.REPLICATE_EPOCH)
 	ts2 = ts - epochts
 	
 	if timebase == "minute":
@@ -436,7 +458,7 @@ def customdiff(request):
 
 	t = get_pgmap().GetTransaction("EXCLUSIVE")
 	osmc = pgmap.OsmChange()
-	t.GetReplicateDiff(int(time.mktime(startTs.timetuple())), int(time.mktime(endTs.timetuple())), osmc)
+	t.GetReplicateDiff(utc_epoch(startTs), utc_epoch(endTs), osmc)
 
 	sio = io.BytesIO()
 	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio), False)
@@ -543,7 +565,7 @@ def edit_activity_to_et(activity, t):
 	if activity.changeset > 0:
 		activityEl.attrib['changeset'] = str(activity.changeset)
 	if activity.timestamp > 0:
-		activityEl.attrib['timestamp'] = datetime.datetime.fromtimestamp(activity.timestamp).isoformat()
+		activityEl.attrib['timestamp'] = utc_text(activity.timestamp)
 	activityEl.attrib['action'] = str(activity.action)
 	if activity.atomicEditId > 0:
 		activityEl.set('atomic_edit_id', str(activity.atomicEditId))
@@ -576,6 +598,20 @@ def edit_activity_to_et(activity, t):
 	relatedEl = ET.SubElement(activityEl, 'related')
 	for ch in relatedRoot:
 		relatedEl.append(ch)
+
+	# The relations holding the related nodes. A record made before these
+	# were kept says so, which is not the same as there being none.
+	relatedParentsEl = ET.SubElement(activityEl, 'relatedparents')
+	if activity.relatedparentsRecorded:
+		_, _, relatedParentsIdVers = TypeIdVerSeparate(activity.relatedparentsType, activity.relatedparentsIdVer)
+		relatedParents = pgmap.OsmData()
+		t.GetObjectsByIdVer("relation", relatedParentsIdVers, relatedParents)
+		sio = io.BytesIO()
+		relatedParents.StreamTo(pgmap.PyOsmXmlEncode(sio, common.xmlAttribs))
+		for ch in ET.fromstring(sio.getvalue()):
+			relatedParentsEl.append(ch)
+	else:
+		relatedParentsEl.set('null', 'true')
 
 	return activityEl
 
@@ -610,6 +646,39 @@ def get_edit_activity(request, objId):
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+def utc_epoch(moment):
+	"""Seconds since 1970 for a datetime, taking one without a zone as UTC.
+
+	Written so as not to depend on the server's own time zone, which
+	time.mktime would bring in.
+	"""
+	if moment.tzinfo is None:
+		moment = moment.replace(tzinfo=datetime.timezone.utc)
+	return int(moment.timestamp())
+
+def utc_text(timestamp):
+	return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+def edit_activity_maximum_records():
+	"""The most edit activity records one request is answered with."""
+	return max(1, getattr(settings, 'EDIT_ACTIVITY_MAXIMUM_RECORDS', 100))
+
+@api_view(['GET'])
+def latest_edit_ids(request):
+	"""The latest edit activity ID and atomic edit ID of this map: where anything
+	following its edit activity has to reach to be up to date."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		latest = t.GetLatestEditIds()
+		root = ET.Element('editids')
+		root.attrib['edit_activity_id'] = str(latest[0])
+		root.attrib['atomic_edit_id'] = str(latest[1])
+	finally:
+		common.abort_transaction(t)
+	sio = io.BytesIO()
+	ET.ElementTree(root).write(sio, "UTF-8")
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
 def activity_id_filters(params):
 	keys = ('id', 'first_id', 'last_id', 'atomic_edit_id')
 	values = {}
@@ -642,45 +711,43 @@ def query_edit_activity_by_timestamp(request):
 	except ValueError as error:
 		return HttpResponseBadRequest(str(error))
 
-	sinceTimestamp = request.GET.get('since', None)
-	untilTimestamp = request.GET.get('until', None)
+	# since and until are times, taken as UTC unless they name an offset
+	timestamps = {}
+	for key in ('since', 'until'):
+		text = request.GET.get(key, None)
+		moment = None
+		if text is not None:
+			try:
+				moment = parse_datetime(text)
+			except ValueError:
+				moment = None
+			if moment is None:
+				return HttpResponseBadRequest(key + ' must be a date and time such as 2026-01-31T12:00:00Z')
+		timestamps[key] = utc_epoch(moment) if moment is not None else 0
 
-	if sinceTimestamp is not None:
-		sinceTimestamp=parse_datetime(sinceTimestamp)
-		sinceTimestamp = sinceTimestamp.replace(tzinfo=datetime.timezone.utc)
-		sinceTimestamp = int(time.mktime(sinceTimestamp.timetuple()))
-	else:
-		sinceTimestamp = 0
-
-	if untilTimestamp is not None:
-		untilTimestamp=parse_datetime(untilTimestamp)
-		untilTimestamp = untilTimestamp.replace(tzinfo=datetime.timezone.utc)
-		untilTimestamp = int(time.mktime(untilTimestamp.timetuple()))
-	else:
-		untilTimestamp = 0
-
+	# One more record than is sent is asked for, to know whether there are more
+	maximum = edit_activity_maximum_records()
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	results = pgmap.vectorsharedptreditactivity()
 
 	if id_filters is not None:
-		t.QueryEditActivityByIds(*id_filters, results, errStr)
+		t.QueryEditActivityByIds(*id_filters, results, errStr, maximum + 1)
 	else:
-		t.QueryEditActivityByTimestamp(sinceTimestamp, untilTimestamp, results, errStr)
+		t.QueryEditActivityByTimestamp(timestamps['since'], timestamps['until'], results, errStr, maximum + 1)
 	if errStr.errStr:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
 	resultsEl = ET.Element('editactivities')
-
-	test = []
-	for i in range(len(results)):
-		test.append(results[i])
-
-	for i in range(results.size()):
-		activity = results[i]
-		activityEl = edit_activity_to_et(activity, t)
-		resultsEl.append(activityEl)
+	sent = min(results.size(), maximum)
+	for i in range(sent):
+		resultsEl.append(edit_activity_to_et(results[i], t))
+	if results.size() > maximum:
+		# There are more than one answer holds. The rest are asked for by ID,
+		# starting from next_id, whichever way this request chose its records.
+		resultsEl.attrib['truncated'] = 'true'
+		resultsEl.attrib['next_id'] = str(results[sent - 1].objId + 1)
 
 	#Write final xml
 	doc = ET.ElementTree(resultsEl)

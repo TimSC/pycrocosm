@@ -77,10 +77,13 @@ class PlanetDumpListTestCase(SimpleTestCase):
 				response, html = self.page()
 			self.assertIn('href="https://downloads.example.org/planet/planet.o5m"', html)
 
-	def test_front_page_links_to_it(self):
-		front = Client().get(reverse("frontpage:index"))
-		self.assertEqual(front.status_code, 200)
-		self.assertIn('href="{}"'.format(self.url), front.content.decode("utf-8"))
+	def test_replication_page_links_to_it(self):
+		index = Client().get(reverse("replication:replicate"))
+		self.assertEqual(index.status_code, 200)
+		self.assertIn("<a id='planet' href='planet'>", index.content.decode("utf-8"))
+		# The link is relative to that page, so it leads here
+		self.assertEqual(reverse("replication:replicate") + "planet", self.url)
+		self.assertIn('href="{}"'.format(reverse("replication:replicate")), self.page()[1])
 
 	def test_failure_gives_a_plain_error_page(self):
 		with patch("replicate.views.os.listdir", side_effect=PermissionError("secret path")):

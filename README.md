@@ -127,7 +127,7 @@ Download a stored extract
 -------------------------
 
 The stored extracts are listed publicly, with download links, at
-http://localhost:8000/replication/extracts and that page is linked from the front page.
+http://localhost:8000/replication/extracts and that page is linked from the replication page, http://localhost:8000/replication/, which the front page links to.
 
 Download a complete database extract as OSM XML using either its ID or its unique name:
 
@@ -189,7 +189,7 @@ A dump of the whole map is made by:
 
 It is written to `static/planet/`, which is created if need be, with a name such as `fosm-planet_20260501013701.o5m`: the time the dump was started, in UTC. `PLANET_DUMP_DIR` and `PLANET_DUMP_FILENAME` in `pycrocosm/settings.py` change the folder and the name. The name is a pattern in which strftime codes stand for the time, and its ending selects the format: .osm, .o5m, .pbf or .json, optionally followed by .gz. The `--dir` and `--filename` options do the same for one run.
 
-The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The dumps are listed, newest first with their sizes, on a public page at `/replication/planet`, which the front page links to. Each entry links to the file under `PLANET_DUMP_URL`, the address at which the web server offers the dump folder: `/static/planet/` by default, which the development server serves. A dump still being written is not listed.
+The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The dumps are listed, newest first with their sizes, on a public page at `/replication/planet`, linked from the replication page at `/replication/`. Each entry links to the file under `PLANET_DUMP_URL`, the address at which the web server offers the dump folder: `/static/planet/` by default, which the development server serves. A dump still being written is not listed.
 
 Updating database extracts
 --------------------------
@@ -198,7 +198,20 @@ Extracts stored in the map database (see the admin pages, and pgmap's README) ar
 
 	python3 manage.py updateextracts
 
-Without options it updates only the extracts enabled for automatic updates; `--all` updates every extract and `--id N` (which may be repeated) updates particular ones, both whatever their setting. Each extract is updated in its own transaction, so one that fails does not hold back the others; the command then finishes with an error status. An extract set to update from another API is skipped, because that is not implemented yet.
+Without options it updates only the extracts enabled for automatic updates; `--all` updates every extract and `--id N` (which may be repeated) updates particular ones, both whatever their setting. Each extract is updated separately, so one that fails does not hold back the others; the command then finishes with an error status.
+
+### Extracts that follow another server
+
+An extract can follow the map of another pycrocosm server instead of this one. Give it that server's address as its "Update from" setting in the admin panel (the address of its front page, such as `https://maps.example.org/`). Updating it then uses only the other server's web API, and never reads this server's map:
+
+* `replication/edit_ids` says how far the other server's edits have got;
+* `replication/edit_activities` gives the edits since the extract's checkpoint, each with the objects it changed and those around them. One answer holds at most `EDIT_ACTIVITY_MAXIMUM_RECORDS` records (100 unless set otherwise); an answer that was cut short says so, with `truncated="true"` and the `next_id` to continue from.
+
+Those records carry everything an update needs, so nothing else is asked of the other server. The one exception is edits recorded before a server kept the relations that hold an edit's related nodes (its `related_parents` column, added to schema 14 later; asking pgmap's admin tool for schema version 14 again adds it). For edits that old, the other server's ordinary API is also asked which relations hold each node or way newly brought into the extract.
+
+The extract's contents and checkpoint have to come from that server to begin with. Download one of its extracts (the header of the .osm.gz and .o5m.gz downloads records the checkpoint) and bring it in with pgmap's `import_extract`, then set the address.
+
+Such an extract always holds what a map query without stored bounding boxes selects: the nodes in its rectangle, the ways with such a node and all their nodes, and the relations with one of those nodes or ways as a member.
 
 Overpass queries
 ----------------

@@ -28,6 +28,7 @@ class DbExtractTestCase(SimpleTestCase):
     databases = {"default"}
 
     def setUp(self):
+        self.fetched = [] # Addresses asked of the stand-in for another server
         base = "extract_test_" + uuid.uuid4().hex[:12] + "_"
         self.prefixes = [base + kind + "_" for kind in ("static", "mod", "test")]
         self.connection_string = make_connection_string()
@@ -1228,7 +1229,7 @@ class DbExtractTestCase(SimpleTestCase):
 
         response, notes = call(model_admin.update_view, first, updater)
         self.assertEqual((response.status_code, response["Location"]), (302, listing))
-        self.assertEqual(notes, ["Updated database extract {}.".format(first)])
+        self.assertEqual(notes, ["Database extract {}: updated.".format(first)])
         self.assert_current(first)
         self.assertNotEqual(self.contents(first), stale)
         self.assertEqual(self.contents(second), kept)
@@ -1376,11 +1377,17 @@ class DbExtractTestCase(SimpleTestCase):
                 sql.Identifier(self.prefixes[1] + "extracts")), [second])
         self.assertEqual(ids_on_page(page()[1])[1][1], ("not set", "not set"))
 
-        # The front page links to the list.
+        # The replication page links to the list, and the front page to that.
+        with patch("replicate.views.get_pgmap", return_value=self.map):
+            index = Client().get(reverse("replication:replicate"))
+        self.assertEqual(index.status_code, 200)
+        self.assertIn("<a id='extracts' href='extracts'>", index.content.decode("utf-8"))
+        self.assertTrue(url.endswith("/replication/extracts"))
         with patch("frontpage.views.get_pgmap", return_value=self.map):
             front = Client().get(reverse("frontpage:index"))
         self.assertEqual(front.status_code, 200)
-        self.assertIn('href="{}"'.format(url), front.content.decode("utf-8"))
+        self.assertIn('href="{}"'.format(reverse("replication:replicate")), front.content.decode("utf-8"))
+        self.assertNotIn('href="{}"'.format(url), front.content.decode("utf-8"))
 
         # A database failure gives an error page without internal details.
         with patch("replicate.extracts.get_pgmap", side_effect=RuntimeError("secret detail")):
@@ -1838,10 +1845,34 @@ class DbExtractTestCase(SimpleTestCase):
 
     # The manage.py command that updates extracts
 
+    # Another server's web API, for extracts that update from one. The other
+    # server is this application, called through Django's test client against
+    # the test map, so the extract is fed by the API alone.
+    REMOTE = "http://remote.test/"
+
+    def fetch(self, url):
+        """Stands in for reading a web address."""
+        from urllib.parse import urlsplit
+        from replicate.remoteupdate import RemoteUpdateError
+        if not url.startswith(self.REMOTE):
+            raise RemoteUpdateError("{} could not be read: no such server".format(url))
+        parts = urlsplit(url)
+        path = parts.path + ("?" + parts.query if parts.query else "")
+        self.fetched.append(path)
+        with patch("replicate.views.get_pgmap", return_value=self.map), \
+             patch("elements.views.get_pgmap", return_value=self.map), \
+             patch("multifetch.views.get_pgmap", return_value=self.map):
+            response = Client().get(path)
+        if response.status_code != 200:
+            raise RemoteUpdateError("{} answered {}".format(url, response.status_code))
+        return response.content
+
     def update_command(self, *arguments):
         from django.core.management import call_command
         out = io.StringIO()
-        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+        self.fetched = []
+        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
+             patch("replicate.remoteupdate.http_fetch", self.fetch):
             call_command("updateextracts", *arguments, stdout=out, no_color=True)
         return out.getvalue().splitlines()
 
@@ -1855,40 +1886,46 @@ class DbExtractTestCase(SimpleTestCase):
         manual = self.save("manual")
         remote = self.save("")
         self.set_auto_update(automatic, "", True, "")
-        self.set_auto_update(remote, "", True, "https://example.org/api/")
+        self.set_auto_update(remote, "", True, self.REMOTE)
         self.assertEqual(self.update_command(), [
             "Extract {} (automatic): already up to date".format(automatic),
-            "Extract {}: skipped, updating from another API (https://example.org/api/) "
-            "is not implemented yet".format(remote),
-            "0 updated, 1 already up to date, 1 skipped, 0 failed"])
+            "Extract {}: already up to date with {}".format(remote, self.REMOTE),
+            "0 updated, 2 already up to date, 0 failed"])
+        # The other server was only asked where it has got to
+        self.assertEqual(self.fetched, ["/replication/edit_ids"])
 
-        # After an edit, only the extract enabled for it is brought up to date
+        # After an edit, the extracts enabled for it are brought up to date:
+        # one from this map, the other from the server it names
         added = self.create_node(0.5)
         key = ("node", added.objId)
         lines = self.update_command()
         self.assertRegex(lines[0], r"^Extract {} \(automatic\): updated in \d+\.\ds$".format(automatic))
-        self.assertEqual(lines[2], "1 updated, 0 already up to date, 1 skipped, 0 failed")
+        self.assertRegex(lines[1], r"^Extract {}: updated from {} \(1 activity row\) in \d+\.\ds$".format(
+            remote, re.escape(self.REMOTE)))
+        self.assertEqual(lines[2], "2 updated, 0 already up to date, 0 failed")
         self.assertIn(key, self.contents(automatic))
         self.assertNotIn(key, self.contents(manual))
-        self.assertNotIn(key, self.contents(remote))
+        self.assertIn(key, self.contents(remote))
         self.assert_current(automatic)
+        self.assert_current(remote)
+        self.assertIn("/replication/edit_ids", self.fetched)
+        self.assertTrue(any(path.startswith("/replication/edit_activities?first_id=") for path in self.fetched))
 
         # Chosen by ID, an extract is updated whatever its setting
         lines = self.update_command("--id", str(manual))
         self.assertRegex(lines[0], r"^Extract {} \(manual\): updated in".format(manual))
-        self.assertEqual(lines[1], "1 updated, 0 already up to date, 0 skipped, 0 failed")
+        self.assertEqual(lines[1], "1 updated, 0 already up to date, 0 failed")
         self.assertIn(key, self.contents(manual))
 
-        # --all takes every extract; the one that updates from elsewhere is still skipped
+        # --all takes every extract
         another = self.create_node(0.25)
         lines = self.update_command("--all")
         self.assertEqual(len(lines), 4)
-        self.assertEqual(lines[3], "2 updated, 0 already up to date, 1 skipped, 0 failed")
-        for extract_id in (automatic, manual):
+        self.assertEqual(lines[3], "3 updated, 0 already up to date, 0 failed")
+        for extract_id in (automatic, manual, remote):
             self.assertIn(("node", another.objId), self.contents(extract_id))
-        self.assertNotIn(("node", another.objId), self.contents(remote))
         self.assertEqual(self.update_command("--id", str(automatic), "--id", str(manual))[-1],
-                         "0 updated, 2 already up to date, 0 skipped, 0 failed")
+                         "0 updated, 2 already up to date, 0 failed")
 
         for arguments, message in ((("--id", "99999"), "No extract with ID 99999"),
                                    (("--all", "--id", str(manual)), "not both")):
@@ -1896,29 +1933,38 @@ class DbExtractTestCase(SimpleTestCase):
                 self.update_command(*arguments)
 
     def test_update_command_carries_on_after_a_failure(self):
-        from django.core.management import call_command
         from django.core.management.base import CommandError
         self.create_node(0)
         broken = self.save("broken")
+        unreachable = self.save("unreachable")
         working = self.save("working")
         for extract_id in (broken, working):
             self.set_auto_update(extract_id, "", True, "")
+        self.set_auto_update(unreachable, "", True, "http://elsewhere.test/")
         # Without a checkpoint an extract cannot be updated
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("UPDATE {} SET edit_activity_id=NULL, atomic_edit_id=NULL WHERE id=%s").format(
                 sql.Identifier(self.prefixes[1] + "extracts")), [broken])
         added = self.create_node(0.5)
 
-        out = io.StringIO()
-        with patch("replicate.extracts.get_pgmap", return_value=self.map):
-            with self.assertRaisesRegex(CommandError, "1 extract could not be updated"):
+        with self.assertRaisesRegex(CommandError, "2 extracts could not be updated") as caught:
+            self.update_command()
+        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
+             patch("replicate.remoteupdate.http_fetch", self.fetch):
+            out = io.StringIO()
+            from django.core.management import call_command
+            with self.assertRaises(CommandError):
                 call_command("updateextracts", stdout=out, no_color=True)
         lines = out.getvalue().splitlines()
         self.assertEqual(lines[0], "Extract {} (broken): failed, Extract has no established "
                                    "synchronization checkpoint".format(broken))
-        self.assertRegex(lines[1], r"^Extract {} \(working\): updated in".format(working))
-        self.assertEqual(lines[2], "1 updated, 0 already up to date, 0 skipped, 1 failed")
+        self.assertEqual(lines[1], "Extract {} (unreachable): failed, http://elsewhere.test/replication/edit_ids "
+                                   "could not be read: no such server".format(unreachable))
+        # The first run brought the working extract up to date; nothing was left to do in the second
+        self.assertEqual(lines[2], "Extract {} (working): already up to date".format(working))
+        self.assertEqual(lines[3], "0 updated, 1 already up to date, 2 failed")
         self.assertIn(("node", added.objId), self.contents(working))
+        self.assertNotIn(("node", added.objId), self.contents(unreachable))
 
     def test_admin_sets_automatic_updates(self):
         from django.contrib import admin
@@ -2005,3 +2051,168 @@ class DbExtractTestCase(SimpleTestCase):
         request = RequestFactory().get("/")
         request.user = editor
         self.assertEqual(model_admin.automatic_view(request, extract_id).status_code, 405)
+
+    # Changing an extract from supplied objects, without reading the map
+
+    def test_patch_applies_objects_by_the_extract_rule(self):
+        def obj(cls, ident, version=1, **fields):
+            item = cls()
+            item.objId = ident
+            item.metaData.version = version
+            for name, value in fields.items():
+                setattr(item, name, value)
+            return item
+
+        def node(ident, lon, version=1):
+            return obj(pgmap.OsmNode, ident, version, lon=lon, lat=0.0)
+
+        def way(ident, refs, version=1):
+            item = obj(pgmap.OsmWay, ident, version)
+            for ref in refs:
+                item.refs.append(ref)
+            return item
+
+        def relation(ident, members, version=1):
+            item = obj(pgmap.OsmRelation, ident, version)
+            for kind, ref in members:
+                item.AddMember(kind, ref, "")
+            return item
+
+        def patch_with(objects=(), removed=(), checkpoint=None):
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                patch = t.StartPatchExtract(extract_id)
+                for item in objects:
+                    {pgmap.OsmNode: patch.StoreNode, pgmap.OsmWay: patch.StoreWay,
+                     pgmap.OsmRelation: patch.StoreRelation}[type(item)](item)
+                for kind, ident, version in removed:
+                    patch.RemoveObject(kind, ident, version)
+                patch.Apply()
+                if checkpoint:
+                    patch.SetCheckpoint(*checkpoint)
+                result = (dict((kind, list(patch.GetArrivedIds(kind))) for kind in ("node", "way", "relation")),
+                          list(patch.GetMissingNodeIds()))
+                del patch
+                t.Commit()
+                return result
+            except BaseException:
+                t.Abort()
+                raise
+
+        def held():
+            return dict((key, int(value[0]["version"])) for key, value in self.contents(extract_id).items())
+
+        extract_id = self.save("patched") # An empty extract of the rectangle -1..1
+
+        # A node inside stays; one outside, and a way and relation with nothing inside, do not
+        arrived, missing = patch_with([node(1, 0.5), node(2, 3), node(3, 4), way(10, [2, 3]),
+                                       relation(20, [("way", 10)]), relation(21, [("node", 1)])])
+        self.assertEqual(held(), {("node", 1): 1, ("relation", 21): 1})
+        self.assertEqual((arrived, missing), ({"node": [1], "way": [], "relation": [21]}, []))
+
+        # A way reaching in brings its other nodes, and whatever holds it or them
+        arrived, missing = patch_with([node(2, 3), node(4, 5), way(11, [1, 2, 4]), relation(20, [("way", 11)]),
+                                       relation(22, [("node", 4)]), relation(23, [("node", 99)])])
+        self.assertEqual(held(), {("node", 1): 1, ("node", 2): 1, ("node", 4): 1, ("way", 11): 1,
+                                  ("relation", 20): 1, ("relation", 21): 1, ("relation", 22): 1})
+        self.assertEqual(arrived, {"node": [2, 4], "way": [11], "relation": [20, 22]})
+        # A node the way uses but nobody sent is reported, and filled in later
+        arrived, missing = patch_with([way(11, [1, 2, 4, 5], version=2)])
+        self.assertEqual((arrived["node"], missing), ([], [5]))
+        arrived, missing = patch_with([node(5, 6)])
+        self.assertEqual((arrived["node"], missing, held()[("way", 11)]), ([5], [], 2))
+
+        # A higher version replaces, the same version too, a lower one is ignored
+        patch_with([node(4, 7, version=3)])
+        patch_with([node(4, 8, version=2), way(11, [1], version=1)])
+        self.assertEqual((held()[("node", 4)], held()[("way", 11)]), (3, 2))
+        self.assertIn('lon="7', self.export_document(extract_id))
+        # Sent together, the highest version of each is the one applied
+        patch_with([node(2, 3, version=5), node(2, 3, version=4)], removed=[("node", 5, 3), ("node", 5, 9)])
+        self.assertEqual(held()[("node", 2)], 5)
+        self.assertNotIn(("node", 5), held())
+        patch_with([node(5, 6, version=9)])
+
+        # Deletions: of a relation, then of the node that kept the way, which takes the rest with it
+        patch_with(removed=[("relation", 22, 2), ("relation", 21, 1), ("relation", 99, 1)])
+        self.assertNotIn(("relation", 22), held())
+        self.assertNotIn(("relation", 21), held())
+        patch_with([node(1, 2.5, version=2)], removed=[("node", 4, 2)])
+        self.assertEqual(held(), {})
+
+        # The checkpoint is set when asked, and the extract no longer counts as a bbox-mode one
+        self.assertNotEqual(self.checkpoint(extract_id), (41, 17))
+        patch_with([node(1, 0.5, version=3)], checkpoint=(41, 17))
+        self.assertEqual(self.checkpoint(extract_id), (41, 17))
+        self.assertEqual(held(), {("node", 1): 3})
+
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Extract not found"):
+                t.StartPatchExtract(99999)
+        finally:
+            t.Abort()
+
+    # What an edit activity record says about the relations around an edit
+
+    def activity_records(self):
+        """The published records, as (action, IDs of the relatedparents relations or None)."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        records = []
+        for row in root.findall("editactivity"):
+            holder = row.find("relatedparents")
+            records.append((row.get("action"), None if holder.get("null") == "true" else
+                            sorted(int(r.get("id")) for r in holder.findall("relation"))))
+        return records
+
+    def test_activity_records_relations_of_related_nodes(self):
+        first = self.create_node(0)
+        second = self.create_node(0.1)
+        third = self.create_node(0.2)
+        holds_second = self.create_relation([("node", second, "")])
+        way = self.create_way([first, second])
+        # Creating the way: its nodes are related, and the relation holding one of them is recorded
+        self.assertEqual(self.activity_records()[-1], ("create", [holds_second.objId]))
+        # A relation that is itself edited, or an affected parent, is recorded as that, not again here
+        holds_way = self.create_relation([("way", way, ""), ("node", third, "")])
+        self.assertEqual(self.activity_records()[-1], ("create", []))
+        first = self.modify_node(first, 0.05)
+        # Moving a node: its way is an affected parent and the way's other node is related
+        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
+        self.modify_way(way, [first, second, third])
+        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
+        self.upload("delete", [holds_second])
+        self.assertEqual(self.activity_records()[-1], ("delete", []))
+        # Each is the relation as it was then: the record keeps its version
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        kept = [r for row in root.findall("editactivity") for r in row.find("relatedparents")]
+        self.assertEqual(set((r.tag, r.get("version"), r.find("member").get("ref")) for r in kept),
+                         {("relation", "1", str(second.objId))})
+
+    def test_edits_are_recorded_on_a_map_without_the_related_parents_column(self):
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN related_parents").format(table))
+        first = self.create_node(0)
+        second = self.create_node(0.1)
+        self.create_relation([("node", second, "")])
+        way = self.create_way([first, second])
+        # Edits go on being recorded, and the records say that part is not known
+        self.assertEqual(self.activity_records()[-1], ("create", None))
+        extract_id = self.save()
+        self.modify_node(first, 0.05)
+        self.update(extract_id)
+        self.assert_current(extract_id)
+
+        # Asking for schema 14 again adds the column; later records carry it
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            admin.Commit()
+        finally:
+            del admin
+        self.modify_way(way, [second, first])
+        records = self.activity_records()
+        self.assertEqual(records[-2][1], None)
+        self.assertEqual(len(records[-1][1]), 1)

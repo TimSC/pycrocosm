@@ -40,7 +40,7 @@
 <td>{{ extract.query_mode }}</td>
 <td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td>
 <td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td>
-<td>{% if extract.up_to_date %}yes{% else %}no{% endif %}</td>
+<td>{% if extract.up_to_date is None %}not known: updates from another server{% elif extract.up_to_date %}yes{% else %}no{% endif %}</td>
 <td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a>
 <a href="{% url 'replication:download_extract_o5m_gz_by_id' extract.id %}">.o5m.gz</a>
 <a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td>

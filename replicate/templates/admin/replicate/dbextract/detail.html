@@ -23,7 +23,7 @@
 <tr><th>Last saved or updated</th><td>{{ extract.performed_at|date:"Y-m-d H:i:s" }} UTC</td></tr>
 <tr><th>Edit activity checkpoint</th><td>{{ extract.edit_activity_id|default_if_none:"not set" }}</td></tr>
 <tr><th>Atomic edit checkpoint</th><td>{{ extract.atomic_edit_id|default_if_none:"not set" }}</td></tr>
-<tr><th>Up to date</th><td>{% if extract.up_to_date %}yes{% else %}no{% endif %}</td></tr>
+<tr><th>Up to date</th><td>{% if extract.up_to_date is None %}not known: updates from another server{% elif extract.up_to_date %}yes{% else %}no{% endif %}</td></tr>
 <tr><th>Nodes</th><td id="extract_nodes">{{ extract.nodes }}</td></tr>
 <tr><th>Ways</th><td id="extract_ways">{{ extract.ways }}</td></tr>
 <tr><th>Relations</th><td id="extract_relations">{{ extract.relations }}</td></tr>
@@ -40,8 +40,9 @@ Keep this extract up to date automatically</label><br>
 <span class="help">The scheduled <code>manage.py updateextracts</code> command updates the extracts that have this set.</span></p>
 <p><label>Update from <input type="url" name="update_url" value="{{ extract.update_url }}" size="60" maxlength="2000"
 placeholder="this map"></label><br>
-<span class="help">Leave blank to update from this map. An address of another server's API can be recorded here,
-but updating from one is not implemented yet: an extract with an address is skipped.</span></p>
+<span class="help">Leave blank to update from this map. To follow another pycrocosm server's map instead, give the address
+of its front page, such as https://maps.example.org/. The extract's contents and checkpoint must have come from that
+server, for instance from one of its extract downloads brought in with pgmap's import_extract.</span></p>
 <p><input type="submit" value="Save"></p>
 </form>
 {% endif %}

@@ -7,7 +7,7 @@
 <body>
 <h1>Planet dumps</h1>
 
-<p><a href="{% url 'frontpage:index' %}">Front page</a></p>
+<p><a href="{% url 'frontpage:index' %}">Front page</a> &middot; <a href="{% url 'replication:replicate' %}">Replication</a></p>
 
 {% if error %}
 <p>The list of dumps is not available at the moment.</p>
