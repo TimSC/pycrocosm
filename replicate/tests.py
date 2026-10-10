@@ -255,7 +255,8 @@ class ReplicationIndexTestCase(TestCase):
 		# Both links are relative to the page, and both work
 		links = dict(re.findall(r"<a id='(\w+)' href='([^']*)'", html))
 		self.assertEqual(links["edit_ids"], "edit_ids")
-		self.assertRegex(unescape(links["edit_activities"]), r"^edit_activities\?first_id=(\d+)&last_id=\1$")
+		# The records link needs no arguments: it shows the latest
+		self.assertEqual(links["edit_activities"], "edit_activities")
 		answer = client.get("/replication/" + links["edit_ids"])
 		self.assertEqual(answer.status_code, 200)
 		self.assertIn(b"<editids ", answer.content)
@@ -265,7 +266,7 @@ class ReplicationIndexTestCase(TestCase):
 		# The page is shown even if the map cannot say where its edits have got to
 		with patch("replicate.views.get_pgmap", side_effect=RuntimeError("no map")):
 			html = client.get("/replication/").content.decode("utf-8")
-		self.assertIn("edit_activities?first_id=1&amp;last_id=1", html)
+		self.assertIn("href='edit_activities'", html)
 
 class EditActivityApiTestCase(TestCase):
 	"""Limits and times of the edit activity API."""
@@ -279,14 +280,14 @@ class EditActivityApiTestCase(TestCase):
 		for i in range(5):
 			self.edit(changeset.objId, self.start + 120 * i)
 
-	def edit(self, changeset_id, timestamp):
+	def edit(self, changeset_id, timestamp, lon=-70.3, lat=43.0):
 		"""Create a node as an upload does, which is what records edit activity."""
 		import xml.etree.ElementTree as ET
 		from changeset.views import upload_block
 		node = pgmap.OsmNode()
 		node.objId = -1
 		node.metaData.changeset = changeset_id
-		node.lat, node.lon = 43.0, -70.3
+		node.lat, node.lon = lat, lon
 		data = pgmap.OsmData()
 		data.nodes.append(node)
 		t = get_pgmap().GetTransaction("EXCLUSIVE")
@@ -361,6 +362,54 @@ class EditActivityApiTestCase(TestCase):
 			response = Client().get("/replication/edit_activities?" + bad)
 			self.assertEqual(response.status_code, 400, bad)
 
+	def test_latest_records_by_default(self):
+		root, everything = self.ask("first_id=1")
+		# Fewer than the default number: all of them
+		self.assertEqual(self.ask("")[1], everything)
+		with self.settings(EDIT_ACTIVITY_DEFAULT_RECORDS=2):
+			root, ids = self.ask("")
+			self.assertEqual((ids, root.get("truncated"), root.get("next_id")), (everything[-2:], None, None))
+			# A range starts from its beginning and is not held to the default
+			self.assertEqual(self.ask("first_id=1")[1], everything)
+			self.assertEqual(self.ask("since=2026-01-31T12:00:00Z")[1], everything)
+		# limit says how many: the latest, or the first of a range with where to go on
+		self.assertEqual(self.ask("limit=3")[1], everything[-3:])
+		self.assertEqual(self.ask("limit=100")[1], everything)
+		root, ids = self.ask("first_id=1&limit=2")
+		self.assertEqual((ids, root.get("truncated"), int(root.get("next_id"))), (everything[:2], "true", everything[1] + 1))
+		root, ids = self.ask("since=2026-01-31T12:02:00Z&limit=1")
+		self.assertEqual((ids, root.get("truncated")), (everything[1:2], "true"))
+		for bad in ("limit=0", "limit=101", "limit=-1", "limit=many", "limit="):
+			self.assertEqual(Client().get("/replication/edit_activities?" + bad).status_code, 400, bad)
+		with self.settings(EDIT_ACTIVITY_MAXIMUM_RECORDS=2):
+			self.assertEqual(Client().get("/replication/edit_activities?limit=3").status_code, 400)
+			self.assertEqual(self.ask("")[1], everything[-2:])
+
+	def test_bbox_filter(self):
+		from changeset.tests import CreateTestChangeset
+		root, home = self.ask("first_id=1")
+		changeset = CreateTestChangeset(self.user)
+		self.edit(changeset.objId, self.start + 900, 10.5, 20.5)
+		self.edit(changeset.objId, self.start + 960)
+		root, everything = self.ask("first_id=1")
+		away = [everything[5]]
+		self.assertEqual(self.ask("first_id=1&bbox=10,20,11,21")[1], away)
+		self.assertEqual(self.ask("first_id=1&bbox=-71,42,-70,44")[1], home + everything[6:])
+		self.assertEqual(self.ask("first_id=1&bbox=-180,-90,180,90")[1], everything)
+		self.assertEqual(self.ask("first_id=1&bbox=100,0,101,1")[1], [])
+		# An area as small as the point itself
+		self.assertEqual(self.ask("first_id=1&bbox=10.5,20.5,10.5,20.5")[1], away)
+		# With the other ways of choosing: the latest, times, a limit to carry on from
+		self.assertEqual(self.ask("bbox=10,20,11,21")[1], away)
+		self.assertEqual(self.ask("bbox=-71,42,-70,44&limit=2")[1], [everything[4], everything[6]])
+		self.assertEqual(self.ask("since=2026-01-31T12:08:00Z&bbox=-71,42,-70,44")[1], [everything[4], everything[6]])
+		root, ids = self.ask("first_id=1&bbox=-71,42,-70,44&limit=5")
+		self.assertEqual((ids, root.get("truncated"), int(root.get("next_id"))), (home, "true", home[-1] + 1))
+		self.assertEqual(self.ask("first_id={}&bbox=-71,42,-70,44&limit=5".format(root.get("next_id")))[1], everything[6:])
+		for bad in ("bbox=1,2,3", "bbox=1,2,3,4,5", "bbox=a,b,c,d", "bbox=", "bbox=3,2,1,4", "bbox=1,4,3,2",
+			"bbox=-181,0,1,1", "bbox=0,0,1,91", "bbox=nan,0,1,1", "bbox=0,0,inf,1"):
+			self.assertEqual(Client().get("/replication/edit_activities?" + bad).status_code, 400, bad)
+
 	def test_answers_are_limited(self):
 		root, everything = self.ask("first_id=1")
 		self.assertIsNone(root.get("truncated"))
@@ -373,12 +422,13 @@ class EditActivityApiTestCase(TestCase):
 			self.assertEqual(ids, everything[2:4])
 			root, ids = self.ask("first_id={}".format(root.get("next_id")))
 			self.assertEqual((ids, root.get("truncated"), root.get("next_id")), (everything[4:], None, None))
-			# A request by time, or with no filter at all, is limited the same way
+			# A request by time is limited the same way
 			root, ids = self.ask("since=2026-01-31T12:02:00Z")
 			self.assertEqual((ids, root.get("truncated"), int(root.get("next_id"))),
 				(everything[1:3], "true", everything[2] + 1))
+			# With no range at all the latest are sent, and that is not cut short
 			root, ids = self.ask("")
-			self.assertEqual((ids, root.get("truncated")), (everything[:2], "true"))
+			self.assertEqual((ids, root.get("truncated")), (everything[-2:], None))
 			# Exactly as many as allowed is not cut short
 			root, ids = self.ask("first_id={}&last_id={}".format(everything[0], everything[1]))
 			self.assertEqual((ids, root.get("truncated")), (everything[:2], None))

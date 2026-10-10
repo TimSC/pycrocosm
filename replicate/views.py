@@ -14,6 +14,7 @@ import re
 import pgmap
 from urllib.parse import quote
 import io
+import math
 from xml.sax.saxutils import quoteattr
 import time
 import datetime
@@ -208,17 +209,6 @@ def download_extract(request, extract_id=None, file_format="osm"):
     return response
 
 def index(request):
-	# The most recent edit activity record, as an example of asking for records.
-	# All of them together could be the whole history of the map.
-	latest = 1
-	try:
-		t = get_pgmap().GetTransaction("ACCESS SHARE")
-		try:
-			latest = max(1, t.GetLatestEditIds()[0])
-		finally:
-			common.abort_transaction(t)
-	except Exception:
-		pass # The page is still useful without it
 	return HttpResponse(
 		"<p><a href='{front}'>Front page</a></p>"
 		"<p><a id='changesets' href='{history}'>Recent changesets in html format</a></p>"
@@ -227,9 +217,10 @@ def index(request):
 			front=reverse('frontpage:index'), history=reverse('objectinfo:history')) +
 		"<p>Diffs: <a href='minute/'>Minutely</a> <a href='hour/'>Hourly</a> <a href='day/'>Daily</a></p>"
 		"<p>Edit activity API: <a id='edit_ids' href='edit_ids'>latest edit IDs</a>, "
-		"<a id='edit_activities' href='edit_activities?first_id={0}&amp;last_id={0}'>the most recent record</a>. "
-		"Records are asked for by a range of IDs, as in "
-		"<code>edit_activities?first_id=1&amp;last_id=50</code>.</p>".format(latest))
+		"<a id='edit_activities' href='edit_activities'>the most recent records</a>. "
+		"Records can be asked for by a range of IDs, as in "
+		"<code>edit_activities?first_id=1&amp;last_id=50</code>, and by the area they concern, "
+		"as in <code>edit_activities?bbox=-1.1,50.7,-1.0,50.8</code>.</p>")
 
 def catalog(request, timebase):
 
@@ -551,9 +542,11 @@ def bboxes_xml(name, wkt, objTypes, objIdVers, activityId):
 	"""The element publishing one of a record's box collections.
 
 	It has one entry for every object of the list it goes with, in the order
-	they were recorded, each saying which object it is for. A node, or a way or
-	relation whose box is not known, has a null entry. A record made before
-	the boxes were kept says so, with a null element.
+	they were recorded, each saying which object it is for. A node's entry is
+	its position, with the minimum and maximum the same. A deleted object has
+	a null entry. Where the collection was not recorded, because the record is
+	older than this or the box of one of its objects was not known, the
+	element itself is null.
 	"""
 	if not wkt:
 		return ['<', name, ' null="true"/>']
@@ -669,6 +662,36 @@ def edit_activity_maximum_records():
 	"""The most edit activity records one request is answered with."""
 	return max(1, getattr(settings, 'EDIT_ACTIVITY_MAXIMUM_RECORDS', 100))
 
+def edit_activity_default_records():
+	"""How many of the latest records a request that does not say which it wants is answered with."""
+	return min(edit_activity_maximum_records(), max(1, getattr(settings, 'EDIT_ACTIVITY_DEFAULT_RECORDS', 20)))
+
+def activity_bbox_filter(params):
+	"""The bbox parameter as [min lon, min lat, max lon, max lat], or None if it was not given."""
+	if 'bbox' not in params:
+		return None
+	try:
+		bbox = [float(v) for v in params['bbox'].split(",")]
+	except ValueError:
+		bbox = []
+	if len(bbox) != 4 or not all(math.isfinite(v) for v in bbox):
+		raise ValueError('bbox must be four numbers: min lon, min lat, max lon, max lat')
+	if bbox[0] > bbox[2] or bbox[1] > bbox[3]:
+		raise ValueError('bbox has a minimum greater than its maximum')
+	if bbox[0] < -180 or bbox[2] > 180 or bbox[1] < -90 or bbox[3] > 90:
+		raise ValueError('bbox is outside the world')
+	return bbox
+
+def activity_limit(params):
+	"""The limit parameter, or None if it was not given."""
+	if 'limit' not in params:
+		return None
+	value = params['limit']
+	maximum = edit_activity_maximum_records()
+	if not value or not value.isascii() or not value.isdecimal() or not 0 < int(value) <= maximum:
+		raise ValueError('limit must be a whole number from 1 to {}'.format(maximum))
+	return int(value)
+
 @api_view(['GET'])
 def latest_edit_ids(request):
 	"""The latest edit activity ID and atomic edit ID of this map: where anything
@@ -712,8 +735,21 @@ def activity_id_filters(params):
 @api_view(['GET'])
 def query_edit_activity_by_timestamp(request):
 
+	"""Edit activity records, in ID order.
+
+	They are chosen by a range of IDs (id, first_id, last_id, atomic_edit_id)
+	or of times (since, until). bbox keeps those that may concern an area: the
+	records whose existing objects, updated objects, or affected parents before
+	or after the edit reach into it, along with any that do not say where
+	these are.
+	Without a range, the latest records are sent: 20 unless limit says
+	otherwise. With one, records are sent from the start of the range, up to
+	the limit, and an answer that was cut short says where to go on from.
+	"""
 	try:
 		id_filters = activity_id_filters(request.GET)
+		bbox = activity_bbox_filter(request.GET)
+		limit = activity_limit(request.GET)
 	except ValueError as error:
 		return HttpResponseBadRequest(str(error))
 
@@ -731,23 +767,31 @@ def query_edit_activity_by_timestamp(request):
 				return HttpResponseBadRequest(key + ' must be a date and time such as 2026-01-31T12:00:00Z')
 		timestamps[key] = utc_epoch(moment) if moment is not None else 0
 
-	# One more record than is sent is asked for, to know whether there are more
-	maximum = edit_activity_maximum_records()
+	# Without a range of IDs or times, the newest records are wanted
+	newest = id_filters is None and 'since' not in request.GET and 'until' not in request.GET
+	if limit is None:
+		limit = edit_activity_default_records() if newest else edit_activity_maximum_records()
+	bboxArg = pgmap.vectord(bbox if bbox is not None else [])
+
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
 	errStr = pgmap.PgMapError()
 	results = pgmap.vectorsharedptreditactivity()
 
+	# Working through a range, one more record than is sent is asked for, to
+	# know whether there are more
 	if id_filters is not None:
-		t.QueryEditActivityByIds(*id_filters, results, errStr, maximum + 1)
+		t.QueryEditActivityByIds(*id_filters, results, errStr, limit + 1, bboxArg, False)
+	elif newest:
+		t.QueryEditActivityByTimestamp(0, 0, results, errStr, limit, bboxArg, True)
 	else:
-		t.QueryEditActivityByTimestamp(timestamps['since'], timestamps['until'], results, errStr, maximum + 1)
+		t.QueryEditActivityByTimestamp(timestamps['since'], timestamps['until'], results, errStr, limit + 1, bboxArg, False)
 	if errStr.errStr:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
-	sent = min(results.size(), maximum)
+	sent = min(results.size(), limit)
 	rootAttribs = {}
-	if results.size() > maximum:
+	if results.size() > limit:
 		# There are more than one answer holds. The rest are asked for by ID,
 		# starting from next_id, whichever way this request chose its records.
 		rootAttribs['truncated'] = 'true'

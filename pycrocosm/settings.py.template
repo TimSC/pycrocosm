@@ -301,5 +301,11 @@ REPLICATE_OFFSET = 200
 # The most edit activity records /replication/edit_activities sends in one
 # answer. A request matching more is told where to continue from.
 EDIT_ACTIVITY_MAXIMUM_RECORDS = 100
+# Whether an extract updated from another server's web API asks only for the
+# edits that concern its own rectangle. False asks for every edit.
+EXTRACT_UPDATE_USE_BBOX = True
+# How many of the latest records replication/edit_activities sends when a
+# request does not say which it wants
+EDIT_ACTIVITY_DEFAULT_RECORDS = 20
 MAX_TAG_LENGTH = 255
 ENABLE_ANTI_BREACH_PADDING = False #Add random whitespace to the end to confuse BREACH attacks

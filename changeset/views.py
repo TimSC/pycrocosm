@@ -329,18 +329,53 @@ def object_bboxes(t, osmData):
 					max(p[0] for p in points), max(p[1] for p in points)]
 	return found
 
-def bbox_collection_wkt(objTypes, objIdVers, boxes):
+def relation_reach_bboxes(t, relations):
+	"""The boxes of the ways that hold a node member of any of the relations.
+
+	Something keeping a copy of one area of the map has a way when one of the
+	way's nodes is in the area, has all of that way's nodes, and has the
+	relations holding any of those nodes. So a relation can belong to an area
+	that neither it nor its members touch, through a way that shares one of
+	its member nodes: these boxes are where an edit to the relation matters
+	beyond the relation's own box.
+	"""
+	nodeIds = set()
+	for i in range(relations.size()):
+		for member in relations[i].members:
+			if member.TypeName() == "node" and member.ref > 0:
+				nodeIds.add(member.ref)
+	if len(nodeIds) == 0:
+		return []
+	ways = pgmap.OsmData()
+	t.GetWaysForNodes(list(nodeIds), ways)
+	return list(object_bboxes(t, ways).values())
+
+def node_bboxes(nodes):
+	"""The position of each node, in the form object_bboxes gives the box of a way."""
+	return {("node", nodes[i].objId): [nodes[i].lon, nodes[i].lat, nodes[i].lon, nodes[i].lat]
+		for i in range(nodes.size())}
+
+def bbox_collection_wkt(objTypes, objIdVers, boxes, noneExpected=False):
 	"""One geometry for each listed object, in the same order, as a collection.
 
-	A way or relation with a known box has that rectangle. A node, or an object
-	whose box is unknown, has an empty polygon, which keeps the positions in step.
+	A node has a point at its position and a way or relation the rectangle of
+	its box. An object without one has an empty polygon, which keeps the
+	positions in step. That is expected of deleted objects (noneExpected).
+	Otherwise it means a box that is not known, and then nothing is returned:
+	a search by area must not take the collection as saying where the objects
+	are, and a field left unset is taken as possibly anywhere.
 	"""
-	def box_wkt(box):
+	wkts = []
+	for objType, (objId, objVer) in zip(objTypes, objIdVers):
+		box = boxes.get((objType, objId))
 		if box is None:
-			return "POLYGON EMPTY"
-		return "POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*box)
-	wkts = [box_wkt(boxes.get((objType, objId)))
-		for objType, (objId, objVer) in zip(objTypes, objIdVers)]
+			if not noneExpected:
+				return ""
+			wkts.append("POLYGON EMPTY")
+		elif objType == "node":
+			wkts.append("POINT({0:.17g} {1:.17g})".format(*box))
+		else:
+			wkts.append("POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*box))
 	if len(wkts) == 0:
 		return "GEOMETRYCOLLECTION EMPTY"
 	return "GEOMETRYCOLLECTION(" + ",".join(wkts) + ")"
@@ -629,6 +664,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#The bounding box of each of those ways and relations, as they are before
 	#this block changes anything
 	existingBboxes = object_bboxes(t, originalObjData)
+	reachBboxes = relation_reach_bboxes(t, originalObjData.relations)
 
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = get_refed_members(block)
@@ -1020,15 +1056,28 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	bbox = pgmap.vectord()
 	activity = pgmap.EditActivity()
 	activity.existingType = pgmap.vectorstring(existingObjTypes)
-	#The boxes of the ways and relations, one geometry for each object of the
-	#list they go with. A deleted object has no box afterwards.
-	updatedBboxes = object_bboxes(t, block) if action != "delete" else {}
+	#Where the objects of each list are: one geometry for each, the position
+	#of a node and the box of a way or relation. A search by area tests these,
+	#so that something keeping a copy of one area of the map can ask only for
+	#the edits that could matter to it. A deleted object is nowhere afterwards.
+	existingBboxes.update(node_bboxes(originalObjData.nodes))
+	updatedBboxes = {}
+	if action != "delete":
+		updatedBboxes = object_bboxes(t, block)
+		updatedBboxes.update(node_bboxes(block.nodes))
+		reachBboxes.extend(relation_reach_bboxes(t, block.relations))
 	activity.existingBbox = bbox_collection_wkt(existingObjTypes, existingObjIdVers, existingBboxes)
-	activity.updatedBbox = bbox_collection_wkt(modifiedObjTypes, modifiedObjIdVers, updatedBboxes)
+	activity.updatedBbox = bbox_collection_wkt(modifiedObjTypes, modifiedObjIdVers, updatedBboxes,
+		action == "delete")
 	activity.affectedparentsBeforeBbox = bbox_collection_wkt(
 		affectedParentsTypes, affectedParentsIdVers, parentBboxesBefore)
 	activity.affectedparentsAfterBbox = bbox_collection_wkt(
 		affectedParentsTypes, affectedParentsIdVers, object_bboxes(t, affectedParents))
+	#Where the edit matters beyond the objects themselves: see relation_reach_bboxes.
+	#A search by area tests this along with the four collections.
+	if len(reachBboxes) > 0:
+		bbox = pgmap.vectord([min(box[0] for box in reachBboxes), min(box[1] for box in reachBboxes),
+			max(box[2] for box in reachBboxes), max(box[3] for box in reachBboxes)])
 	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
 	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
 	activity.updatedIdVer = pgmap.vectorpairi64i64(modifiedObjIdVers)

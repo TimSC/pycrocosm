@@ -439,7 +439,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(response.status_code, 404, response.content)
 		self.assertEqual(self.atomic_activity_for_changeset(cs.objId), [])
 
-	def test_node_activity_records_existing_version_and_empty_boxes(self):
+	def test_node_activity_records_existing_version_and_positions(self):
 		cs = CreateTestChangeset(self.user)
 		url = reverse('changeset:upload', args=(cs.objId,))
 		create = ('<osmChange version="0.6"><create><node changeset="{}" id="-1" '
@@ -450,17 +450,19 @@ class ChangesetUploadTestCase(TestCase):
 		row = self.atomic_activity_for_changeset(cs.objId)[-1]
 		self.assertEqual(list(row.existingIdVer), [])
 		self.assertEqual(row.existingBbox, 'GEOMETRYCOLLECTION EMPTY')
-		self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
-		for action, version in [('modify', 1), ('delete', 2)]:
+		self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION(POINT(-1 50))')
+		for action, version, before, after in [('modify', 1, 'POINT(-1 50)', 'POINT(-2 51)'),
+			('delete', 2, 'POINT(-2 51)', 'POLYGON EMPTY')]:
 			xml = ('<osmChange version="0.6"><{0}><node changeset="{1}" id="{2}" '
 				'version="{3}" lat="51" lon="-2" /></{0}></osmChange>').format(action, cs.objId, node_id, version)
 			response = self.client.post(url, xml, content_type='text/xml')
 			self.assertEqual(response.status_code, 200, response.content)
 			row = self.atomic_activity_for_changeset(cs.objId)[-1]
-			# The node as it was is the existing object; a node has no box of its own
+			# The node as it was is the existing object, at the position it had;
+			# once deleted it is nowhere
 			self.assertEqual([tuple(pair) for pair in row.existingIdVer], [(node_id, version)])
-			self.assertEqual(row.existingBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
-			self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
+			self.assertEqual(row.existingBbox, 'GEOMETRYCOLLECTION({})'.format(before))
+			self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION({})'.format(after))
 			self.assertEqual(row.affectedparentsBeforeBbox, 'GEOMETRYCOLLECTION EMPTY')
 			self.assertEqual(row.affectedparentsAfterBbox, 'GEOMETRYCOLLECTION EMPTY')
 		for removed in ('syncBefore', 'syncAfter', 'bboxBefore', 'bboxAfter'):

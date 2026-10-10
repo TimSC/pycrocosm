@@ -11,6 +11,15 @@ other server. The exception is a record made before the relations holding an
 edit's related nodes were kept ("relatedparents"): for edits that old, the
 other server's ordinary API is asked which relations hold each node or way
 newly brought into the extract.
+
+Only the records that may concern the extract's rectangle are asked for, with
+the edit activity API's bbox filter, so a small extract of a busy map does not
+read every edit made anywhere. What the filter leaves out could not have
+changed the extract: an object is in it by having a node in the rectangle, or
+by holding or belonging to one that has, and every record that touches such an
+object reaches into the rectangle before or after its edit. Setting
+EXTRACT_UPDATE_USE_BBOX to False asks for every record instead; the extract
+comes out the same.
 """
 import urllib.error
 import urllib.request
@@ -69,11 +78,13 @@ class RemoteServer:
 		except (KeyError, ValueError):
 			raise RemoteUpdateError("{}replication/edit_ids did not give the server's edit IDs".format(self.base))
 
-	def activities(self, first_id, last_id):
-		"""The activity rows with IDs in the range, in order, as elements."""
+	def activities(self, first_id, last_id, bbox=None):
+		"""The activity rows with IDs in the range, in order, as elements. With
+		bbox (min lon, min lat, max lon, max lat), only those that may concern it."""
+		area = "&bbox=" + ",".join(repr(float(v)) for v in bbox) if bbox else ""
 		rows = []
 		while first_id <= last_id:
-			root = self.get_xml("replication/edit_activities?first_id={}&last_id={}".format(first_id, last_id))
+			root = self.get_xml("replication/edit_activities?first_id={}&last_id={}{}".format(first_id, last_id, area))
 			rows.extend(root.findall("editactivity"))
 			if root.get("truncated") != "true":
 				break
@@ -111,8 +122,12 @@ def send_objects(patch, elements):
 	document = '<osm version="0.6">' + "".join(ET.tostring(e, encoding="unicode") for e in elements) + "</osm>"
 	pgmap.LoadFromOsmXml(document, patch)
 
-def check_groups(rows, checkpoint_atomic):
-	"""Refuse activity that cannot be applied a whole edit at a time, as a local update does."""
+def check_groups(rows, checkpoint_atomic, filtered=False):
+	"""Refuse activity that cannot be applied a whole edit at a time, as a local update does.
+
+	When the rows were chosen by area, the blocks of an edit that do not
+	concern the area are absent, so the blocks seen need not run from zero
+	without a gap; no block may come twice."""
 	groups = {}
 	for row in rows:
 		atomic = row.get("atomic_edit_id")
@@ -121,14 +136,15 @@ def check_groups(rows, checkpoint_atomic):
 			raise RemoteUpdateError("Ungrouped activity at row {}; extract update aborted".format(row.get("id")))
 		groups.setdefault(int(atomic), []).append(int(index))
 	for indexes in groups.values():
-		if sorted(indexes) != list(range(len(indexes))):
+		if len(set(indexes)) != len(indexes) or (not filtered and sorted(indexes) != list(range(len(indexes)))):
 			raise RemoteUpdateError("Incomplete atomic edit in pending activity")
 
 class RemoteExtractUpdate:
-	def __init__(self, pgmap_object, extract_id, server):
+	def __init__(self, pgmap_object, extract_id, server, bbox=None):
 		self.map = pgmap_object
 		self.extract_id = extract_id
 		self.server = server
+		self.bbox = bbox # The area to ask for records of; None for all records
 
 	def patching(self, work):
 		"""Run work(patch) in a transaction of its own, committing what it did."""
@@ -224,9 +240,9 @@ class RemoteExtractUpdate:
 		held = [] # Rows of an edit whose last row has not been seen yet
 		while position <= latest_activity:
 			last = min(position + ACTIVITY_WINDOW - 1, latest_activity)
-			rows = held + self.server.activities(position, last)
+			rows = held + self.server.activities(position, last, self.bbox)
 			position = last + 1
-			check_groups(rows, atomic_done)
+			check_groups(rows, atomic_done, self.bbox is not None)
 			if position <= latest_activity and len(rows) > 0:
 				# The final edit in the window may continue in the next one
 				final = rows[-1].get("atomic_edit_id")
@@ -240,6 +256,11 @@ class RemoteExtractUpdate:
 			self.apply_rows(rows, checkpoint)
 			atomic_done = checkpoint[1]
 			applied += len(rows)
+		if checkpoint[0] < latest_activity:
+			# The records after the last one applied did not concern the
+			# extract. It has still caught up with them, and says so, or the
+			# same records would be asked about on every update.
+			self.patching(lambda patch: patch.SetCheckpoint(latest_activity, latest_atomic))
 		return applied
 
 def update_extract_from_remote(pgmap_object, extract, fetch=None):
@@ -250,5 +271,8 @@ def update_extract_from_remote(pgmap_object, extract, fetch=None):
 	if extract["edit_activity_id"] is None or extract["atomic_edit_id"] is None:
 		raise RemoteUpdateError("Extract has no established synchronization checkpoint")
 	server = RemoteServer(extract["update_url"], fetch)
-	return RemoteExtractUpdate(pgmap_object, extract["id"], server).run(
+	bbox = None
+	if getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True) and len(extract.get("bbox") or []) == 4:
+		bbox = list(extract["bbox"])
+	return RemoteExtractUpdate(pgmap_object, extract["id"], server, bbox).run(
 		(extract["edit_activity_id"], extract["atomic_edit_id"]))

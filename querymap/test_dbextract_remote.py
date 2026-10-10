@@ -10,6 +10,7 @@ fresh map query.
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
+from django.test import override_settings
 from psycopg2 import sql
 
 import pgmap
@@ -207,3 +208,78 @@ class RemoteUpdateTestCase(local.DbExtractTestCase):
         extract["edit_activity_id"] = None
         with self.assertRaisesRegex(remoteupdate.RemoteUpdateError, "no established synchronization checkpoint"):
             remoteupdate.update_extract_from_remote(self.map, extract, self.fetch)
+
+    # Asking only for the records that concern the extract's rectangle
+
+    def activity_requests(self):
+        return [path for path in self.fetched if path.startswith("/replication/edit_activities")]
+
+    def test_only_records_for_the_rectangle_are_asked_for(self):
+        from django.conf import settings
+        filtering = getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True)
+        inside = self.create_node(0.5)
+        extract_id = self.save()
+        # Far from the rectangle: nodes, a way, a relation, edits to them
+        far = [self.create_node(40 + i) for i in range(3)]
+        way = self.create_way(far[:2])
+        self.create_relation([("way", way, ""), ("node", far[2], "")])
+        self.modify_node(far[0], 45)
+        # And one edit inside it
+        inside = self.modify_node(inside, 0.6)
+        self.fetched = []
+        self.update(extract_id)
+        requests = self.activity_requests()
+        self.assertEqual(all("bbox=" in path for path in requests), filtering)
+        self.assertEqual(any("bbox=" in path for path in requests), filtering)
+        # Seven edits were made; one concerns the rectangle
+        self.assertEqual(self.applied, 1 if filtering else 7)
+        self.assert_current(extract_id)
+
+        # Edits that are all elsewhere: nothing to apply, and the extract has
+        # still caught up, so the next update has nothing to ask about
+        self.modify_node(far[1], 46)
+        self.modify_node(far[2], 47)
+        self.fetched = []
+        self.update(extract_id)
+        self.assertEqual(self.applied, 0 if filtering else 2)
+        self.assert_current(extract_id)
+        self.fetched = []
+        self.update(extract_id)
+        self.assertEqual((self.fetched, self.applied), (["/replication/edit_ids"], 0))
+
+    def test_same_extract_with_and_without_the_filter(self):
+        # Objects entering and leaving the rectangle from far away, parents
+        # that reach into it, and edits that have nothing to do with it
+        anchor = self.create_node(0.2)
+        both = [self.save("filtered"), self.save("unfiltered")]
+        near = [self.create_node(0.1 * i) for i in range(1, 5)]
+        far = [self.create_node(30 + i) for i in range(5)]
+        crossing = self.create_way([near[0], far[0]])
+        distant = self.create_way([far[1], far[2]])
+        relation = self.create_relation([("way", distant, ""), ("node", far[3], "")])
+        self.create_relation([("way", crossing, ""), ("node", anchor, "")])
+        far[0] = self.modify_node(far[0], 31.5)       # outside node of a way that is in
+        far[1] = self.modify_node(far[1], 0.7)        # brings the distant way and its relation in
+        distant = self.modify_way(distant, [far[1], far[2], far[4]])
+        far[1] = self.modify_node(far[1], 33)         # and takes them out again
+        near[1] = self.modify_node(near[1], 50)       # a node leaving
+        crossing = self.modify_way(crossing, [far[0], far[4]])  # a way leaving by losing its inside node
+        self.upload("delete", [near[2]])
+        self.modify_relation(relation, [("node", near[3], "")]) # a far relation gaining an inside member
+        applied = []
+        for extract_id, filtering in zip(both, (True, False)):
+            with override_settings(EXTRACT_UPDATE_USE_BBOX=filtering):
+                self.fetched = []
+                self.update(extract_id)
+            applied.append(self.applied)
+            self.assertEqual(any("bbox=" in path for path in self.activity_requests()), filtering)
+            self.assert_current(extract_id)
+            self.assertEqual(self.compare(extract_id)[1], [])
+        self.assertEqual(self.contents(both[0]), self.contents(both[1]))
+        self.assertEqual(self.checkpoint(both[0]), self.checkpoint(both[1]))
+        # The filter spared it some of the records
+        self.assertLess(applied[0], applied[1])
+
+@override_settings(EXTRACT_UPDATE_USE_BBOX=False)
+class RemoteUpdateWithoutBboxTestCase(RemoteUpdateTestCase):
+    """Everything again with the filter by area turned off: the extracts must come out the same."""
