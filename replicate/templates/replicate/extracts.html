@@ -11,13 +11,18 @@
 
 {% if error %}
 <p>The list of extracts is not available at the moment.</p>
-{% elif not extracts %}
+{% else %}
+<p id="server_edit_ids">The map is currently at edit activity ID <strong id="server_edit_activity_id">{{ latest.edit_activity_id }}</strong>
+and atomic edit ID <strong id="server_atomic_edit_id">{{ latest.atomic_edit_id }}</strong>.</p>
+{% if not extracts %}
 <p>No extracts are available.</p>
 {% else %}
-<p>Each extract is a snapshot of the map inside a rectangle, as gzipped OSM XML.</p>
+<p>Each extract is a snapshot of the map inside a rectangle. Its edit IDs say which edits it includes:
+an extract on the same IDs as the map is up to date.</p>
 <table border="1" cellpadding="4">
 <thead>
-<tr><th>Name</th><th>Bbox (west, south, east, north)</th><th>Last updated</th><th>Download</th></tr>
+<tr><th>Name</th><th>Bbox (west, south, east, north)</th><th>Last updated</th>
+<th>Edit activity ID</th><th>Atomic edit ID</th><th>Download</th></tr>
 </thead>
 <tbody>
 {% for extract in extracts %}
@@ -25,6 +30,8 @@
 <td>{{ extract.name|default:"(unnamed)" }}</td>
 <td>{{ extract.bbox|join:", " }}</td>
 <td>{{ extract.performed_at|date:"Y-m-d H:i" }} UTC</td>
+<td class="edit_activity_id">{{ extract.edit_activity_id|default_if_none:"not set" }}</td>
+<td class="atomic_edit_id">{{ extract.atomic_edit_id|default_if_none:"not set" }}</td>
 <td><a href="{% url 'replication:download_extract_gz_by_id' extract.id %}">.osm.gz</a>
 <a href="{% url 'replication:download_extract_o5m_gz_by_id' extract.id %}">.o5m.gz</a>
 <a href="{% url 'replication:download_extract_pbf_by_id' extract.id %}">.pbf</a></td>
@@ -32,6 +39,7 @@
 {% endfor %}
 </tbody>
 </table>
+{% endif %}
 {% endif %}
 </body>
 </html>

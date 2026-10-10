@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Planet dumps</title>
+</head>
+<body>
+<h1>Planet dumps</h1>
+
+<p><a href="{% url 'frontpage:index' %}">Front page</a></p>
+
+{% if error %}
+<p>The list of dumps is not available at the moment.</p>
+{% elif not dumps %}
+<p>No dumps are available.</p>
+{% else %}
+<p>Each dump is the whole map as it was when the dump was made. The name gives that time, in UTC.</p>
+<table border="1" cellpadding="4">
+<thead>
+<tr><th>File</th><th>Size</th><th>Finished</th></tr>
+</thead>
+<tbody>
+{% for dump in dumps %}
+<tr>
+<td><a href="{{ dump.url }}">{{ dump.name }}</a></td>
+<td title="{{ dump.size }} bytes">{{ dump.size|filesizeformat }}</td>
+<td>{{ dump.written_at|date:"Y-m-d H:i" }} UTC</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% endif %}
+</body>
+</html>

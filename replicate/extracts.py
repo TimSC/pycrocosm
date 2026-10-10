@@ -34,6 +34,19 @@ def list_db_extracts():
 	finally:
 		t.Abort() # Read only; nothing to commit.
 
+def list_db_extracts_with_latest():
+	"""The extracts as list_db_extracts gives them, and the map's latest edit
+	activity ID and atomic edit ID, both read from the same snapshot."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		infos = pgmap.vectorextractinfo()
+		t.ListExtracts(infos)
+		latest = t.GetLatestEditIds()
+		return ([describe_db_extract(info) for info in infos],
+			{"edit_activity_id": latest[0], "atomic_edit_id": latest[1]})
+	finally:
+		t.Abort() # Read only; nothing to commit.
+
 def get_db_extract(extract_id):
 	"""Describe one extract, including its object counts, or None if it does not exist."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")

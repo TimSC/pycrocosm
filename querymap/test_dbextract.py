@@ -5,6 +5,7 @@ Uses MAP_DATABASE, but creates and removes unique table prefixes. Django's
 transaction rollback does not cover pgmap's separately committed transactions.
 """
 import io
+import re
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -258,8 +259,37 @@ class DbExtractTestCase(SimpleTestCase):
                     chunks = [chunk for chunk in response.streaming_content if chunk]
                     self.assertGreater(len(chunks), 1)
                     self.assertEqual(self.decode_contents(b"".join(chunks)), expected)
+                    # The header says which edits the extract is current to
+                    root = ET.fromstring(b"".join(chunks))
+                    self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))),
+                                     self.checkpoint(extract_id))
+                    self.assertEqual(root.get("generator"), common.xmlAttribs["generator"])
                 finally:
                     response.close()
+
+        # They are the extract's own, not the map's latest: a later edit does not change them
+        saved_at = self.checkpoint(extract_id)
+        self.create_node(0.5)
+        response = self.download(reverse("replication:download_extract_by_id", args=[extract_id]))
+        root = ET.fromstring(b"".join(response.streaming_content))
+        self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))), saved_at)
+        self.update(extract_id)
+        self.assertGreater(self.checkpoint(extract_id)[0], saved_at[0])
+        response = self.download(reverse("replication:download_extract_by_id", args=[extract_id]))
+        root = ET.fromstring(b"".join(response.streaming_content))
+        self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))),
+                         self.checkpoint(extract_id))
+
+        # An extract with no checkpoint is still downloadable, without them
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET edit_activity_id=NULL, atomic_edit_id=NULL WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "extracts")), [extract_id])
+        response = self.download(reverse("replication:download_extract_by_id", args=[extract_id]))
+        self.assertEqual(response.status_code, 200)
+        root = ET.fromstring(b"".join(response.streaming_content))
+        self.assertIsNone(root.get("edit_activity_id"))
+        self.assertIsNone(root.get("atomic_edit_id"))
+        self.assertEqual(len(root.findall("node")), 1006) # The 1005 first made and the one added since
 
     def test_download_extract_errors(self):
         by_name = reverse("replication:download_extract_by_name")
@@ -1262,6 +1292,9 @@ class DbExtractTestCase(SimpleTestCase):
             response.close()
         self.assertEqual(data[:2], b"\x1f\x8b")
         self.assertEqual(self.decode_contents(gzip.decompress(data)), self.contents(extract_id))
+        root = ET.fromstring(gzip.decompress(data))
+        self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))),
+                         self.checkpoint(extract_id))
         self.assertEqual(len(self.contents(extract_id)), 1006)
 
         missing = self.download(reverse("replication:download_extract_gz_by_id", args=[99999]))
@@ -1291,6 +1324,9 @@ class DbExtractTestCase(SimpleTestCase):
         response, html = page()
         self.assertEqual(response.status_code, 200)
         self.assertIn("No extracts are available", html)
+        # The map's edit IDs are shown even with nothing to list: none, before any edit
+        self.assertIn('id="server_edit_activity_id">0<', html)
+        self.assertIn('id="server_atomic_edit_id">0<', html)
         self.create_node(0)
         first = self.save("first <extract>")
         second = self.save("")
@@ -1305,10 +1341,40 @@ class DbExtractTestCase(SimpleTestCase):
             download = self.download(link)
             self.assertEqual(download.status_code, 200)
             download.close()
-        # Nothing for administrators, and no internal checkpoints, is exposed.
+        # Nothing for administrators is exposed.
         self.assertNotIn("/admin/", html)
-        self.assertNotIn("checkpoint", html.lower())
         self.assertEqual(Client().post(url).status_code, 405)
+
+        # The map's current edit IDs are above the list, and each extract's own in it
+        def ids_on_page(html):
+            server = (int(re.search(r'id="server_edit_activity_id">(\d+)<', html).group(1)),
+                      int(re.search(r'id="server_atomic_edit_id">(\d+)<', html).group(1)))
+            rows = list(zip(re.findall(r'<td class="edit_activity_id">([^<]*)</td>', html),
+                            re.findall(r'<td class="atomic_edit_id">([^<]*)</td>', html)))
+            return server, rows
+        def latest():
+            with self.db.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT COALESCE(max(id),0), COALESCE(max(atomic_edit_id),0) FROM {}").format(
+                    sql.Identifier(self.prefixes[1] + "edit_activity")))
+                return cursor.fetchone()
+        saved_at = latest()
+        self.assertGreater(saved_at[0], 0)
+        server, rows = ids_on_page(html)
+        self.assertEqual(server, saved_at)
+        self.assertLess(html.index('id="server_edit_ids"'), html.index("<table"))
+        self.assertEqual(rows, [(str(saved_at[0]), str(saved_at[1]))] * 2)
+        # After an edit the map moves on; an extract follows when it is updated
+        self.create_node(0.5)
+        self.update(first)
+        response, html = page()
+        server, rows = ids_on_page(html)
+        self.assertEqual(server, latest())
+        self.assertGreater(server[0], saved_at[0])
+        self.assertEqual(rows, [(str(server[0]), str(server[1])), (str(saved_at[0]), str(saved_at[1]))])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET edit_activity_id=NULL, atomic_edit_id=NULL WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "extracts")), [second])
+        self.assertEqual(ids_on_page(page()[1])[1][1], ("not set", "not set"))
 
         # The front page links to the list.
         with patch("frontpage.views.get_pgmap", return_value=self.map):
@@ -1641,6 +1707,10 @@ class DbExtractTestCase(SimpleTestCase):
                 found += [("relation", r.objId, r.metaData.version) for r in decoded.relations]
                 self.assertEqual(sorted(found), expected)
                 self.assertEqual(len(decoded.bounds), 1)
+                # o5m carries the extract's edit IDs; PBF has nowhere to put them
+                ids = self.checkpoint(extract_id)
+                self.assertEqual(dict(decoded.attributes), {} if extension == "pbf" else
+                                 {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])})
                 way = decoded.ways[0]
                 self.assertEqual(len(way.refs), 3)
                 relation = [r for r in decoded.relations if len(r.members) == 4][0]

@@ -232,6 +232,10 @@ LOGIN_REDIRECT_URL = '/'
 # or .json, optionally followed by .gz to compress it.
 PLANET_DUMP_DIR = os.path.join(BASE_DIR, 'static', 'planet')
 PLANET_DUMP_FILENAME = 'fosm-planet_%Y%m%d%H%M%S.o5m'
+# The address at which the web server offers that folder for download, which
+# the list of dumps at /replication/planet links to. The default suits the
+# default folder; change both together.
+PLANET_DUMP_URL = '/static/planet/'
 
 #Stop django adding slashes to URLs that are missing
 APPEND_SLASH = False

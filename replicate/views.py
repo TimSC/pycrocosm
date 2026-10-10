@@ -6,10 +6,13 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 #from defusedxml.ElementTree import fromstring
 import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
-from .extracts import list_db_extracts
+from .extracts import list_db_extracts, list_db_extracts_with_latest
 from pycrocosm import common
 import json
+import os
+import re
 import pgmap
+from urllib.parse import quote
 import io
 import time
 import datetime
@@ -21,11 +24,21 @@ from django.views.decorators.http import require_GET
 # The file formats an extract can be downloaded in, by file name extension:
 # how to make the encoder, whether the encoded stream is then gzipped, and the
 # content type. PBF compresses its own blocks, so it is not gzipped again.
+# Each encoder is made for an output and the extract's edit IDs: the edit
+# activity ID and atomic edit ID it is current to, which go in the file header
+# so that whoever holds the file can tell, and can update from there. PBF has
+# nowhere to put them.
+def xml_extract_encoder(out, edit_ids):
+    attribs = dict(common.xmlAttribs)
+    attribs.update(edit_ids)
+    return pgmap.PyOsmXmlEncode(out, pgmap.mapstringstring(attribs))
+
 EXTRACT_FORMATS = {
-    "osm": (lambda out: pgmap.PyOsmXmlEncode(out, common.xmlAttribs), False, "application/xml"),
-    "osm.gz": (lambda out: pgmap.PyOsmXmlEncode(out, common.xmlAttribs), True, "application/x-gzip"),
-    "o5m.gz": (lambda out: pgmap.PyO5mEncode(out), True, "application/x-gzip"),
-    "pbf": (lambda out: pgmap.PyPbfEncode(out), False, "application/octet-stream"),
+    "osm": (xml_extract_encoder, False, "application/xml"),
+    "osm.gz": (xml_extract_encoder, True, "application/x-gzip"),
+    "o5m.gz": (lambda out, edit_ids: pgmap.PyO5mEncode(out, pgmap.mapstringstring(edit_ids)),
+        True, "application/x-gzip"),
+    "pbf": (lambda out, edit_ids: pgmap.PyPbfEncode(out), False, "application/octet-stream"),
 }
 
 class ExtractDownload:
@@ -36,14 +49,30 @@ class ExtractDownload:
         self.buffer = io.BytesIO()
         if make_encoder is None:
             make_encoder = EXTRACT_FORMATS["osm"][0]
-        self.encoder = make_encoder(self.buffer)
+        self.encoder = None
         self.exporter = None
         try:
+            self.encoder = make_encoder(self.buffer, self.edit_ids(extract_id, name))
             self.exporter = self.transaction.StartExportExtract(extract_id, name, self.encoder)
             self.extract_id = self.exporter.GetId()
         except BaseException:
             self.close()
             raise
+
+    def edit_ids(self, extract_id, name):
+        """The checkpoint of the extract about to be exported, as header attributes.
+
+        Read in the transaction that exports it, so the two agree. Empty if the
+        extract has no checkpoint yet, or is not found: the export itself
+        reports an extract that is missing or whose name is ambiguous.
+        """
+        infos = pgmap.vectorextractinfo()
+        self.transaction.ListExtracts(infos)
+        chosen = [(info.editActivityId, info.atomicEditId) for info in infos
+            if (info.extractId == extract_id if extract_id else info.name == name)]
+        if len(chosen) != 1 or chosen[0][0] < 0 or chosen[0][1] < 0:
+            return {}
+        return {"edit_activity_id": str(chosen[0][0]), "atomic_edit_id": str(chosen[0][1])}
 
     def __iter__(self):
         return self
@@ -94,15 +123,54 @@ class GzipStream:
         self.source.close()
 
 
+# Names a finished dump can have: pgmap's formats, optionally gzipped. A dump
+# still being written has a temporary name, which does not end like this.
+PLANET_DUMP_NAME = re.compile(r"^[^/]+\.(osm|o5m|pbf|json)(\.gz)?$")
+
+def list_planet_dumps():
+    """The finished dumps in PLANET_DUMP_DIR, newest first: name, size, time and address of each."""
+    folder = settings.PLANET_DUMP_DIR
+    base = settings.PLANET_DUMP_URL
+    if not base.endswith("/"):
+        base += "/"
+    dumps = []
+    try:
+        names = os.listdir(folder)
+    except FileNotFoundError:
+        names = [] # No dump has been made yet
+    for name in names:
+        path = os.path.join(folder, name)
+        if name.startswith(".") or not PLANET_DUMP_NAME.match(name) or not os.path.isfile(path):
+            continue
+        status = os.stat(path)
+        dumps.append({
+            "name": name,
+            "size": status.st_size,
+            "written_at": datetime.datetime.fromtimestamp(status.st_mtime, datetime.timezone.utc),
+            "url": base + quote(name),
+        })
+    dumps.sort(key=lambda dump: (dump["written_at"], dump["name"]), reverse=True)
+    return dumps
+
+@require_GET
+def planet_dumps(request):
+    """Public list of the planet dumps made by "manage.py dumpplanet", with download links."""
+    try:
+        dumps, error = list_planet_dumps(), None
+    except OSError as err:
+        dumps, error = [], str(err)
+    return render(request, 'replicate/planet.html', {'dumps': dumps, 'error': error},
+        status=500 if error else 200)
+
 @require_GET
 def extracts(request):
     """Public list of the stored extracts, with download links."""
     try:
-        listing, error = list_db_extracts(), None
+        (listing, latest), error = list_db_extracts_with_latest(), None
     except Exception as err:
-        listing, error = [], str(err)
-    return render(request, 'replicate/extracts.html', {'extracts': listing, 'error': error},
-        status=500 if error else 200)
+        listing, latest, error = [], None, str(err)
+    return render(request, 'replicate/extracts.html',
+        {'extracts': listing, 'latest': latest, 'error': error}, status=500 if error else 200)
 
 
 @require_GET

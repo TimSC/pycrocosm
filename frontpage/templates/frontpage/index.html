@@ -25,5 +25,13 @@
 
 <p><a href="{% url 'replication:extracts' %}">Map extracts to download</a></p>
 
-<p><a href="{% url 'overpass:xapi2' %}?*[bbox=-6.8115234,52.9751082,-5.625,53.7097136][amenity=hospital]">Example XAPI request</a></p>
+<p><a href="{% url 'replication:planet_dumps' %}">Planet dumps to download</a></p>
+
+{% with query='nwr[amenity=hospital](52.9751082,-6.8115234,53.7097136,-5.625);out center;' %}
+<p><a id="overpass_example" href="{% url 'overpass_interpreter' %}?data={{ query|urlencode:'' }}">Example Overpass query</a>: <code>{{ query }}</code></p>
+{% endwith %}
+
+{% with query='*[bbox=-6.8115234,52.9751082,-5.625,53.7097136][amenity=hospital]' %}
+<p><a id="xapi_example" href="{% url 'overpass:xapi2' %}?{{ query }}">Example XAPI request</a>: <code>{{ query }}</code></p>
+{% endwith %}
 

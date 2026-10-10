@@ -213,7 +213,7 @@ A dump of the whole map is made by:
 
 It is written to `static/planet/`, which is created if need be, with a name such as `fosm-planet_20260501013701.o5m`: the time the dump was started, in UTC. `PLANET_DUMP_DIR` and `PLANET_DUMP_FILENAME` in `pycrocosm/settings.py` change the folder and the name. The name is a pattern in which strftime codes stand for the time, and its ending selects the format: .osm, .o5m, .pbf or .json, optionally followed by .gz. The `--dir` and `--filename` options do the same for one run.
 
-The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The development server offers the folder at `/static/planet/`.
+The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The dumps are listed, newest first with their sizes, on a public page at `/replication/planet`, which the front page links to. Each entry links to the file under `PLANET_DUMP_URL`, the address at which the web server offers the dump folder: `/static/planet/` by default, which the development server serves. A dump still being written is not listed.
 
 Updating database extracts
 --------------------------
