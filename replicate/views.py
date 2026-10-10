@@ -14,6 +14,7 @@ import re
 import pgmap
 from urllib.parse import quote
 import io
+from xml.sax.saxutils import quoteattr
 import time
 import datetime
 import zlib
@@ -477,18 +478,6 @@ def timenow(request):
 
 	return JsonResponse({'now': now, 'time': now.timestamp()})
 
-def TypeIdVerSeparate(types, idVers):
-	nodeIdVers, wayIdVers, relationIdVers = [], [], []
-	for objType, (objId, ObjVer) in zip(types, idVers):
-		if objType == "node":
-			nodeIdVers.append(pgmap.pairi64i64(objId, ObjVer))
-		if objType == "way":
-			wayIdVers.append(pgmap.pairi64i64(objId, ObjVer))
-		if objType == "relation":
-			relationIdVers.append(pgmap.pairi64i64(objId, ObjVer))
-
-	return nodeIdVers, wayIdVers, relationIdVers
-
 def collection_boxes(wkt):
 	"""The extent of each geometry of a GeometryCollection given as WKT, in order:
 	(min x, min y, max x, max y), or None for an empty geometry."""
@@ -522,138 +511,125 @@ def collection_boxes(wkt):
 		boxes.append((min(xs), min(ys), max(xs), max(ys)))
 	return boxes
 
-def bboxes_to_et(parent, name, wkt, objTypes, objIdVers, activityId):
-	"""Add the element publishing one of a record's box collections.
+def activity_object_lists(activity):
+	"""The lists of object references a record holds, as (section name, types, ID/version pairs)."""
+	lists = [('existing', activity.existingType, activity.existingIdVer),
+		('updated', activity.updatedType, activity.updatedIdVer),
+		('affectedparents', activity.affectedparentsType, activity.affectedparentsIdVer),
+		('related', activity.relatedType, activity.relatedIdVer)]
+	if activity.relatedparentsRecorded:
+		lists.append(('relatedparents', activity.relatedparentsType, activity.relatedparentsIdVer))
+	return [(name, list(types), [tuple(pair) for pair in idVers]) for name, types, idVers in lists]
+
+def fetch_activity_objects(lists, t):
+	"""Read every object the given records refer to, each kind in one request.
+
+	Returns the XML element of each as text, by (type, ID, version). The same
+	object is often named by several records, and is read and encoded once.
+	"""
+	wanted = {"node": set(), "way": set(), "relation": set()}
+	for recordLists in lists:
+		for name, types, idVers in recordLists:
+			for objType, idVer in zip(types, idVers):
+				wanted[objType].add(idVer)
+
+	fragments = {}
+	for objType in ("node", "way", "relation"):
+		if len(wanted[objType]) == 0:
+			continue
+		data = pgmap.OsmData()
+		t.GetObjectsByIdVer(objType, [pgmap.pairi64i64(*idVer) for idVer in sorted(wanted[objType])], data)
+		objs = {"node": data.nodes, "way": data.ways, "relation": data.relations}[objType]
+		for i in range(objs.size()):
+			obj = objs[i]
+			key = (objType, obj.objId, obj.metaData.version)
+			if key not in fragments:
+				fragments[key] = pgmap.OsmObjectXml(obj)
+	return fragments
+
+def bboxes_xml(name, wkt, objTypes, objIdVers, activityId):
+	"""The element publishing one of a record's box collections.
 
 	It has one entry for every object of the list it goes with, in the order
 	they were recorded, each saying which object it is for. A node, or a way or
 	relation whose box is not known, has a null entry. A record made before
 	the boxes were kept says so, with a null element.
 	"""
-	holder = ET.SubElement(parent, name)
 	if not wkt:
-		holder.set('null', 'true')
-		return
+		return ['<', name, ' null="true"/>']
 	boxes = collection_boxes(wkt)
 	if len(boxes) != len(objTypes):
 		# Fail rather than pair boxes with the wrong objects
 		raise ValueError("{} of activity {} does not match its objects".format(name, activityId))
+	out = ['<', name, '>']
 	for objType, (objId, objVer), box in zip(objTypes, objIdVers, boxes):
-		boxEl = ET.SubElement(holder, 'bbox')
-		boxEl.set('type', objType)
-		boxEl.set('id', str(objId))
+		out.append('<bbox type={} id="{}"'.format(quoteattr(objType), objId))
 		if box is None:
-			boxEl.set('null', 'true')
+			out.append(' null="true"/>')
 		else:
-			for attrib, value in zip(('minlon', 'minlat', 'maxlon', 'maxlat'), box):
-				boxEl.set(attrib, repr(float(value)))
+			out.append(' minlon="{!r}" minlat="{!r}" maxlon="{!r}" maxlat="{!r}"/>'.format(*(float(v) for v in box)))
+	out.extend(['</', name, '>'])
+	return out
 
-def edit_activity_to_et(activity, t):
-	#Get relevent objects from database
-	existingNodeIdVers, existingWayIdVers, existingRelationIdVers = TypeIdVerSeparate(activity.existingType, activity.existingIdVer)
-	updatedNodeIdVers, updatedWayIdVers, updatedRelationIdVers = TypeIdVerSeparate(activity.updatedType, activity.updatedIdVer)
-	affectedparentsNodeIdVers, affectedparentsWayIdVers, affectedparentsRelationIdVers = TypeIdVerSeparate(activity.affectedparentsType, activity.affectedparentsIdVer)
-	relatedNodeIdVers, relatedWayIdVers, relatedRelationIdVers = TypeIdVerSeparate(activity.relatedType, activity.relatedIdVer)
-
-	existing = pgmap.OsmData()
-	t.GetObjectsByIdVer("node", existingNodeIdVers, existing)
-	t.GetObjectsByIdVer("way", existingWayIdVers, existing)
-	t.GetObjectsByIdVer("relation", existingRelationIdVers, existing)
-
-	updated = pgmap.OsmData()
-	t.GetObjectsByIdVer("node", updatedNodeIdVers, updated)
-	t.GetObjectsByIdVer("way", updatedWayIdVers, updated)
-	t.GetObjectsByIdVer("relation", updatedRelationIdVers, updated)
-
-	affectedparents = pgmap.OsmData()
-	t.GetObjectsByIdVer("node", affectedparentsNodeIdVers, affectedparents)
-	t.GetObjectsByIdVer("way", affectedparentsWayIdVers, affectedparents)
-	t.GetObjectsByIdVer("relation", affectedparentsRelationIdVers, affectedparents)
-
-	related = pgmap.OsmData()
-	t.GetObjectsByIdVer("node", relatedNodeIdVers, related)
-	t.GetObjectsByIdVer("way", relatedWayIdVers, related)
-	t.GetObjectsByIdVer("relation", relatedRelationIdVers, related)
-
-	#Save objects to xml then read xml back into python ET
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	existing.StreamTo(enc)
-	existingRoot = ET.fromstring(sio.getvalue())
-
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	updated.StreamTo(enc)
-	updatedRoot = ET.fromstring(sio.getvalue())
-
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	affectedparents.StreamTo(enc)
-	affectedparentsRoot = ET.fromstring(sio.getvalue())
-
-	sio = io.BytesIO()
-	enc = pgmap.PyOsmXmlEncode(sio, common.xmlAttribs)
-	related.StreamTo(enc)
-	relatedRoot = ET.fromstring(sio.getvalue())
-
-	#Organize output
-	activityEl = ET.Element('editactivity')
-	activityEl.attrib['id'] = str(activity.objId)
+def edit_activity_xml(activity, lists, fragments):
+	"""One record as pieces of XML text, its objects taken from fragments."""
+	out = ['<editactivity id="{}"'.format(activity.objId)]
 	if activity.changeset > 0:
-		activityEl.attrib['changeset'] = str(activity.changeset)
+		out.append(' changeset="{}"'.format(activity.changeset))
 	if activity.timestamp > 0:
-		activityEl.attrib['timestamp'] = utc_text(activity.timestamp)
-	activityEl.attrib['action'] = str(activity.action)
+		out.append(' timestamp={}'.format(quoteattr(utc_text(activity.timestamp))))
+	out.append(' action={}'.format(quoteattr(str(activity.action))))
 	if activity.atomicEditId > 0:
-		activityEl.set('atomic_edit_id', str(activity.atomicEditId))
-		activityEl.set('block_index', str(activity.blockIndex))
+		out.append(' atomic_edit_id="{}" block_index="{}"'.format(activity.atomicEditId, activity.blockIndex))
+	out.append('>')
 
-	existingEl = ET.SubElement(activityEl, 'existing')
-	for ch in existingRoot:
-		existingEl.append(ch)
+	# The boxes that go with each list: those of the existing objects before
+	# the edit, of the updated objects once it is made, and of the affected
+	# parents on either side of it. A parent keeps its version, so those are
+	# the only record of how its extent changed.
+	boxes = {'existing': [('existing_bbox', activity.existingBbox)],
+		'updated': [('updated_bbox', activity.updatedBbox)],
+		'affectedparents': [('affectedparents_before_bbox', activity.affectedparentsBeforeBbox),
+			('affectedparents_after_bbox', activity.affectedparentsAfterBbox)]}
 
-	# The box each existing way or relation had before the edit
-	bboxes_to_et(activityEl, 'existing_bbox', activity.existingBbox,
-		activity.existingType, activity.existingIdVer, activity.objId)
-
-	updatedEl = ET.SubElement(activityEl, 'updated')
-	for ch in updatedRoot:
-		updatedEl.append(ch)
-
-	# The box each updated way or relation has once the edit is made
-	bboxes_to_et(activityEl, 'updated_bbox', activity.updatedBbox,
-		activity.updatedType, activity.updatedIdVer, activity.objId)
-
-	affectedparentsEl = ET.SubElement(activityEl, 'affectedparents')
-	for ch in affectedparentsRoot:
-		affectedparentsEl.append(ch)
-
-	# The box of each affected parent on either side of the edit. The parent
-	# keeps its version, so this is the only record of how its extent changed.
-	bboxes_to_et(activityEl, 'affectedparents_before_bbox', activity.affectedparentsBeforeBbox,
-		activity.affectedparentsType, activity.affectedparentsIdVer, activity.objId)
-	bboxes_to_et(activityEl, 'affectedparents_after_bbox', activity.affectedparentsAfterBbox,
-		activity.affectedparentsType, activity.affectedparentsIdVer, activity.objId)
-
-	relatedEl = ET.SubElement(activityEl, 'related')
-	for ch in relatedRoot:
-		relatedEl.append(ch)
+	for name, types, idVers in lists:
+		out.extend(['<', name, '>'])
+		written = set()
+		for objType, (objId, objVer) in zip(types, idVers):
+			key = (objType, objId, objVer)
+			if key in fragments and key not in written:
+				written.add(key)
+				out.append(fragments[key])
+		out.extend(['</', name, '>'])
+		for boxName, wkt in boxes.get(name, []):
+			out.extend(bboxes_xml(boxName, wkt, types, idVers, activity.objId))
 
 	# The relations holding the related nodes. A record made before these
 	# were kept says so, which is not the same as there being none.
-	relatedParentsEl = ET.SubElement(activityEl, 'relatedparents')
-	if activity.relatedparentsRecorded:
-		_, _, relatedParentsIdVers = TypeIdVerSeparate(activity.relatedparentsType, activity.relatedparentsIdVer)
-		relatedParents = pgmap.OsmData()
-		t.GetObjectsByIdVer("relation", relatedParentsIdVers, relatedParents)
-		sio = io.BytesIO()
-		relatedParents.StreamTo(pgmap.PyOsmXmlEncode(sio, common.xmlAttribs))
-		for ch in ET.fromstring(sio.getvalue()):
-			relatedParentsEl.append(ch)
-	else:
-		relatedParentsEl.set('null', 'true')
+	if not activity.relatedparentsRecorded:
+		out.append('<relatedparents null="true"/>')
 
-	return activityEl
+	out.append('</editactivity>')
+	return out
+
+def edit_activities_response(activities, t, rootAttribs=None):
+	"""Publish records as one XML document.
+
+	The objects of all the records are read together, and written into the
+	response as the XML text the encoder produces for them.
+	"""
+	lists = [activity_object_lists(activity) for activity in activities]
+	fragments = fetch_activity_objects(lists, t)
+
+	out = ["<?xml version='1.0' encoding='UTF-8'?>\n<editactivities"]
+	for name, value in (rootAttribs or {}).items():
+		out.append(' {}={}'.format(name, quoteattr(value)))
+	out.append('>')
+	for activity, recordLists in zip(activities, lists):
+		out.extend(edit_activity_xml(activity, recordLists, fragments))
+	out.append('</editactivities>')
+
+	return HttpResponse("".join(out).encode("utf-8"), content_type='text/xml')
 
 @api_view(['GET'])
 def get_edit_activity(request, objId):
@@ -674,17 +650,7 @@ def get_edit_activity(request, objId):
 	if not found:
 		return HttpResponseNotFound("Edit activity does not exist")
 
-	resultsEl = ET.Element('editactivities')
-
-	activityEl = edit_activity_to_et(activity, t)
-	resultsEl.append(activityEl)
-
-	#Write final xml
-	doc = ET.ElementTree(resultsEl)
-	sio = io.BytesIO()
-	doc.write(sio, "UTF-8", xml_declaration=True)
-
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return edit_activities_response([activity], t)
 
 def utc_epoch(moment):
 	"""Seconds since 1970 for a datetime, taking one without a zone as UTC.
@@ -779,19 +745,12 @@ def query_edit_activity_by_timestamp(request):
 	if errStr.errStr:
 		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
-	resultsEl = ET.Element('editactivities')
 	sent = min(results.size(), maximum)
-	for i in range(sent):
-		resultsEl.append(edit_activity_to_et(results[i], t))
+	rootAttribs = {}
 	if results.size() > maximum:
 		# There are more than one answer holds. The rest are asked for by ID,
 		# starting from next_id, whichever way this request chose its records.
-		resultsEl.attrib['truncated'] = 'true'
-		resultsEl.attrib['next_id'] = str(results[sent - 1].objId + 1)
+		rootAttribs['truncated'] = 'true'
+		rootAttribs['next_id'] = str(results[sent - 1].objId + 1)
 
-	#Write final xml
-	doc = ET.ElementTree(resultsEl)
-	sio = io.BytesIO()
-	doc.write(sio, "UTF-8", xml_declaration=True)
-
-	return HttpResponse(sio.getvalue(), content_type='text/xml')
+	return edit_activities_response([results[i] for i in range(sent)], t, rootAttribs)

@@ -2302,6 +2302,111 @@ class DbExtractTestCase(SimpleTestCase):
         with self.assertRaises(ValueError):
             collection_boxes("POINT(1 2)")
 
+    # Parent lookups shared within an upload, and the index for changeset counts
+
+    def test_parent_lookup_matches_pgmap_and_asks_once(self):
+        from changeset.views import ParentLookup, get_affected_parents
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        c = self.create_node(0.6, 0.1)
+        way = self.create_way([a, b])
+        inner = self.create_relation([("way", way, ""), ("node", c, "")])
+        middle = self.create_relation([("relation", inner, "")])
+        outer = self.create_relation([("relation", middle, "")])
+
+        class Counting(object):
+            """Passes calls to the transaction, counting the parent queries."""
+            def __init__(self, t):
+                self.t, self.calls = t, 0
+            def GetWaysForNodes(self, *args):
+                self.calls += 1
+                return self.t.GetWaysForNodes(*args)
+            def GetRelationsForObjs(self, *args):
+                self.calls += 1
+                return self.t.GetRelationsForObjs(*args)
+
+        def ids(data):
+            return (sorted(data.ways[i].objId for i in range(data.ways.size())),
+                    sorted(data.relations[i].objId for i in range(data.relations.size())))
+
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            for objects in ([a], [c], [way], [a, way], [inner], [b, c, middle]):
+                block = pgmap.OsmData()
+                for obj in objects:
+                    {pgmap.OsmNode: block.nodes, pgmap.OsmWay: block.ways,
+                     pgmap.OsmRelation: block.relations}[type(obj)].append(obj)
+                expected = pgmap.OsmData()
+                t.GetAffectedParents(block, expected)
+                counting = Counting(t)
+                lookup = ParentLookup(counting)
+                found = get_affected_parents(block, lookup)
+                self.assertEqual(ids(found), ids(expected))
+                self.assertEqual(found.nodes.size(), 0)
+                # Asked again, everything is already known
+                calls = counting.calls
+                self.assertEqual(ids(get_affected_parents(block, lookup)), ids(expected))
+                self.assertEqual(counting.calls, calls)
+            # Moving a node reaches the way and every relation above it
+            block = pgmap.OsmData()
+            block.nodes.append(a)
+            self.assertEqual(ids(get_affected_parents(block, ParentLookup(t))),
+                             ([way.objId], sorted([inner.objId, middle.objId, outer.objId])))
+
+            # What the deletion checks ask is not asked again for the affected parents
+            counting = Counting(t)
+            lookup = ParentLookup(counting)
+            lookup.parents("relation", "relation", [outer.objId])
+            lookup.parents("relation", "way", [])
+            lookup.parents("way", "node", [])
+            lookup.parents("relation", "node", [])
+            self.assertEqual(counting.calls, 1)
+            block = pgmap.OsmData()
+            block.relations.append(outer)
+            self.assertEqual(ids(get_affected_parents(block, lookup)), ([], []))
+            self.assertEqual(counting.calls, 1)
+        finally:
+            t.Abort()
+
+    def test_edit_activity_has_changeset_index(self):
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s",
+                           (self.prefixes[1] + "edit_activity",))
+            definitions = [row[0] for row in cursor.fetchall()]
+        self.assertTrue(any(d.rstrip().endswith("(changeset)") for d in definitions), definitions)
+
+    def test_published_objects_are_shared_between_records_and_complete(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        a2 = self.modify_node(a, 0.15)
+        way2 = self.modify_way(way, [b, a2])
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        rows = root.findall("editactivity")[-5:]
+        def listed(row, section):
+            return [(e.tag, int(e.get("id")), int(e.get("version"))) for e in row.find(section)]
+        self.assertEqual([row.get("action") for row in rows], ["create", "create", "create", "modify", "modify"])
+        self.assertEqual(listed(rows[2], "updated"), [("way", way.objId, 1)])
+        self.assertEqual(sorted(listed(rows[2], "related")), sorted([("node", a.objId, 1), ("node", b.objId, 1)]))
+        # The node move: both versions of the node, the unchanged way above it, its other node
+        self.assertEqual(listed(rows[3], "existing"), [("node", a.objId, 1)])
+        self.assertEqual(listed(rows[3], "updated"), [("node", a.objId, 2)])
+        self.assertEqual(listed(rows[3], "affectedparents"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[3], "related"), [("node", b.objId, 1)])
+        self.assertEqual(listed(rows[4], "existing"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[4], "updated"), [("way", way.objId, 2)])
+        self.assertEqual(sorted(listed(rows[4], "related")), sorted([("node", a.objId, 2), ("node", b.objId, 1)]))
+        # The objects are whole: position, tags and members as the map has them
+        moved = rows[3].find("updated")[0]
+        self.assertEqual((float(moved.get("lon")), float(moved.get("lat"))), (0.15, 0.2))
+        self.assertEqual([(tag.get("k"), tag.get("v")) for tag in moved.findall("tag")], [("test", "modified")])
+        self.assertEqual([int(nd.get("ref")) for nd in rows[4].find("updated")[0].findall("nd")],
+                         [b.objId, a.objId])
+        self.assertEqual(rows[3].get("changeset"), str(self.changeset_id))
+        # One record on its own is published the same way
+        single = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activity/" + rows[3].get("id")))
+        self.assertEqual(ET.tostring(single.find("editactivity")), ET.tostring(rows[3]))
+
     # The boxes of the updated objects and of the affected parents
 
     def published_boxes(self, section, objects):

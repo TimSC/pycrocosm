@@ -345,15 +345,100 @@ def bbox_collection_wkt(objTypes, objIdVers, boxes):
 		return "GEOMETRYCOLLECTION EMPTY"
 	return "GEOMETRYCOLLECTION(" + ",".join(wkts) + ")"
 
+class ParentLookup(object):
+	"""Finds the ways and relations holding objects, remembering the answers.
+
+	Checking a deletion and finding the affected parents of an edit ask the
+	same questions of the map. Each object is asked about once; an answer is
+	only good until the map changes, so one of these serves one block and is
+	not used after the block has been stored.
+	"""
+	def __init__(self, t):
+		self.t = t
+		self.found = {} #(parent type, child type, child ID) -> {parent ID: parent}
+
+	def parents(self, parentType, childType, childIds):
+		"""The ways ("way") or relations ("relation") holding any of the objects, by ID."""
+		childIds = set(childIds)
+		missing = set(objId for objId in childIds if (parentType, childType, objId) not in self.found)
+		if len(missing) > 0:
+			data = pgmap.OsmData()
+			if parentType == "way":
+				self.t.GetWaysForNodes(list(missing), data)
+				objs = data.ways
+			else:
+				self.t.GetRelationsForObjs(childType, list(missing), data)
+				objs = data.relations
+			for objId in missing:
+				self.found[(parentType, childType, objId)] = {}
+			for i in range(objs.size()):
+				#Copies, which stay valid once data has gone
+				if parentType == "way":
+					parent = pgmap.OsmWay(objs[i])
+					refs = set(parent.refs)
+				else:
+					parent = pgmap.OsmRelation(objs[i])
+					refs = set(member.ref for member in parent.members if member.TypeName() == childType)
+				for ref in refs & missing:
+					self.found[(parentType, childType, ref)][parent.objId] = parent
+
+		out = {}
+		for objId in childIds:
+			out.update(self.found[(parentType, childType, objId)])
+		return out
+
+def get_affected_parents(block, parents):
+	"""The ways and relations that hold an object of the block without being in it.
+
+	These are the ways having a node of the block, the relations having as a
+	member a node of the block, a way of the block or one of those ways, and
+	the relations above any relation of the block or already found, for at
+	most 10 levels. The same rule as pgmap's GetAffectedParents, asked through
+	a ParentLookup so that what the caller has already found out is reused.
+	"""
+	nodeIds = set(block.nodes[i].objId for i in range(block.nodes.size()))
+	wayIds = set(block.ways[i].objId for i in range(block.ways.size()))
+	relationIds = set(block.relations[i].objId for i in range(block.relations.size()))
+	out = pgmap.OsmData()
+
+	for wayId, way in parents.parents("way", "node", nodeIds).items():
+		if wayId not in wayIds:
+			wayIds.add(wayId)
+			out.ways.append(way)
+
+	found = parents.parents("relation", "node", nodeIds)
+	found.update(parents.parents("relation", "way", wayIds))
+	for relationId, relation in found.items():
+		if relationId not in relationIds:
+			relationIds.add(relationId)
+			out.relations.append(relation)
+
+	current = set(relationIds)
+	depth = 0
+	while len(current) > 0 and depth < 10:
+		found = parents.parents("relation", "relation", current)
+		current = set()
+		for relationId, relation in found.items():
+			if relationId not in relationIds:
+				relationIds.add(relationId)
+				current.add(relationId)
+				out.relations.append(relation)
+		depth += 1
+
+	return out
+
 def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
-	parentBboxesBefore=None):
+	parentBboxesBefore=None, parents=None):
 
 	#Get complete set of query objects based on modified objects (unless action is create)
 	affectedParents = pgmap.OsmData()
 
 	if action in ["modify", "delete"]:
-		#Get complete set of query objects for original data
-		t.GetAffectedParents(block, affectedParents)
+		#Get complete set of query objects for original data, reusing any
+		#parents the caller has already looked up
+		if parents is None:
+			parents = ParentLookup(t)
+		affectedParents = get_affected_parents(block, parents)
 
 		#Their boxes have to be read now, before the block is stored
 		if parentBboxesBefore is not None:
@@ -587,13 +672,16 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if relationObjsById[objId].metaData.version > 1 and relationObjsById[objId].metaData.version != foundRelationIndex[objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
+	#What holds the objects of this block is asked by the deletion checks and
+	#again to find the affected parents: both go through this, so the map is
+	#asked once
+	parents = ParentLookup(t)
+
 	if action == "delete":
 
 		#Check that deleting objects doesn't break anything
 
-		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
-		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
+		parentRelationsForRelationsIndex = parents.parents("relation", "relation", relationObjsById.keys())
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
 			if parentId in relationObjsById.keys():
@@ -619,9 +707,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.relations = filtered.relations
 				relationsObjsById = GetOsmDataIndex(block)['relation']
 
-		parentRelationsForWays = pgmap.OsmData()
-		t.GetRelationsForObjs("way", list(wayObjsById.keys()), parentRelationsForWays)
-		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
+		parentRelationsForWaysIndex = parents.parents("relation", "way", wayObjsById.keys())
 		referencedChildren = {}
 		for parentId in parentRelationsForWaysIndex:
 			if parentId in relationObjsById.keys():
@@ -647,9 +733,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.ways = filtered.ways
 				wayObjsById = GetOsmDataIndex(block)['way']
 
-		parentWayForNodes = pgmap.OsmData()
-		t.GetWaysForNodes(list(nodeObjsById.keys()), parentWayForNodes)
-		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
+		parentWayForNodesIndex = parents.parents("way", "node", nodeObjsById.keys())
 		referencedChildren = {}
 		for parentId in parentWayForNodesIndex:
 			if parentId in wayObjsById.keys():
@@ -673,9 +757,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.nodes = filtered.nodes
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
-		parentRelationsForNodes = pgmap.OsmData()
-		t.GetRelationsForObjs("node", list(nodeObjsById.keys()), parentRelationsForNodes)
-		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
+		parentRelationsForNodesIndex = parents.parents("relation", "node", nodeObjsById.keys())
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
 			parent = parentRelationsForNodesIndex[parentId]
@@ -724,7 +806,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	parentBboxesBefore = {}
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
-		parentBboxesBefore)
+		parentBboxesBefore, parents)
 	if not ok:
 		raise HttpResponseServerError(errStr, content_type='text/plain')
 
@@ -778,6 +860,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#them, but whatever follows the edit activity to keep a copy of part of
 	#the map needs them: a related node can be new to that copy, brought in
 	#as part of a way, and then the relations holding it belong there too.
+	#This asks about nodes the block does not contain, and after it has been
+	#stored, so nothing the lookup above remembers applies.
 	relatedParentsFound = pgmap.OsmData()
 	if len(relatedNodeIds) > 0:
 		t.GetRelationsForObjs("node", list(relatedNodeIds), relatedParentsFound)
@@ -883,7 +967,50 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if not ok:
 			print (errStr.errStr)
 
-	#Track edit activity in database
+	#Track edit activity in database. One record is written for each block of
+	#an upload, which has a single action. Every list holds (type, ID, version)
+	#references, nodes first, then ways, then relations. The rules for what
+	#goes in each list are:
+	#
+	#existing: the objects named in the block as the map had them before the
+	#  edit, so with the version the edit replaces.
+	#  - create: empty, as the block's objects have placeholder (negative) IDs.
+	#  - modify, delete: every object in the block.
+	#  - It is read before the if-unused checks, so an object whose deletion
+	#    was skipped because it is still in use is listed here even though it
+	#    is not in updated.
+	#
+	#updated: the objects the block stored, with the version the edit gave them.
+	#  - create: the new objects under their allocated IDs, at version 1.
+	#  - modify: the new version of each object.
+	#  - delete: the deleted version of each object (one more than existing,
+	#    not visible). Deletions skipped by if-unused are left out.
+	#
+	#affectedparents: ways and relations the block does not edit, but which
+	#  hold something it does. Their version is unchanged, though their extent
+	#  can change. Found by get_affected_parents before the block is stored:
+	#  - create: empty. Nothing can hold an object that did not exist.
+	#  - modify, delete:
+	#    1. ways having a node of the block,
+	#    2. relations having as a member a node of the block, a way of the
+	#       block or a way from step 1,
+	#    3. relations holding a relation of the block or one already found,
+	#       repeated upwards for at most 10 levels.
+	#  - An object in the block is never listed, as it is in updated.
+	#
+	#related: unedited objects below the edited ones, which are needed to make
+	#  sense of them, at their current version.
+	#  - create: every existing object the block refers to: the nodes of its
+	#    ways and the node, way and relation members of its relations.
+	#  - modify: nodes only: those of the block's ways (as now stored) and
+	#    those of the affected parent ways. The members of a modified relation
+	#    are not included.
+	#  - delete: empty.
+	#  - Anything in the block or in affectedparents is left out.
+	#
+	#relatedparents: relations having a related node as a member, leaving out
+	#  any in the block or in affectedparents. Ways holding a related node, and
+	#  relations holding a related way or relation, are not followed.
 	existingObjTypes, existingObjIdVers = get_object_type_id_vers(originalObjData)
 	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
 	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)

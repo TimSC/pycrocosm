@@ -222,8 +222,15 @@ class SingleRunTestCase(TestCase):
 		with single_run("test task") as free:
 			self.assertIs(free, False)
 		crashed.close() # As when a command is killed: nothing is left to clear up
-		with single_run("test task") as free:
-			self.assertIs(free, True)
+		# The server lets go of the lock once it has noticed the connection has
+		# gone, which is soon after rather than at once
+		import time
+		for attempt in range(50):
+			with single_run("test task") as free:
+				if free:
+					break
+			time.sleep(0.1)
+		self.assertIs(free, True)
 
 	def test_file_lock_without_postgresql(self):
 		import fcntl, os, tempfile
