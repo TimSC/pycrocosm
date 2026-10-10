@@ -12,7 +12,6 @@ import xml.etree.ElementTree as ET
 import re
 import math
 import datetime
-import json
 import pgmap
 import time
 import io
@@ -289,7 +288,65 @@ def track_bboxes_step2(action, block, t, affectedParents):
 
 	return ok, errStr
 
-def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds):
+def object_bboxes(t, osmData):
+	"""The bounding box of each way and relation in osmData, as the map has them now.
+
+	Returns {(type, id): [minlon, minlat, maxlon, maxlat]}. Nodes are left out,
+	since a node carries its own position, and so is anything whose box is not
+	known, such as an object that is no longer visible.
+	"""
+	found = {}
+	for objType, objs in (("way", osmData.ways), ("relation", osmData.relations)):
+		ids = [objs[i].objId for i in range(objs.size())]
+		if len(ids) == 0:
+			continue
+		stored = pgmap.mapi64vectord()
+		t.GetObjectBboxes(objType, ids, stored)
+		for objId in stored:
+			if len(stored[objId]) == 4:
+				found[(objType, objId)] = list(stored[objId])
+
+	#A way on a map that does not store boxes gets one from its nodes. The way
+	#is read again, so the nodes are those it has in the map at this moment.
+	unboxedWayIds = [osmData.ways[i].objId for i in range(osmData.ways.size())
+		if ("way", osmData.ways[i].objId) not in found]
+	if len(unboxedWayIds) > 0:
+		wayData = pgmap.OsmData()
+		t.GetObjectsById("way", unboxedWayIds, wayData)
+		wayNodeIds = set()
+		for i in range(wayData.ways.size()):
+			wayNodeIds.update(wayData.ways[i].refs)
+		t.GetObjectsById("node", list(wayNodeIds), wayData)
+		positions = {}
+		for i in range(wayData.nodes.size()):
+			node = wayData.nodes[i]
+			positions[node.objId] = (node.lon, node.lat)
+		for i in range(wayData.ways.size()):
+			way = wayData.ways[i]
+			points = [positions[ref] for ref in way.refs if ref in positions]
+			if len(points) > 0:
+				found[("way", way.objId)] = [min(p[0] for p in points), min(p[1] for p in points),
+					max(p[0] for p in points), max(p[1] for p in points)]
+	return found
+
+def bbox_collection_wkt(objTypes, objIdVers, boxes):
+	"""One geometry for each listed object, in the same order, as a collection.
+
+	A way or relation with a known box has that rectangle. A node, or an object
+	whose box is unknown, has an empty polygon, which keeps the positions in step.
+	"""
+	def box_wkt(box):
+		if box is None:
+			return "POLYGON EMPTY"
+		return "POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*box)
+	wkts = [box_wkt(boxes.get((objType, objId)))
+		for objType, (objId, objVer) in zip(objTypes, objIdVers)]
+	if len(wkts) == 0:
+		return "GEOMETRYCOLLECTION EMPTY"
+	return "GEOMETRYCOLLECTION(" + ",".join(wkts) + ")"
+
+def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
+	parentBboxesBefore=None):
 
 	#Get complete set of query objects based on modified objects (unless action is create)
 	affectedParents = pgmap.OsmData()
@@ -297,6 +354,10 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 	if action in ["modify", "delete"]:
 		#Get complete set of query objects for original data
 		t.GetAffectedParents(block, affectedParents)
+
+		#Their boxes have to be read now, before the block is stored
+		if parentBboxesBefore is not None:
+			parentBboxesBefore.update(object_bboxes(t, affectedParents))
 
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
@@ -480,6 +541,10 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	t.GetObjectsById("way", list(preexistingWayIds), originalObjData)
 	t.GetObjectsById("relation", list(preexistingRelationIds), originalObjData)
 
+	#The bounding box of each of those ways and relations, as they are before
+	#this block changes anything
+	existingBboxes = object_bboxes(t, originalObjData)
+
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = get_refed_members(block)
 	
@@ -657,7 +722,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		block.relations[i].metaData.username = username
 		block.relations[i].metaData.timestamp = int(timestamp)
 
-	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds)
+	parentBboxesBefore = {}
+	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
+		parentBboxesBefore)
 	if not ok:
 		raise HttpResponseServerError(errStr, content_type='text/plain')
 
@@ -825,16 +892,16 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 	bbox = pgmap.vectord()
 	activity = pgmap.EditActivity()
-	# originalObjData was captured before storing this block. Exclude nodes
-	# whose requested deletion was skipped by if-unused validation.
-	acceptedNodeIds = {node.objId for node in block.nodes}
-	beforeNodes = [node for node in originalObjData.nodes if node.objId in acceptedNodeIds]
-	activity.syncBefore = json.dumps([
-		["node", node.objId, node.metaData.version] for node in beforeNodes])
-	activity.bboxBefore = ("GEOMETRYCOLLECTION(" + ",".join(
-		"POINT({:.17g} {:.17g})".format(node.lon, node.lat) for node in beforeNodes) + ")"
-		if beforeNodes else "GEOMETRYCOLLECTION EMPTY")
 	activity.existingType = pgmap.vectorstring(existingObjTypes)
+	#The boxes of the ways and relations, one geometry for each object of the
+	#list they go with. A deleted object has no box afterwards.
+	updatedBboxes = object_bboxes(t, block) if action != "delete" else {}
+	activity.existingBbox = bbox_collection_wkt(existingObjTypes, existingObjIdVers, existingBboxes)
+	activity.updatedBbox = bbox_collection_wkt(modifiedObjTypes, modifiedObjIdVers, updatedBboxes)
+	activity.affectedparentsBeforeBbox = bbox_collection_wkt(
+		affectedParentsTypes, affectedParentsIdVers, parentBboxesBefore)
+	activity.affectedparentsAfterBbox = bbox_collection_wkt(
+		affectedParentsTypes, affectedParentsIdVers, object_bboxes(t, affectedParents))
 	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
 	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
 	activity.updatedIdVer = pgmap.vectorpairi64i64(modifiedObjIdVers)

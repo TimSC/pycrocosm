@@ -2216,3 +2216,223 @@ class DbExtractTestCase(SimpleTestCase):
         records = self.activity_records()
         self.assertEqual(records[-2][1], None)
         self.assertEqual(len(records[-1][1]), 1)
+
+    # The box each existing way or relation had before an edit
+
+    def existing_boxes(self):
+        """For each published record: the action, the existing objects, and their existing_bbox entries."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        records = []
+        for row in root.findall("editactivity"):
+            existing = [(e.tag, int(e.get("id"))) for e in row.find("existing")]
+            holder = row.find("existing_bbox")
+            if holder.get("null") == "true":
+                boxes = None
+            else:
+                boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
+                          tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
+                         for b in holder.findall("bbox")]
+            records.append((row.get("action"), existing, boxes))
+        return records
+
+    def test_activity_records_existing_bboxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        c = self.create_node(0.6, 0.1)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, ""), ("node", c, "")])
+        # Nothing existed before a creation
+        self.assertEqual(self.existing_boxes()[-1], ("create", [], []))
+
+        # A way: the box around its nodes as they were before the edit
+        way = self.modify_way(way, [a, b, c])
+        self.assertEqual(self.existing_boxes()[-1],
+                         ("modify", [("way", way.objId)], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))]))
+        # and after that edit it is the larger one
+        way = self.modify_way(way, [a, b])
+        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.1, 0.6, 0.5))])
+
+        # A node has no entry of its own kind: its position is in the object
+        a = self.modify_node(a, 0.15)
+        self.assertEqual(self.existing_boxes()[-1], ("modify", [("node", a.objId)], [("node", a.objId, None)]))
+
+        # A relation, and several objects edited together: one entry each, in the recorded order
+        relation = self.modify_relation(relation, [("way", way, "outer")])
+        action, existing, boxes = self.existing_boxes()[-1]
+        self.assertEqual((action, existing), ("modify", [("relation", relation.objId)]))
+        self.assertEqual([entry[:2] for entry in boxes], existing)
+        self.assertEqual(len(boxes[0][2]), 4)
+        self.upload("delete", [relation])
+        b2 = pgmap.OsmNode(b)
+        b2.lat = 0.9
+        way2 = pgmap.OsmWay(way)
+        self.upload("modify", [b2, way2])
+        action, existing, boxes = self.existing_boxes()[-1]
+        self.assertEqual(sorted(existing), sorted([("node", b.objId), ("way", way.objId)]))
+        self.assertEqual(len(boxes), len(existing))
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in boxes),
+                         {("node", b.objId): None, ("way", way.objId): (0.15, 0.2, 0.3, 0.5)})
+        # Every record has as many entries as existing objects
+        for action, existing, boxes in self.existing_boxes():
+            self.assertEqual(len(boxes), len(existing), action)
+
+        # Stored as geometry: a collection with one member for each existing
+        # object, empty for the node, which the database can search by area
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT GeometryType(existing_bbox), ST_SRID(existing_bbox), "
+                "ST_NumGeometries(existing_bbox), ST_AsText(existing_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
+            kind, srid, count, text = cursor.fetchone()
+            self.assertEqual((kind, srid, count), ("GEOMETRYCOLLECTION", 4326, 2))
+            self.assertEqual(text.count("POLYGON EMPTY"), 1)
+            self.assertIn("POLYGON((0.15 0.2,0.15 0.5,0.3 0.5,0.3 0.2,0.15 0.2))", text)
+            # A creation, with nothing existing, has an empty collection, not NULL
+            cursor.execute(sql.SQL("SELECT ST_AsText(existing_bbox) FROM {} WHERE action='create' LIMIT 1").format(table))
+            self.assertEqual(cursor.fetchone(), ("GEOMETRYCOLLECTION EMPTY",))
+            # Records whose existing ways or relations reached into an area
+            for area, expected in (((0.25, 0.25, 0.35, 0.35), True), ((5, 5, 6, 6), False)):
+                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE existing_bbox && ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table), area)
+                self.assertEqual(cursor.fetchone()[0] > 0, expected)
+
+        from replicate.views import collection_boxes
+        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION EMPTY"), [])
+        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION(POLYGON EMPTY,POLYGON((1 2,1 4,3 4,3 2,1 2)),"
+                                          "POINT(-5.5 6e0),POLYGON EMPTY)"),
+                         [None, (1.0, 2.0, 3.0, 4.0), (-5.5, 6.0, -5.5, 6.0), None])
+        with self.assertRaises(ValueError):
+            collection_boxes("POINT(1 2)")
+
+    # The boxes of the updated objects and of the affected parents
+
+    def published_boxes(self, section, objects):
+        """The entries of one box section of the latest published record, having
+        checked there is one for each object of the list it goes with, in order."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        row = root.findall("editactivity")[-1]
+        listed = [(e.tag, int(e.get("id"))) for e in row.find(objects)]
+        holder = row.find(section)
+        if holder.get("null") == "true":
+            return None
+        boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
+                  tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
+                 for b in holder.findall("bbox")]
+        self.assertEqual([entry[:2] for entry in boxes], listed, section)
+        return boxes
+
+    def test_activity_records_updated_and_affected_parent_bboxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        c = self.create_node(0.6, 0.1)
+        # A created node has an entry without a box; nothing is a parent of it
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", c.objId, None)])
+        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"), [])
+        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"), [])
+
+        # A created way has the box around its nodes
+        way = self.create_way([a, b])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        relation = self.create_relation([("way", way, ""), ("node", c, "")])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("relation", relation.objId, (0.1, 0.1, 0.6, 0.5))])
+
+        # Moving a node leaves the way and relation holding it at the same
+        # version, but with a different extent: both sides are recorded
+        a = self.modify_node(a, 0.05)
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", a.objId, None)])
+        before = self.published_boxes("affectedparents_before_bbox", "affectedparents")
+        after = self.published_boxes("affectedparents_after_bbox", "affectedparents")
+        self.assertEqual(sorted(entry[:2] for entry in before),
+                         [("relation", relation.objId), ("way", way.objId)])
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in before),
+                         {("way", way.objId): (0.1, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.1, 0.1, 0.6, 0.5)})
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in after),
+                         {("way", way.objId): (0.05, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.05, 0.1, 0.6, 0.5)})
+
+        # A modified way: its new box, with the old one among the existing
+        way = self.modify_way(way, [a, b, c])
+        self.assertEqual(self.published_boxes("existing_bbox", "existing"),
+                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("way", way.objId, (0.05, 0.1, 0.6, 0.5))])
+
+        # Stored as geometry the database can search by area, aligned with the lists
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        columns = ("existing_bbox", "updated_bbox", "affectedparents_before_bbox", "affectedparents_after_bbox")
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT column_name, udt_name FROM information_schema.columns WHERE table_name=%s",
+                           (self.prefixes[1] + "edit_activity",))
+            kinds = dict(cursor.fetchall())
+            for column in columns:
+                self.assertEqual(kinds.get(column), "geometry", column)
+            # The columns these replace are gone
+            for column in ("sync_before", "sync_after", "bbox_before", "bbox_after"):
+                self.assertNotIn(column, kinds)
+            cursor.execute(sql.SQL("SELECT GeometryType(updated_bbox), ST_SRID(updated_bbox), ST_AsText(updated_bbox), "
+                "jsonb_array_length(affectedparents), ST_NumGeometries(affectedparents_before_bbox), "
+                "ST_NumGeometries(affectedparents_after_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
+            kind, srid, text, parents, parentsBefore, parentsAfter = cursor.fetchone()
+            self.assertEqual((kind, srid), ("GEOMETRYCOLLECTION", 4326))
+            self.assertEqual(text, "GEOMETRYCOLLECTION(POLYGON((0.05 0.1,0.05 0.5,0.6 0.5,0.6 0.1,0.05 0.1)))")
+            # The relation holding the way is its affected parent
+            self.assertEqual((parents, parentsBefore, parentsAfter), (1, 1, 1))
+            # The node move is found by where the way reached afterwards, not before
+            area = (0.04, 0.3, 0.07, 0.4)
+            for column, expected in (("affectedparents_after_bbox", True), ("affectedparents_before_bbox", False)):
+                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE action='modify' AND nodes=1 AND {} && "
+                    "ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table, sql.Identifier(column)), area)
+                self.assertEqual(cursor.fetchone()[0] > 0, expected, column)
+
+        # A deleted object has no box afterwards, though it had one before
+        self.upload("delete", [relation])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("relation", relation.objId, None)])
+        self.assertEqual(len(self.published_boxes("existing_bbox", "existing")[0][2]), 4)
+
+    def test_updated_and_parent_bboxes_without_stored_boxes_or_without_the_columns(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        # A map that does not store boxes: a way's is worked out from its nodes
+        clear = sql.SQL("UPDATE {} SET bbox=NULL").format(sql.Identifier(self.prefixes[1] + "liveways"))
+        with self.db.cursor() as cursor:
+            cursor.execute(clear)
+        a = self.modify_node(a, 0.05)
+        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"),
+                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"),
+                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
+
+        # A map whose table has not gained the columns goes on recording edits
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN updated_bbox, DROP COLUMN affectedparents_before_bbox, "
+                "DROP COLUMN affectedparents_after_bbox").format(sql.Identifier(self.prefixes[1] + "edit_activity")))
+        self.modify_node(a, 0.07)
+        for section, objects in (("updated_bbox", "updated"), ("affectedparents_before_bbox", "affectedparents"),
+                                 ("affectedparents_after_bbox", "affectedparents")):
+            self.assertEqual(self.published_boxes(section, objects), None)
+        self.assertEqual(len(self.published_boxes("existing_bbox", "existing")), 1)
+
+    def test_existing_bbox_without_stored_boxes_or_without_the_column(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, "")])
+        # A map that does not store boxes: a way's is worked out from its nodes, a relation's is not known
+        with self.db.cursor() as cursor:
+            for kind in ("ways", "relations"):
+                cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
+                    sql.Identifier(self.prefixes[1] + "live" + kind)))
+        way = self.modify_way(way, [b, a])
+        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
+                sql.Identifier(self.prefixes[1] + "liverelations")))
+        relation = self.modify_relation(relation, [("way", way, "x")])
+        self.assertEqual(self.existing_boxes()[-1][2], [("relation", relation.objId, None)])
+
+        # A map whose table has not gained the column goes on recording edits
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN existing_bbox").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+        self.modify_way(way, [a, b])
+        self.assertEqual(self.existing_boxes()[-1][2], None)

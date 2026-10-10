@@ -337,6 +337,14 @@ class EditActivityApiTestCase(TestCase):
 	def test_since_and_until(self):
 		root, everything = self.ask("first_id=1")
 		self.assertEqual(len(everything), 5)
+		# Each answer is a whole XML document, starting with its declaration
+		header = b"<?xml version='1.0' encoding='UTF-8'?>\n<"
+		for path in ("/replication/edit_activities?first_id=1", "/replication/edit_activity/{}".format(everything[0]),
+			"/replication/edit_ids"):
+			response = Client().get(path)
+			self.assertEqual(response.status_code, 200, path)
+			self.assertTrue(response.content.startswith(header), path)
+			self.assertEqual(response["Content-Type"], "text/xml")
 		# Each record says when, in UTC and marked as such
 		self.assertEqual([row.get("timestamp") for row in root.findall("editactivity")], [
 			"2026-01-31T12:00:00Z", "2026-01-31T12:02:00Z", "2026-01-31T12:04:00Z",

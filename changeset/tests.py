@@ -439,7 +439,7 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(response.status_code, 404, response.content)
 		self.assertEqual(self.atomic_activity_for_changeset(cs.objId), [])
 
-	def test_node_activity_records_before_version_and_position(self):
+	def test_node_activity_records_existing_version_and_empty_boxes(self):
 		cs = CreateTestChangeset(self.user)
 		url = reverse('changeset:upload', args=(cs.objId,))
 		create = ('<osmChange version="0.6"><create><node changeset="{}" id="-1" '
@@ -448,16 +448,23 @@ class ChangesetUploadTestCase(TestCase):
 		self.assertEqual(response.status_code, 200, response.content)
 		node_id = int(fromstring(response.content)[0].attrib['new_id'])
 		row = self.atomic_activity_for_changeset(cs.objId)[-1]
-		self.assertEqual(json.loads(row.syncBefore), [])
-		self.assertEqual(row.bboxBefore, 'GEOMETRYCOLLECTION EMPTY')
-		for action, version, old_lon, old_lat in [('modify', 1, -1, 50), ('delete', 2, -2, 51)]:
+		self.assertEqual(list(row.existingIdVer), [])
+		self.assertEqual(row.existingBbox, 'GEOMETRYCOLLECTION EMPTY')
+		self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
+		for action, version in [('modify', 1), ('delete', 2)]:
 			xml = ('<osmChange version="0.6"><{0}><node changeset="{1}" id="{2}" '
 				'version="{3}" lat="51" lon="-2" /></{0}></osmChange>').format(action, cs.objId, node_id, version)
 			response = self.client.post(url, xml, content_type='text/xml')
 			self.assertEqual(response.status_code, 200, response.content)
 			row = self.atomic_activity_for_changeset(cs.objId)[-1]
-			self.assertEqual(json.loads(row.syncBefore), [['node', node_id, version]])
-			self.assertEqual(row.bboxBefore, 'GEOMETRYCOLLECTION(POINT({} {}))'.format(old_lon, old_lat))
+			# The node as it was is the existing object; a node has no box of its own
+			self.assertEqual([tuple(pair) for pair in row.existingIdVer], [(node_id, version)])
+			self.assertEqual(row.existingBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
+			self.assertEqual(row.updatedBbox, 'GEOMETRYCOLLECTION(POLYGON EMPTY)')
+			self.assertEqual(row.affectedparentsBeforeBbox, 'GEOMETRYCOLLECTION EMPTY')
+			self.assertEqual(row.affectedparentsAfterBbox, 'GEOMETRYCOLLECTION EMPTY')
+		for removed in ('syncBefore', 'syncAfter', 'bboxBefore', 'bboxAfter'):
+			self.assertFalse(hasattr(row, removed), removed)
 
 	def test_upload_create_single_node(self):
 

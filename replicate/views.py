@@ -9,7 +9,6 @@ import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
 from .extracts import list_db_extracts, list_db_extracts_with_latest
 from pycrocosm import common
-import json
 import os
 import re
 import pgmap
@@ -490,26 +489,64 @@ def TypeIdVerSeparate(types, idVers):
 
 	return nodeIdVers, wayIdVers, relationIdVers
 
-def sync_context_to_et(parent, name, references, t):
-	"""Expand versioned references, preserving their geometry component order."""
-	element = ET.SubElement(parent, name)
-	if not references:
-		element.set('null', 'true')
+def collection_boxes(wkt):
+	"""The extent of each geometry of a GeometryCollection given as WKT, in order:
+	(min x, min y, max x, max y), or None for an empty geometry."""
+	wkt = wkt.strip()
+	if wkt.upper().startswith("SRID="):
+		wkt = wkt.split(";", 1)[1].strip()
+	if not wkt.upper().startswith("GEOMETRYCOLLECTION"):
+		raise ValueError("not a geometry collection")
+	body = wkt[len("GEOMETRYCOLLECTION"):].strip()
+	if body.upper() == "EMPTY":
+		return []
+	body = body[1:-1]
+	# Split at the commas between geometries, which are the ones outside any brackets
+	parts, depth, start = [], 0, 0
+	for i, ch in enumerate(body):
+		if ch == "(":
+			depth += 1
+		elif ch == ")":
+			depth -= 1
+		elif ch == "," and depth == 0:
+			parts.append(body[start:i])
+			start = i + 1
+	parts.append(body[start:])
+	boxes = []
+	for part in parts:
+		numbers = [float(v) for v in re.findall(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", part)]
+		if len(numbers) == 0:
+			boxes.append(None)
+			continue
+		xs, ys = numbers[0::2], numbers[1::2]
+		boxes.append((min(xs), min(ys), max(xs), max(ys)))
+	return boxes
+
+def bboxes_to_et(parent, name, wkt, objTypes, objIdVers, activityId):
+	"""Add the element publishing one of a record's box collections.
+
+	It has one entry for every object of the list it goes with, in the order
+	they were recorded, each saying which object it is for. A node, or a way or
+	relation whose box is not known, has a null entry. A record made before
+	the boxes were kept says so, with a null element.
+	"""
+	holder = ET.SubElement(parent, name)
+	if not wkt:
+		holder.set('null', 'true')
 		return
-	refs = json.loads(references)
-	data = pgmap.OsmData()
-	for obj_type in ('node', 'way', 'relation'):
-		id_versions = [pgmap.pairi64i64(obj_id, version)
-			for kind, obj_id, version in refs if kind == obj_type]
-		if id_versions:
-			t.GetObjectsByIdVer(obj_type, id_versions, data)
-	sio = io.BytesIO()
-	data.StreamTo(pgmap.PyOsmXmlEncode(sio, common.xmlAttribs))
-	objects = {(obj.tag, int(obj.attrib['id']), int(obj.attrib['version'])): obj
-		for obj in ET.fromstring(sio.getvalue()) if obj.tag in ('node', 'way', 'relation')}
-	for kind, obj_id, version in refs:
-		# Fail rather than return an incomplete collection with shifted alignment.
-		element.append(objects[(kind, obj_id, version)])
+	boxes = collection_boxes(wkt)
+	if len(boxes) != len(objTypes):
+		# Fail rather than pair boxes with the wrong objects
+		raise ValueError("{} of activity {} does not match its objects".format(name, activityId))
+	for objType, (objId, objVer), box in zip(objTypes, objIdVers, boxes):
+		boxEl = ET.SubElement(holder, 'bbox')
+		boxEl.set('type', objType)
+		boxEl.set('id', str(objId))
+		if box is None:
+			boxEl.set('null', 'true')
+		else:
+			for attrib, value in zip(('minlon', 'minlat', 'maxlon', 'maxlat'), box):
+				boxEl.set(attrib, repr(float(value)))
 
 def edit_activity_to_et(activity, t):
 	#Get relevent objects from database
@@ -571,29 +608,32 @@ def edit_activity_to_et(activity, t):
 		activityEl.set('atomic_edit_id', str(activity.atomicEditId))
 		activityEl.set('block_index', str(activity.blockIndex))
 
-	sync_context_to_et(activityEl, 'sync_before', activity.syncBefore, t)
-	sync_context_to_et(activityEl, 'sync_after', activity.syncAfter, t)
-	for name, geometry in [('bbox_before', activity.bboxBefore), ('bbox_after', activity.bboxAfter)]:
-		geometry_el = ET.SubElement(activityEl, name)
-		if geometry:
-			geometry_el.set('format', 'wkt')
-			geometry_el.set('srid', '4326')
-			geometry_el.text = geometry
-		else:
-			geometry_el.set('null', 'true')
-
-
 	existingEl = ET.SubElement(activityEl, 'existing')
 	for ch in existingRoot:
 		existingEl.append(ch)
+
+	# The box each existing way or relation had before the edit
+	bboxes_to_et(activityEl, 'existing_bbox', activity.existingBbox,
+		activity.existingType, activity.existingIdVer, activity.objId)
 
 	updatedEl = ET.SubElement(activityEl, 'updated')
 	for ch in updatedRoot:
 		updatedEl.append(ch)
 
+	# The box each updated way or relation has once the edit is made
+	bboxes_to_et(activityEl, 'updated_bbox', activity.updatedBbox,
+		activity.updatedType, activity.updatedIdVer, activity.objId)
+
 	affectedparentsEl = ET.SubElement(activityEl, 'affectedparents')
 	for ch in affectedparentsRoot:
 		affectedparentsEl.append(ch)
+
+	# The box of each affected parent on either side of the edit. The parent
+	# keeps its version, so this is the only record of how its extent changed.
+	bboxes_to_et(activityEl, 'affectedparents_before_bbox', activity.affectedparentsBeforeBbox,
+		activity.affectedparentsType, activity.affectedparentsIdVer, activity.objId)
+	bboxes_to_et(activityEl, 'affectedparents_after_bbox', activity.affectedparentsAfterBbox,
+		activity.affectedparentsType, activity.affectedparentsIdVer, activity.objId)
 
 	relatedEl = ET.SubElement(activityEl, 'related')
 	for ch in relatedRoot:
@@ -642,7 +682,7 @@ def get_edit_activity(request, objId):
 	#Write final xml
 	doc = ET.ElementTree(resultsEl)
 	sio = io.BytesIO()
-	doc.write(sio, "UTF-8")
+	doc.write(sio, "UTF-8", xml_declaration=True)
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
@@ -676,7 +716,7 @@ def latest_edit_ids(request):
 	finally:
 		common.abort_transaction(t)
 	sio = io.BytesIO()
-	ET.ElementTree(root).write(sio, "UTF-8")
+	ET.ElementTree(root).write(sio, "UTF-8", xml_declaration=True)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
 def activity_id_filters(params):
@@ -752,6 +792,6 @@ def query_edit_activity_by_timestamp(request):
 	#Write final xml
 	doc = ET.ElementTree(resultsEl)
 	sio = io.BytesIO()
-	doc.write(sio, "UTF-8")
+	doc.write(sio, "UTF-8", xml_declaration=True)
 
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
