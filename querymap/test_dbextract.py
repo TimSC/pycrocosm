@@ -2470,6 +2470,126 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("SELECT version, ST_X(geom) FROM {} WHERE id=%s").format(table("livenodes")), (target,))
             self.assertEqual(cursor.fetchall(), [(5, 0.005)])
 
+    # Importing a map file straight into the static tables
+
+    def test_import_map_file_directly(self):
+        import gzip, os, tempfile
+        data = pgmap.OsmData()
+        awkward = "it's \"quoted\", back\\slash, tab\there, new\nline, caf\u00e9 \u6771\u4eac"
+        def meta(obj, obj_id, version, visible=True, user="mapper"):
+            obj.objId = obj_id
+            obj.metaData.version = version
+            obj.metaData.visible = visible
+            obj.metaData.timestamp = 1700000000 + obj_id
+            obj.metaData.changeset = 40 + obj_id
+            if user:
+                obj.metaData.uid = 7
+                obj.metaData.username = user
+            return obj
+        for obj_id, lon, lat in ((101, 0.1, 0.2), (102, 0.3, 0.4), (103, -0.25, 0.123456789)):
+            node = meta(pgmap.OsmNode(), obj_id, 2)
+            node.lon, node.lat = lon, lat
+            data.nodes.append(node)
+        data.nodes[0].tags["name"] = awkward
+        anonymous = meta(pgmap.OsmNode(), 104, 1, user="")
+        anonymous.metaData.changeset = 0
+        anonymous.metaData.timestamp = 0
+        anonymous.lon, anonymous.lat = 0.5, 0.5
+        data.nodes.append(anonymous)
+        deleted = meta(pgmap.OsmNode(), 105, 3, visible=False, user="o'brien, \"x\"")
+        deleted.lon, deleted.lat = 0.6, 0.6
+        data.nodes.append(deleted)
+        way = meta(pgmap.OsmWay(), 201, 4)
+        for ref in (101, 102, 103, 101):
+            way.refs.append(ref)
+        way.tags["highway"] = "path"
+        way.tags[awkward] = awkward
+        data.ways.append(way)
+        inner = meta(pgmap.OsmRelation(), 301, 1)
+        inner.AddMember("node", 104, "")
+        data.relations.append(inner)
+        relation = meta(pgmap.OsmRelation(), 302, 5)
+        relation.AddMember("way", 201, "outer")
+        relation.AddMember("node", 101, awkward)
+        relation.AddMember("relation", 301, "sub")
+        relation.AddMember("node", 102, "")
+        relation.tags["type"] = "site"
+        data.relations.append(relation)
+
+        def run_import(path):
+            error = pgmap.PgMapError()
+            admin = self.map.GetAdmin("")
+            try:
+                ok = admin.ImportMapFile(0, path, error)
+                admin.Commit() if ok else admin.Abort()
+            except BaseException:
+                admin.Abort()
+                raise
+            finally:
+                del admin
+            return ok, error.errStr
+
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "import.o5m.gz")
+        try:
+            buffer = io.BytesIO()
+            data.StreamTo(pgmap.PyO5mEncode(buffer))
+            with gzip.open(path, "wb") as handle:
+                handle.write(buffer.getvalue())
+            self.assertEqual(run_import(path), (True, ""))
+            # A file that is not there, or of a kind that is not known, is refused with the reason
+            ok, message = run_import(os.path.join(folder, "missing.o5m"))
+            self.assertFalse(ok)
+            self.assertNotEqual(message, "")
+            ok, message = run_import(os.path.join(folder, "import.txt"))
+            self.assertFalse(ok)
+        finally:
+            os.remove(path)
+            os.rmdir(folder)
+
+        # The map now has what the file had
+        found = self.contents()
+        self.assertEqual(sorted(found), [("node", 101), ("node", 102), ("node", 103), ("node", 104),
+                                         ("relation", 301), ("relation", 302), ("way", 201)])
+        attrs, children = found[("node", 101)][0], found[("node", 101)][1]
+        self.assertEqual((attrs["version"], attrs["user"], attrs["uid"], attrs["changeset"]), ("2", "mapper", "7", "141"))
+        self.assertEqual((float(attrs["lon"]), float(attrs["lat"])), (0.1, 0.2))
+        # To the seven decimal places an o5m file keeps
+        self.assertEqual(float(found[("node", 103)][0]["lat"]), 0.1234568)
+        self.assertNotIn("user", found[("node", 104)][0])
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            stored = pgmap.OsmData()
+            t.GetObjectsById("node", [101], stored)
+            t.GetObjectsById("way", [201], stored)
+            t.GetObjectsById("relation", [302], stored)
+            self.assertEqual(stored.nodes[0].tags["name"], awkward)
+            self.assertEqual(list(stored.ways[0].refs), [101, 102, 103, 101])
+            self.assertEqual(dict(stored.ways[0].tags), {"highway": "path", awkward: awkward})
+            self.assertEqual([(m.TypeName(), m.ref, m.role) for m in stored.relations[0].members],
+                             [("way", 201, "outer"), ("node", 101, awkward), ("relation", 301, "sub"), ("node", 102, "")])
+        finally:
+            t.Abort()
+
+        # In the static tables, as the csv route leaves them
+        table = lambda name: sql.Identifier(self.prefixes[0] + name)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, version, visible, username FROM {}").format(table("oldnodes")))
+            self.assertEqual(cursor.fetchall(), [(105, 3, False, "o'brien, \"x\"")])
+            cursor.execute(sql.SQL("SELECT username, uid, changeset, timestamp, ST_SRID(geom) FROM {} WHERE id=104").format(table("livenodes")))
+            self.assertEqual(cursor.fetchall(), [(None, None, None, None, 4326)])
+            for name, expected in (("nodeids", [101, 102, 103, 104, 105]), ("wayids", [201]), ("relationids", [301, 302])):
+                cursor.execute(sql.SQL("SELECT id FROM {} ORDER BY id").format(table(name)))
+                self.assertEqual([row[0] for row in cursor.fetchall()], expected, name)
+            cursor.execute(sql.SQL("SELECT id, version, index, member FROM {} ORDER BY index").format(table("way_mems")))
+            self.assertEqual(cursor.fetchall(), [(201, 4, 0, 101), (201, 4, 1, 102), (201, 4, 2, 103), (201, 4, 3, 101)])
+            for name, expected in (("relation_mems_n", [(301, 1, 0, 104), (302, 5, 1, 101), (302, 5, 3, 102)]),
+                                   ("relation_mems_w", [(302, 5, 0, 201)]), ("relation_mems_r", [(302, 5, 2, 301)])):
+                cursor.execute(sql.SQL("SELECT id, version, index, member FROM {} ORDER BY id, index").format(table(name)))
+                self.assertEqual(cursor.fetchall(), expected, name)
+            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(self.prefixes[1] + "livenodes")))
+            self.assertEqual(cursor.fetchone()[0], 0)
+
     # Searching the records by area, and the index for changeset counts
 
     def filtered_ids(self, bbox):

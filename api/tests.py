@@ -158,6 +158,33 @@ class PgmapConfigTestCase(TestCase):
 			finally:
 				os.chdir(here)
 
+	def test_environment_overrides_the_file(self):
+		import pgmap
+		from unittest.mock import patch
+		import os
+		def get(name, *default):
+			return pgmap.GetConfigValue(name, *default)
+		with patch.dict(os.environ, {"PGMAP_CONFIG": self.path}):
+			self.assertEqual(get("dbhost"), "127.0.0.1")
+			# The setting's name in capitals after PGMAP_ replaces the file's value
+			with patch.dict(os.environ, {"PGMAP_DBHOST": "10.0.0.5", "PGMAP_DUMP_PATH": "/from/env:x"}):
+				self.assertEqual(get("dbhost"), "10.0.0.5")
+				self.assertEqual(get("dump_path"), "/from/env:x")
+				# What the environment does not give still comes from the file
+				self.assertEqual(get("dbname"), "db_map")
+			# and supplies one the file does not have, in place of the default
+			with patch.dict(os.environ, {"PGMAP_DBUSER": "from_env"}):
+				self.assertEqual(get("dbuser", "fallback"), "from_env")
+			# Given as empty it is empty, not the file's value
+			with patch.dict(os.environ, {"PGMAP_DBNAME": ""}):
+				self.assertEqual(get("dbname", "fallback"), "")
+			# Gone from the environment, the file applies again
+			self.assertEqual(get("dbhost"), "127.0.0.1")
+		# It works without a file at all
+		with patch.dict(os.environ, {"PGMAP_CONFIG": self.path + ".missing", "PGMAP_DBNAME": "only_env"}):
+			self.assertEqual(get("dbname", "fallback"), "only_env")
+			self.assertEqual(get("dbhost", "fallback"), "fallback")
+
 	def test_settings_use_the_config_file(self):
 		import os, pgmap
 		# The settings module names the project's copy unless the environment named another

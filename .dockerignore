@@ -26,5 +26,4 @@ pgmap/applydiffs
 pgmap/checkdata
 pgmap/dump
 pgmap/extract
-pgmap/osm2csv
 pgmap/quickinit

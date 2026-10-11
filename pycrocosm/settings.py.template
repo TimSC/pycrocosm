@@ -142,7 +142,8 @@ WSGI_APPLICATION = 'pycrocosm.wsgi.application'
 # config.cfg, where pgmap's command line tools read them. MAP_DATABASE fetches
 # them from there with pgmap.GetConfigValue, not repeating them here. Its
 # second argument is what applies if config.cfg does not exist or does not
-# give a value. pgmap reads the file named by PGMAP_CONFIG, which is set here
+# give a value. A setting given in the environment, as its name in capitals
+# after PGMAP_ (PGMAP_DBHOST for dbhost), replaces the one in the file. pgmap reads the file named by PGMAP_CONFIG, which is set here
 # to the copy in this project unless the environment already names another.
 # The settings database below is separate: it takes nothing from pgmap, and is
 # set by the DJANGO_DB_* environment variables.

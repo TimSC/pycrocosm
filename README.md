@@ -15,7 +15,7 @@ pycrocosm runs in Docker, connecting to a PostgreSQL/PostGIS server on the host 
 
 ### Map database
 
-You need to configure and initialize the PostGIS map database using the tools included in https://github.com/TimSC/pgmap, mainly osm2csv and admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database (named `db_map` by default) and import some data.
+You need to configure and initialize the PostGIS map database using the tools included in https://github.com/TimSC/pgmap, mainly admin. Follow the steps at: https://github.com/TimSC/osm2pgcopy/blob/master/README.md to initialize the map database (named `db_map` by default) and import some data.
 
 ### Django settings database
 
@@ -51,7 +51,7 @@ If you use a firewall such as ufw, also allow port 5432 from Docker:
 
 ### Configuration
 
-The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue(name, default)`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else.
+The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue(name, default)`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else. Any of pgmap's settings can also be given in the environment, as its name in capitals after `PGMAP_` (`PGMAP_DBHOST` for `dbhost`, `PGMAP_DBPASS` for `dbpass`), which replaces what the file says and works without a file at all; pgmap's command line tools read these too.
 
 The Django settings database takes nothing from `config.cfg`: it is set by the `DJANGO_DB_*` environment variables. Those and the other settings are read from `.env`, whose values also take precedence over `config.cfg` for the map database. Create it from the template and edit it:
 
