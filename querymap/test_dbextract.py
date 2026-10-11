@@ -2189,33 +2189,39 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(set((r.tag, r.get("version"), r.find("member").get("ref")) for r in kept),
                          {("relation", "1", str(second.objId))})
 
-    def test_edits_are_recorded_on_a_map_without_the_related_parents_column(self):
+    def test_table_from_before_the_added_columns_says_what_to_do(self):
+        # A map at schema 14 from before a column was added must be brought up
+        # to date; until then an edit is refused, with the reason, and not half recorded
+        self.create_node(0)
         table = sql.Identifier(self.prefixes[1] + "edit_activity")
         with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN related_parents").format(table))
-        first = self.create_node(0)
-        second = self.create_node(0.1)
-        self.create_relation([("node", second, "")])
-        way = self.create_way([first, second])
-        # Edits go on being recorded, and the records say that part is not known
-        self.assertEqual(self.activity_records()[-1], ("create", None))
-        extract_id = self.save()
-        self.modify_node(first, 0.05)
-        self.update(extract_id)
-        self.assert_current(extract_id)
-
-        # Asking for schema 14 again adds the column; later records carry it
+            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
+            before = cursor.fetchone()[0]
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox").format(table))
+        with self.assertRaisesRegex(AssertionError, "ask the admin tool for schema version 14 again"):
+            self.create_node(0.1)
+        from replicate.remoteupdate import RemoteUpdateError
+        with self.assertRaises(RemoteUpdateError):
+            self.fetch(self.REMOTE + "replication/edit_activities")
+        # Asking for schema 14 again puts it right
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
             self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
             admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
         finally:
             del admin
-        self.modify_way(way, [second, first])
-        records = self.activity_records()
-        self.assertEqual(records[-2][1], None)
-        self.assertEqual(len(records[-1][1]), 1)
+        self.create_node(0.2)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
+            self.assertEqual(cursor.fetchone()[0], before + 1)
+            # The column the table began with, which nothing filled in, has gone
+            cursor.execute("SELECT count(*) FROM information_schema.columns WHERE table_name=%s AND column_name='bbox'",
+                           (self.prefixes[1] + "edit_activity",))
+            self.assertEqual(cursor.fetchone()[0], 0)
 
     # The box each existing way or relation had before an edit
 
@@ -2412,71 +2418,7 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(int(later[0].get("atomic_edit_id")), int(rows[0].get("atomic_edit_id")) + 1)
         self.assertEqual([int(row.get("block_index")) for row in later], [0, 1])
 
-    # Parent lookups shared within an upload, and the index for changeset counts
-
-    def test_parent_lookup_matches_pgmap_and_asks_once(self):
-        from changeset.views import ParentLookup, get_affected_parents
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        c = self.create_node(0.6, 0.1)
-        way = self.create_way([a, b])
-        inner = self.create_relation([("way", way, ""), ("node", c, "")])
-        middle = self.create_relation([("relation", inner, "")])
-        outer = self.create_relation([("relation", middle, "")])
-
-        class Counting(object):
-            """Passes calls to the transaction, counting the parent queries."""
-            def __init__(self, t):
-                self.t, self.calls = t, 0
-            def GetWaysForNodes(self, *args):
-                self.calls += 1
-                return self.t.GetWaysForNodes(*args)
-            def GetRelationsForObjs(self, *args):
-                self.calls += 1
-                return self.t.GetRelationsForObjs(*args)
-
-        def ids(data):
-            return (sorted(data.ways[i].objId for i in range(data.ways.size())),
-                    sorted(data.relations[i].objId for i in range(data.relations.size())))
-
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            for objects in ([a], [c], [way], [a, way], [inner], [b, c, middle]):
-                block = pgmap.OsmData()
-                for obj in objects:
-                    {pgmap.OsmNode: block.nodes, pgmap.OsmWay: block.ways,
-                     pgmap.OsmRelation: block.relations}[type(obj)].append(obj)
-                expected = pgmap.OsmData()
-                t.GetAffectedParents(block, expected)
-                counting = Counting(t)
-                lookup = ParentLookup(counting)
-                found = get_affected_parents(block, lookup)
-                self.assertEqual(ids(found), ids(expected))
-                self.assertEqual(found.nodes.size(), 0)
-                # Asked again, everything is already known
-                calls = counting.calls
-                self.assertEqual(ids(get_affected_parents(block, lookup)), ids(expected))
-                self.assertEqual(counting.calls, calls)
-            # Moving a node reaches the way and every relation above it
-            block = pgmap.OsmData()
-            block.nodes.append(a)
-            self.assertEqual(ids(get_affected_parents(block, ParentLookup(t))),
-                             ([way.objId], sorted([inner.objId, middle.objId, outer.objId])))
-
-            # What the deletion checks ask is not asked again for the affected parents
-            counting = Counting(t)
-            lookup = ParentLookup(counting)
-            lookup.parents("relation", "relation", [outer.objId])
-            lookup.parents("relation", "way", [])
-            lookup.parents("way", "node", [])
-            lookup.parents("relation", "node", [])
-            self.assertEqual(counting.calls, 1)
-            block = pgmap.OsmData()
-            block.relations.append(outer)
-            self.assertEqual(ids(get_affected_parents(block, lookup)), ([], []))
-            self.assertEqual(counting.calls, 1)
-        finally:
-            t.Abort()
+    # Searching the records by area, and the index for changeset counts
 
     def filtered_ids(self, bbox):
         root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1&bbox=" + bbox))
@@ -2531,10 +2473,8 @@ class DbExtractTestCase(SimpleTestCase):
                            "affectedparents_after_bbox", "relation_reach_bbox"):
                 self.assertTrue(any("USING gist ({})".format(column) in d for d in definitions), column)
             self.assertFalse(any("USING gist (bbox)" in d for d in definitions))
-            # The reach is set only where a relation matters beyond its own box, which is
-            # nowhere here, and the old bbox column is not filled in or searched
-            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL "
-                "OR bbox IS NOT NULL").format(table))
+            # The reach is set only where a relation matters beyond its own box, which is nowhere here
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL").format(table))
             self.assertEqual(cursor.fetchone()[0], 0)
             # A record that does not say where its objects are could concern anywhere
             cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
@@ -2573,25 +2513,15 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT ST_XMin(relation_reach_bbox), ST_YMin(relation_reach_bbox), "
                 "ST_XMax(relation_reach_bbox), ST_YMax(relation_reach_bbox), GeometryType(relation_reach_bbox), "
-                "ST_SRID(relation_reach_bbox), bbox IS NULL, ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
+                "ST_SRID(relation_reach_bbox), ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
                 sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
-            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326, True,
+            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326,
                 "GEOMETRYCOLLECTION(POLYGON((40 10,40 10,40 10,40 10,40 10)))"))
         # A relation whose member node is in no way matters only where it is
         lone = self.create_node(60.0, 20.0)
         self.create_relation([("node", lone, "")])
         self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
         self.assertEqual(self.filtered_ids("59,19,61,21"), [latest() - 1, latest()])
-        # A map whose table has not gained the column goes on recording edits,
-        # and a search by area there leaves nothing out
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-        everything = self.filtered_ids("-180,-90,180,90")
-        self.assertEqual(self.filtered_ids("100,50,101,51"), everything)
-        self.create_node(70.0, 30.0)
-        self.assertEqual(self.filtered_ids("100,50,101,51"), everything + [latest()])
-
 
     def test_edit_activity_has_changeset_index(self):
         with self.db.cursor() as cursor:
@@ -2719,7 +2649,7 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("relation", relation.objId, None)])
         self.assertEqual(len(self.published_boxes("existing_bbox", "existing")[0][2]), 4)
 
-    def test_updated_and_parent_bboxes_without_stored_boxes_or_without_the_columns(self):
+    def test_updated_and_parent_bboxes_without_stored_boxes(self):
         a = self.create_node(0.1, 0.2)
         b = self.create_node(0.3, 0.5)
         way = self.create_way([a, b])
@@ -2733,17 +2663,7 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"),
                          [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
 
-        # A map whose table has not gained the columns goes on recording edits
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN updated_bbox, DROP COLUMN affectedparents_before_bbox, "
-                "DROP COLUMN affectedparents_after_bbox").format(sql.Identifier(self.prefixes[1] + "edit_activity")))
-        self.modify_node(a, 0.07)
-        for section, objects in (("updated_bbox", "updated"), ("affectedparents_before_bbox", "affectedparents"),
-                                 ("affectedparents_after_bbox", "affectedparents")):
-            self.assertEqual(self.published_boxes(section, objects), None)
-        self.assertEqual(len(self.published_boxes("existing_bbox", "existing")), 1)
-
-    def test_existing_bbox_without_stored_boxes_or_without_the_column(self):
+    def test_existing_bbox_without_stored_boxes(self):
         a = self.create_node(0.1, 0.2)
         b = self.create_node(0.3, 0.5)
         way = self.create_way([a, b])
@@ -2760,11 +2680,4 @@ class DbExtractTestCase(SimpleTestCase):
                 sql.Identifier(self.prefixes[1] + "liverelations")))
         relation = self.modify_relation(relation, [("way", way, "x")])
         # ...so the collection is not recorded, which a search takes as anywhere
-        self.assertEqual(self.existing_boxes()[-1][2], None)
-
-        # A map whose table has not gained the column goes on recording edits
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN existing_bbox").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-        self.modify_way(way, [a, b])
         self.assertEqual(self.existing_boxes()[-1][2], None)

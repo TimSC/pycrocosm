@@ -7,10 +7,10 @@ pgmap's PgExtractPatch. The map database of this server is not consulted: the
 other server's map is the one the extract belongs to.
 
 A record carries everything an update needs, so nothing else is asked of the
-other server. The exception is a record made before the relations holding an
-edit's related nodes were kept ("relatedparents"): for edits that old, the
-other server's ordinary API is asked which relations hold each node or way
-newly brought into the extract.
+other server. Records made before the relations holding an edit's related
+nodes were kept ("relatedparents") do not, and an update that meets one is
+refused: the extract has to be saved or imported afresh from a point after
+them.
 
 Only the records that may concern the extract's rectangle are asked for, with
 the edit activity API's bbox filter, so a small extract of a busy map does not
@@ -31,11 +31,8 @@ from django.conf import settings
 import pgmap
 from pycrocosm import common
 
-# Activity rows asked for at a time, and IDs in one request for several nodes
+# Activity rows asked for at a time
 ACTIVITY_WINDOW = 50
-NODES_PER_REQUEST = 200
-# Times to go back for what applying the last answers showed to be needed
-FOLLOW_UP_ROUNDS = 5
 
 class RemoteUpdateError(Exception):
 	"""The extract could not be updated from the other server."""
@@ -99,18 +96,6 @@ class RemoteServer:
 			first_id = following
 		return rows
 
-	def relations_of(self, kind, obj_id):
-		"""The relations that have a node or way as a member, as a document's elements."""
-		return list(self.get_xml("api/0.6/{}/{}/relations".format(kind, obj_id)))
-
-	def nodes(self, ids):
-		found = []
-		ids = sorted(ids)
-		for start in range(0, len(ids), NODES_PER_REQUEST):
-			chunk = ",".join(str(i) for i in ids[start:start + NODES_PER_REQUEST])
-			found.extend(self.get_xml("api/0.6/nodes?nodes=" + chunk))
-		return found
-
 def is_object(element):
 	return element.tag in ("node", "way", "relation")
 
@@ -159,23 +144,15 @@ class RemoteExtractUpdate:
 			common.abort_transaction(t)
 			raise
 
-	@staticmethod
-	def follow_ups(patch, created):
-		"""What applying a patch showed is still needed from the other server."""
-		arrived = [(kind, obj_id) for kind in ("node", "way") for obj_id in patch.GetArrivedIds(kind)
-			if (kind, obj_id) not in created]
-		return arrived, list(patch.GetMissingNodeIds())
-
 	def apply_rows(self, rows, checkpoint):
 		"""Apply whole edits, then set the extract's checkpoint to the last of them."""
-		created = set()
-		# Whether every record says which relations hold its related nodes.
-		# Records from before that was kept do not, and what they leave out
-		# has to be asked for.
-		complete = all(row.find("relatedparents") is not None and
-			row.find("relatedparents").get("null") != "true" for row in rows)
+		for row in rows:
+			holder = row.find("relatedparents")
+			if holder is None or holder.get("null") == "true":
+				raise RemoteUpdateError("Activity row {} was recorded before edits said which relations hold "
+					"their related nodes, and cannot be applied; save or import the extract afresh".format(row.get("id")))
 
-		def first(patch):
+		def work(patch):
 			for row in rows:
 				action = row.get("action")
 				updated = [e for e in row.find("updated") if is_object(e)] if row.find("updated") is not None else []
@@ -190,43 +167,18 @@ class RemoteExtractUpdate:
 						patch.RemoveObject(element.tag, int(element.get("id")), int(element.get("version")))
 				else:
 					send_objects(patch, updated)
-					if action == "create":
-						created.update((e.tag, int(e.get("id"))) for e in updated)
 				for section in ("affectedparents", "related", "relatedparents"):
 					holder = row.find(section)
 					if holder is not None:
 						send_objects(patch, holder)
 			patch.Apply()
-			needed = self.follow_ups(patch, created)
-			if complete:
-				# The records said which relations hold what has arrived
-				needed = ([], needed[1])
-			if not needed[0] and not needed[1]:
-				patch.SetCheckpoint(*checkpoint)
-			return needed
+			missing = list(patch.GetMissingNodeIds())
+			if missing:
+				raise RemoteUpdateError("The other server did not supply everything the extract needs: nodes {}".format(
+					", ".join(str(i) for i in missing[:10])))
+			patch.SetCheckpoint(*checkpoint)
 
-		arrived, missing = self.patching(first)
-		rounds = 0
-		while arrived or missing:
-			rounds += 1
-			if rounds > FOLLOW_UP_ROUNDS:
-				raise RemoteUpdateError("The other server did not supply everything the extract needs"
-					+ (": nodes {}".format(", ".join(str(i) for i in missing[:10])) if missing else ""))
-			# Asked for outside any transaction, so nothing here is locked meanwhile
-			fetched = list(self.server.nodes(missing)) if missing else []
-			for kind, obj_id in arrived:
-				fetched.extend(self.server.relations_of(kind, obj_id))
-
-			def again(patch):
-				send_objects(patch, fetched)
-				patch.Apply()
-				needed = self.follow_ups(patch, created)
-				if complete:
-					needed = ([], needed[1])
-				if not needed[0] and not needed[1]:
-					patch.SetCheckpoint(*checkpoint)
-				return needed
-			arrived, missing = self.patching(again)
+		self.patching(work)
 
 	def run(self, checkpoint):
 		"""Update from the checkpoint (edit activity ID, atomic edit ID). Returns

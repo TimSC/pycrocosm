@@ -162,12 +162,13 @@ class RemoteUpdateTestCase(local.DbExtractTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("UPDATE {} SET related_parents=NULL").format(
                 sql.Identifier(self.prefixes[1] + "edit_activity")))
+        # Such records cannot be relied on, and the update is refused untouched
+        before = (self.contents(extract_id), self.checkpoint(extract_id))
         self.fetched = []
-        self.update(extract_id)
-        # The other server is asked which relations hold what has arrived
-        self.assertIn("/api/0.6/node/{}/relations".format(far.objId), self.fetched)
-        self.assertEqual(set(self.contents(extract_id)), expected)
-        self.assert_current(extract_id)
+        with self.assertRaisesRegex(RuntimeError, "recorded before edits said which relations hold"):
+            self.update(extract_id)
+        self.assertEqual((self.contents(extract_id), self.checkpoint(extract_id)), before)
+        self.assertEqual([path for path in self.fetched if path.startswith("/api/")], [])
 
     def test_no_extra_requests_in_any_other_test(self):
         # A varied history: every kind of edit, with objects entering and leaving

@@ -288,231 +288,15 @@ def track_bboxes_step2(action, block, t, affectedParents):
 
 	return ok, errStr
 
-def object_bboxes(t, osmData):
-	"""The bounding box of each way and relation in osmData, as the map has them now.
-
-	Returns {(type, id): [minlon, minlat, maxlon, maxlat]}. Nodes are left out,
-	since a node carries its own position, and so is anything whose box is not
-	known, such as an object that is no longer visible.
-	"""
-	found = {}
-	for objType, objs in (("way", osmData.ways), ("relation", osmData.relations)):
-		ids = [objs[i].objId for i in range(objs.size())]
-		if len(ids) == 0:
-			continue
-		stored = pgmap.mapi64vectord()
-		t.GetObjectBboxes(objType, ids, stored)
-		for objId in stored:
-			if len(stored[objId]) == 4:
-				found[(objType, objId)] = list(stored[objId])
-
-	#A way on a map that does not store boxes gets one from its nodes. The way
-	#is read again, so the nodes are those it has in the map at this moment.
-	unboxedWayIds = [osmData.ways[i].objId for i in range(osmData.ways.size())
-		if ("way", osmData.ways[i].objId) not in found]
-	if len(unboxedWayIds) > 0:
-		wayData = pgmap.OsmData()
-		t.GetObjectsById("way", unboxedWayIds, wayData)
-		wayNodeIds = set()
-		for i in range(wayData.ways.size()):
-			wayNodeIds.update(wayData.ways[i].refs)
-		t.GetObjectsById("node", list(wayNodeIds), wayData)
-		positions = {}
-		for i in range(wayData.nodes.size()):
-			node = wayData.nodes[i]
-			positions[node.objId] = (node.lon, node.lat)
-		for i in range(wayData.ways.size()):
-			way = wayData.ways[i]
-			points = [positions[ref] for ref in way.refs if ref in positions]
-			if len(points) > 0:
-				found[("way", way.objId)] = [min(p[0] for p in points), min(p[1] for p in points),
-					max(p[0] for p in points), max(p[1] for p in points)]
-	return found
-
-def relation_reach_bboxes(t, relations):
-	"""The boxes of the ways that hold a node member of any of the relations.
-
-	These go into an edit activity record's relation_reach_bbox, which says
-	where an edit to a relation matters beyond the relation's own box.
-
-	Why it is needed. Something keeping a copy of one area of the map (a
-	stored extract) asks only for the records that reach into its area. Its
-	copy follows the rule of a map query:
-	  1. the nodes inside the area,
-	  2. the ways having one of those nodes, with all of their nodes, inside
-	     the area or not,
-	  3. the relations having any of those nodes or ways as a member.
-	By rule 3 a relation can belong to the copy through a node that is only
-	there by rule 2, and then nothing about the relation is near the area.
-
-	An example:
-	  - node N is inside the area and node F is far outside it,
-	  - way W runs from N to F,
-	  - relation R has F as its only member. W is not a member of R.
-	The copy has N, so W, so F, so R. Now R is modified or deleted. The record
-	says where R is (existing_bbox and updated_bbox: the point F) and where
-	what holds R is (the affected parents: nothing does). None of that reaches
-	the area, so the record would be left out and the copy would keep the old
-	R. What connects the edit to the area is W, which the edit does not touch
-	and which is in none of the record's lists: W is neither R, nor above R,
-	nor below it. It shares a member of R.
-
-	How it is populated. For every relation given, take its node members that
-	already exist (a placeholder ID belongs to a node created in the same
-	block, which is in the record's own lists). Find every way holding any of
-	those nodes, and return the box of each: the stored one, or one worked out
-	from the way's nodes. Way and relation members are not followed, as a
-	member way's extent is already part of the relation's own box, and a copy
-	does not follow relations that are members of relations.
-
-	upload_block calls this twice for a block: before storing it, with the
-	relations as the map had them (their old members), and afterwards, unless
-	they were deleted, with the relations as stored (their new members). The
-	record's relation_reach_bbox is the one rectangle around all the boxes
-	from both calls. It is left unset when there are none, as for any edit
-	without relations, which means there is nowhere more, not that it is
-	unknown. Being a single rectangle it can take in more than the ways
-	themselves, so a record is sometimes sent without need, never missed.
-	"""
-	nodeIds = set()
-	for i in range(relations.size()):
-		for member in relations[i].members:
-			if member.TypeName() == "node" and member.ref > 0:
-				nodeIds.add(member.ref)
-	if len(nodeIds) == 0:
-		return []
-	ways = pgmap.OsmData()
-	t.GetWaysForNodes(list(nodeIds), ways)
-	return list(object_bboxes(t, ways).values())
-
-def node_bboxes(nodes):
-	"""The position of each node, in the form object_bboxes gives the box of a way."""
-	return {("node", nodes[i].objId): [nodes[i].lon, nodes[i].lat, nodes[i].lon, nodes[i].lat]
-		for i in range(nodes.size())}
-
-def bbox_collection_wkt(objTypes, objIdVers, boxes, noneExpected=False):
-	"""One geometry for each listed object, in the same order, as a collection.
-
-	A node has a point at its position and a way or relation the rectangle of
-	its box. An object without one has an empty polygon, which keeps the
-	positions in step. That is expected of deleted objects (noneExpected).
-	Otherwise it means a box that is not known, and then nothing is returned:
-	a search by area must not take the collection as saying where the objects
-	are, and a field left unset is taken as possibly anywhere.
-	"""
-	wkts = []
-	for objType, (objId, objVer) in zip(objTypes, objIdVers):
-		box = boxes.get((objType, objId))
-		if box is None:
-			if not noneExpected:
-				return ""
-			wkts.append("POLYGON EMPTY")
-		elif objType == "node":
-			wkts.append("POINT({0:.17g} {1:.17g})".format(*box))
-		else:
-			wkts.append("POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*box))
-	if len(wkts) == 0:
-		return "GEOMETRYCOLLECTION EMPTY"
-	return "GEOMETRYCOLLECTION(" + ",".join(wkts) + ")"
-
-class ParentLookup(object):
-	"""Finds the ways and relations holding objects, remembering the answers.
-
-	Checking a deletion and finding the affected parents of an edit ask the
-	same questions of the map. Each object is asked about once; an answer is
-	only good until the map changes, so one of these serves one block and is
-	not used after the block has been stored.
-	"""
-	def __init__(self, t):
-		self.t = t
-		self.found = {} #(parent type, child type, child ID) -> {parent ID: parent}
-
-	def parents(self, parentType, childType, childIds):
-		"""The ways ("way") or relations ("relation") holding any of the objects, by ID."""
-		childIds = set(childIds)
-		missing = set(objId for objId in childIds if (parentType, childType, objId) not in self.found)
-		if len(missing) > 0:
-			data = pgmap.OsmData()
-			if parentType == "way":
-				self.t.GetWaysForNodes(list(missing), data)
-				objs = data.ways
-			else:
-				self.t.GetRelationsForObjs(childType, list(missing), data)
-				objs = data.relations
-			for objId in missing:
-				self.found[(parentType, childType, objId)] = {}
-			for i in range(objs.size()):
-				#Copies, which stay valid once data has gone
-				if parentType == "way":
-					parent = pgmap.OsmWay(objs[i])
-					refs = set(parent.refs)
-				else:
-					parent = pgmap.OsmRelation(objs[i])
-					refs = set(member.ref for member in parent.members if member.TypeName() == childType)
-				for ref in refs & missing:
-					self.found[(parentType, childType, ref)][parent.objId] = parent
-
-		out = {}
-		for objId in childIds:
-			out.update(self.found[(parentType, childType, objId)])
-		return out
-
-def get_affected_parents(block, parents):
-	"""The ways and relations that hold an object of the block without being in it.
-
-	These are the ways having a node of the block, the relations having as a
-	member a node of the block, a way of the block or one of those ways, and
-	the relations above any relation of the block or already found, for at
-	most 10 levels. The same rule as pgmap's GetAffectedParents, asked through
-	a ParentLookup so that what the caller has already found out is reused.
-	"""
-	nodeIds = set(block.nodes[i].objId for i in range(block.nodes.size()))
-	wayIds = set(block.ways[i].objId for i in range(block.ways.size()))
-	relationIds = set(block.relations[i].objId for i in range(block.relations.size()))
-	out = pgmap.OsmData()
-
-	for wayId, way in parents.parents("way", "node", nodeIds).items():
-		if wayId not in wayIds:
-			wayIds.add(wayId)
-			out.ways.append(way)
-
-	found = parents.parents("relation", "node", nodeIds)
-	found.update(parents.parents("relation", "way", wayIds))
-	for relationId, relation in found.items():
-		if relationId not in relationIds:
-			relationIds.add(relationId)
-			out.relations.append(relation)
-
-	current = set(relationIds)
-	depth = 0
-	while len(current) > 0 and depth < 10:
-		found = parents.parents("relation", "relation", current)
-		current = set()
-		for relationId, relation in found.items():
-			if relationId not in relationIds:
-				relationIds.add(relationId)
-				current.add(relationId)
-				out.relations.append(relation)
-		depth += 1
-
-	return out
-
 def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
-	parentBboxesBefore=None, parents=None):
+	affectedParents=None):
 
-	#Get complete set of query objects based on modified objects (unless action is create)
-	affectedParents = pgmap.OsmData()
-
-	if action in ["modify", "delete"]:
-		#Get complete set of query objects for original data, reusing any
-		#parents the caller has already looked up
-		if parents is None:
-			parents = ParentLookup(t)
-		affectedParents = get_affected_parents(block, parents)
-
-		#Their boxes have to be read now, before the block is stored
-		if parentBboxesBefore is not None:
-			parentBboxesBefore.update(object_bboxes(t, affectedParents))
+	#Get complete set of query objects based on modified objects (unless action
+	#is create), if the caller has not already found them
+	if affectedParents is None:
+		affectedParents = pgmap.OsmData()
+		if action in ["modify", "delete"]:
+			t.GetAffectedParents(block, affectedParents)
 
 	errStr = pgmap.PgMapError()
 	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
@@ -540,24 +324,6 @@ def calc_bbox_of_nodes(nodes, outerBbox=[]):
 		outerBbox = [min(nlons), min(nlats), max(nlons), max(nlats)]
 
 	return outerBbox
-
-def get_object_type_id_vers(block):
-	objTypes, objIdVers = [], []
-
-	for i in range(block.nodes.size()):
-		obj = block.nodes[i]
-		objTypes.append("node")
-		objIdVers.append((obj.objId, obj.metaData.version))
-	for i in range(block.ways.size()):
-		obj = block.ways[i]
-		objTypes.append("way")
-		objIdVers.append((obj.objId, obj.metaData.version))
-	for i in range(block.relations.size()):
-		obj = block.relations[i]
-		objTypes.append("relation")
-		objIdVers.append((obj.objId, obj.metaData.version))
-
-	return objTypes, objIdVers
 
 def get_relation_members(relation):
 	chNodes, chWays, chRelations = set(), set(), set()
@@ -696,13 +462,6 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	t.GetObjectsById("way", list(preexistingWayIds), originalObjData)
 	t.GetObjectsById("relation", list(preexistingRelationIds), originalObjData)
 
-	#The bounding box of each of those ways and relations, as they are before
-	#this block changes anything
-	existingBboxes = object_bboxes(t, originalObjData)
-	#Where these relations matter beyond their own boxes, by their members as
-	#they are before the edit. See relation_reach_bboxes.
-	reachBboxes = relation_reach_bboxes(t, originalObjData.relations)
-
 	#Get list of referenced objects
 	refedNodes, refedWays, refedRelations = get_refed_members(block)
 	
@@ -745,16 +504,13 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		if relationObjsById[objId].metaData.version > 1 and relationObjsById[objId].metaData.version != foundRelationIndex[objId].metaData.version+1:
 			return HttpResponse("Relation has wrong version", status=409, content_type="text/plain")
 
-	#What holds the objects of this block is asked by the deletion checks and
-	#again to find the affected parents: both go through this, so the map is
-	#asked once
-	parents = ParentLookup(t)
-
 	if action == "delete":
 
 		#Check that deleting objects doesn't break anything
 
-		parentRelationsForRelationsIndex = parents.parents("relation", "relation", relationObjsById.keys())
+		parentRelationsForRelations = pgmap.OsmData()
+		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
+		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForRelationsIndex:
 			if parentId in relationObjsById.keys():
@@ -780,7 +536,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.relations = filtered.relations
 				relationsObjsById = GetOsmDataIndex(block)['relation']
 
-		parentRelationsForWaysIndex = parents.parents("relation", "way", wayObjsById.keys())
+		parentRelationsForWays = pgmap.OsmData()
+		t.GetRelationsForObjs("way", list(wayObjsById.keys()), parentRelationsForWays)
+		parentRelationsForWaysIndex = GetOsmDataIndex(parentRelationsForWays)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForWaysIndex:
 			if parentId in relationObjsById.keys():
@@ -806,7 +564,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.ways = filtered.ways
 				wayObjsById = GetOsmDataIndex(block)['way']
 
-		parentWayForNodesIndex = parents.parents("way", "node", nodeObjsById.keys())
+		parentWayForNodes = pgmap.OsmData()
+		t.GetWaysForNodes(list(nodeObjsById.keys()), parentWayForNodes)
+		parentWayForNodesIndex = GetOsmDataIndex(parentWayForNodes)["way"]
 		referencedChildren = {}
 		for parentId in parentWayForNodesIndex:
 			if parentId in wayObjsById.keys():
@@ -830,7 +590,9 @@ def upload_block(action, block, changesetId, t, responseRoot,
 				block.nodes = filtered.nodes
 				nodeObjsById = GetOsmDataIndex(block)['node']
 
-		parentRelationsForNodesIndex = parents.parents("relation", "node", nodeObjsById.keys())
+		parentRelationsForNodes = pgmap.OsmData()
+		t.GetRelationsForObjs("node", list(nodeObjsById.keys()), parentRelationsForNodes)
+		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
 			parent = parentRelationsForNodesIndex[parentId]
@@ -877,76 +639,19 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		block.relations[i].metaData.username = username
 		block.relations[i].metaData.timestamp = int(timestamp)
 
-	parentBboxesBefore = {}
+	#Edit activity is recorded by pgmap, which notes how things are before the
+	#block changes them. That includes the ways and relations holding the
+	#block's objects, which are needed here as well.
+	affectedParents = pgmap.OsmData()
+	t.EditActivityBeforeStore(action, block, affectedParents)
+
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
-		parentBboxesBefore, parents)
+		affectedParents)
 	if not ok:
 		raise HttpResponseServerError(errStr, content_type='text/plain')
 
 	#Update diff result	
 	upload_update_diff_result2(diffs, responseRoot)
-	
-	#Get related objects (children of affected parents that remain unmodified)
-	relatedNodeIds, relatedWayIds, relatedRelationIds = set(), set(), set()
-	knownNodeIds, knownWayIds, knownRelationIds = set(), set(), set()
-	for i in range(block.nodes.size()):
-		knownNodeIds.add(block.nodes[i].objId)
-	for i in range(block.ways.size()):
-		knownWayIds.add(block.ways[i].objId)
-	for i in range(block.relations.size()):
-		knownRelationIds.add(block.relations[i].objId)
-	assert affectedParents.nodes.size() == 0 #Nodes are not parents
-	for i in range(affectedParents.ways.size()):
-		knownWayIds.add(affectedParents.ways[i].objId)
-	for i in range(affectedParents.relations.size()):
-		knownRelationIds.add(affectedParents.relations[i].objId)
-
-	if action == "create":
-		for i in range(refedObjData.nodes.size()):
-			node = refedObjData.nodes[i]
-			relatedNodeIds.add(node.objId)
-		for i in range(refedObjData.ways.size()):
-			way = refedObjData.ways[i]
-			relatedWayIds.add(way.objId)
-		for i in range(refedObjData.relations.size()):
-			rel = refedObjData.relations[i]
-			relatedRelationIds.add(rel.objId)
-	elif action == "modify":
-		for i in range(block.ways.size()):
-			way = block.ways[i]
-			for ref in way.refs:
-				relatedNodeIds.add(ref)
-		for i in range(affectedParents.ways.size()):
-			way = affectedParents.ways[i]
-			for ref in way.refs:
-				relatedNodeIds.add(ref)
-
-	relatedNodeIds = relatedNodeIds - knownNodeIds
-	relatedWayIds = relatedWayIds - knownWayIds
-	relatedRelationIds = relatedRelationIds - knownRelationIds
-	relatedObjs = pgmap.OsmData()
-	t.GetObjectsById("node", list(relatedNodeIds), relatedObjs)
-	t.GetObjectsById("way", list(relatedWayIds), relatedObjs)
-	t.GetObjectsById("relation", list(relatedRelationIds), relatedObjs)
-
-	#Get the relations that hold the related nodes. This edit does not touch
-	#them, but whatever follows the edit activity to keep a copy of part of
-	#the map needs them: a related node can be new to that copy, brought in
-	#as part of a way, and then the relations holding it belong there too.
-	#This asks about nodes the block does not contain, and after it has been
-	#stored, so nothing the lookup above remembers applies.
-	relatedParentsFound = pgmap.OsmData()
-	if len(relatedNodeIds) > 0:
-		t.GetRelationsForObjs("node", list(relatedNodeIds), relatedParentsFound)
-	relatedParents = pgmap.OsmData()
-	relatedParentIds = set()
-	for i in range(relatedParentsFound.relations.size()):
-		rel = relatedParentsFound.relations[i]
-		#Leave out those already recorded as edited or as affected parents
-		if rel.objId in knownRelationIds or rel.objId in relatedParentIds:
-			continue
-		relatedParentIds.add(rel.objId)
-		relatedParents.relations.append(rel)
 
 	#Update changeset bbox based on edits
 	# "Nodes: Any change to a node, including deletion, adds the node's old and new location to the bbox.
@@ -1041,110 +746,11 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			print (errStr.errStr)
 
 	#Track edit activity in database. One record is written for each block of
-	#an upload, which has a single action. Every list holds (type, ID, version)
-	#references, nodes first, then ways, then relations. The rules for what
-	#goes in each list are:
-	#
-	#existing: the objects named in the block as the map had them before the
-	#  edit, so with the version the edit replaces.
-	#  - create: empty, as the block's objects have placeholder (negative) IDs.
-	#  - modify, delete: every object in the block.
-	#  - It is read before the if-unused checks, so an object whose deletion
-	#    was skipped because it is still in use is listed here even though it
-	#    is not in updated.
-	#
-	#updated: the objects the block stored, with the version the edit gave them.
-	#  - create: the new objects under their allocated IDs, at version 1.
-	#  - modify: the new version of each object.
-	#  - delete: the deleted version of each object (one more than existing,
-	#    not visible). Deletions skipped by if-unused are left out.
-	#
-	#affectedparents: ways and relations the block does not edit, but which
-	#  hold something it does. Their version is unchanged, though their extent
-	#  can change. Found by get_affected_parents before the block is stored:
-	#  - create: empty. Nothing can hold an object that did not exist.
-	#  - modify, delete:
-	#    1. ways having a node of the block,
-	#    2. relations having as a member a node of the block, a way of the
-	#       block or a way from step 1,
-	#    3. relations holding a relation of the block or one already found,
-	#       repeated upwards for at most 10 levels.
-	#  - An object in the block is never listed, as it is in updated.
-	#
-	#related: unedited objects below the edited ones, which are needed to make
-	#  sense of them, at their current version.
-	#  - create: every existing object the block refers to: the nodes of its
-	#    ways and the node, way and relation members of its relations.
-	#  - modify: nodes only: those of the block's ways (as now stored) and
-	#    those of the affected parent ways. The members of a modified relation
-	#    are not included.
-	#  - delete: empty.
-	#  - Anything in the block or in affectedparents is left out.
-	#
-	#relatedparents: relations having a related node as a member, leaving out
-	#  any in the block or in affectedparents. Ways holding a related node, and
-	#  relations holding a related way or relation, are not followed.
-	#
-	#None of these lists holds a way that merely shares a member node with an
-	#edited relation. Where such ways are is kept as relation_reach_bbox, set
-	#further down.
-	existingObjTypes, existingObjIdVers = get_object_type_id_vers(originalObjData)
-	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
-	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
-	relatedObjsTypes, relatedObjsIdVers = get_object_type_id_vers(relatedObjs)
-	relatedParentsTypes, relatedParentsIdVers = get_object_type_id_vers(relatedParents)
-
-	bbox = pgmap.vectord()
-	activity = pgmap.EditActivity()
-	activity.existingType = pgmap.vectorstring(existingObjTypes)
-	#Where the objects of each list are: one geometry for each, the position
-	#of a node and the box of a way or relation. A search by area tests these,
-	#so that something keeping a copy of one area of the map can ask only for
-	#the edits that could matter to it. A deleted object is nowhere afterwards.
-	existingBboxes.update(node_bboxes(originalObjData.nodes))
-	updatedBboxes = {}
-	if action != "delete":
-		updatedBboxes = object_bboxes(t, block)
-		updatedBboxes.update(node_bboxes(block.nodes))
-		#and by their members as they are after it
-		reachBboxes.extend(relation_reach_bboxes(t, block.relations))
-	activity.existingBbox = bbox_collection_wkt(existingObjTypes, existingObjIdVers, existingBboxes)
-	activity.updatedBbox = bbox_collection_wkt(modifiedObjTypes, modifiedObjIdVers, updatedBboxes,
-		action == "delete")
-	activity.affectedparentsBeforeBbox = bbox_collection_wkt(
-		affectedParentsTypes, affectedParentsIdVers, parentBboxesBefore)
-	activity.affectedparentsAfterBbox = bbox_collection_wkt(
-		affectedParentsTypes, affectedParentsIdVers, object_bboxes(t, affectedParents))
-	#relation_reach_bbox: one rectangle around the ways that share a member
-	#node with a relation of this block, before or after the edit. A search by
-	#area tests it along with the four collections above, which on their own
-	#would miss an edit to a relation that belongs to an area only through
-	#such a way. relation_reach_bboxes explains why, with an example. Unset
-	#when no such way exists.
-	if len(reachBboxes) > 0:
-		reach = [min(box[0] for box in reachBboxes), min(box[1] for box in reachBboxes),
-			max(box[2] for box in reachBboxes), max(box[3] for box in reachBboxes)]
-		activity.relationReachBbox = "POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*reach)
-	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
-	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
-	activity.updatedIdVer = pgmap.vectorpairi64i64(modifiedObjIdVers)
-	activity.affectedparentsType = pgmap.vectorstring(affectedParentsTypes)
-	activity.affectedparentsIdVer = pgmap.vectorpairi64i64(affectedParentsIdVers)
-	activity.relatedType = pgmap.vectorstring(relatedObjsTypes)
-	activity.relatedIdVer = pgmap.vectorpairi64i64(relatedObjsIdVers)
-	activity.relatedparentsType = pgmap.vectorstring(relatedParentsTypes)
-	activity.relatedparentsIdVer = pgmap.vectorpairi64i64(relatedParentsIdVers)
-	activity.relatedparentsRecorded = True
-	activity.changeset = int(changesetId)
-	activity.timestamp = int(timestamp)
-	activity.uid = uid
-	activity.bbox = bbox
-	activity.action = action
-	activity.nodes = len(block.nodes)
-	activity.ways = len(block.ways)
-	activity.relations = len(block.relations)
-
-	ok = t.InsertEditActivity(activity,
+	#an upload, now that the block is stored and the boxes of its ways and
+	#relations are up to date. What a record holds, and the rules that decide
+	#it, are set out with EditActivityRecorder in pgmap/dbeditactivity.h,
+	#which also records the diffs the admin tool applies.
+	ok = t.EditActivityAfterStore(action, block, int(changesetId), uid, int(timestamp),
 		errStr)
 	if not ok:
 		return HttpResponseServerError(errStr.errStr, content_type="text/plain")
