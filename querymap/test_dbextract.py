@@ -2418,11 +2418,14 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s",
                            (self.prefixes[1] + "edit_activity",))
             definitions = [row[0] for row in cursor.fetchall()]
-            for column in ("bbox", "existing_bbox", "updated_bbox",
-                           "affectedparents_before_bbox", "affectedparents_after_bbox"):
+            for column in ("existing_bbox", "updated_bbox", "affectedparents_before_bbox",
+                           "affectedparents_after_bbox", "relation_reach_bbox"):
                 self.assertTrue(any("USING gist ({})".format(column) in d for d in definitions), column)
-            # bbox is set only where a relation matters beyond its own box, which is nowhere here
-            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE bbox IS NOT NULL").format(table))
+            self.assertFalse(any("USING gist (bbox)" in d for d in definitions))
+            # The reach is set only where a relation matters beyond its own box, which is
+            # nowhere here, and the old bbox column is not filled in or searched
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL "
+                "OR bbox IS NOT NULL").format(table))
             self.assertEqual(cursor.fetchone()[0], 0)
             # A record that does not say where its objects are could concern anywhere
             cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
@@ -2459,16 +2462,27 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
         # The relation's own box is the far node; the way's is what reaches the area
         with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT ST_XMin(bbox), ST_YMin(bbox), ST_XMax(bbox), ST_YMax(bbox), "
-                "ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
+            cursor.execute(sql.SQL("SELECT ST_XMin(relation_reach_bbox), ST_YMin(relation_reach_bbox), "
+                "ST_XMax(relation_reach_bbox), ST_YMax(relation_reach_bbox), GeometryType(relation_reach_bbox), "
+                "ST_SRID(relation_reach_bbox), bbox IS NULL, ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
                 sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
-            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0,
+            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326, True,
                 "GEOMETRYCOLLECTION(POLYGON((40 10,40 10,40 10,40 10,40 10)))"))
         # A relation whose member node is in no way matters only where it is
         lone = self.create_node(60.0, 20.0)
         self.create_relation([("node", lone, "")])
         self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
         self.assertEqual(self.filtered_ids("59,19,61,21"), [latest() - 1, latest()])
+        # A map whose table has not gained the column goes on recording edits,
+        # and a search by area there leaves nothing out
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+        everything = self.filtered_ids("-180,-90,180,90")
+        self.assertEqual(self.filtered_ids("100,50,101,51"), everything)
+        self.create_node(70.0, 30.0)
+        self.assertEqual(self.filtered_ids("100,50,101,51"), everything + [latest()])
+
 
     def test_edit_activity_has_changeset_index(self):
         with self.db.cursor() as cursor:

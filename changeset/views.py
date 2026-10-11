@@ -332,12 +332,47 @@ def object_bboxes(t, osmData):
 def relation_reach_bboxes(t, relations):
 	"""The boxes of the ways that hold a node member of any of the relations.
 
-	Something keeping a copy of one area of the map has a way when one of the
-	way's nodes is in the area, has all of that way's nodes, and has the
-	relations holding any of those nodes. So a relation can belong to an area
-	that neither it nor its members touch, through a way that shares one of
-	its member nodes: these boxes are where an edit to the relation matters
-	beyond the relation's own box.
+	These go into an edit activity record's relation_reach_bbox, which says
+	where an edit to a relation matters beyond the relation's own box.
+
+	Why it is needed. Something keeping a copy of one area of the map (a
+	stored extract) asks only for the records that reach into its area. Its
+	copy follows the rule of a map query:
+	  1. the nodes inside the area,
+	  2. the ways having one of those nodes, with all of their nodes, inside
+	     the area or not,
+	  3. the relations having any of those nodes or ways as a member.
+	By rule 3 a relation can belong to the copy through a node that is only
+	there by rule 2, and then nothing about the relation is near the area.
+
+	An example:
+	  - node N is inside the area and node F is far outside it,
+	  - way W runs from N to F,
+	  - relation R has F as its only member. W is not a member of R.
+	The copy has N, so W, so F, so R. Now R is modified or deleted. The record
+	says where R is (existing_bbox and updated_bbox: the point F) and where
+	what holds R is (the affected parents: nothing does). None of that reaches
+	the area, so the record would be left out and the copy would keep the old
+	R. What connects the edit to the area is W, which the edit does not touch
+	and which is in none of the record's lists: W is neither R, nor above R,
+	nor below it. It shares a member of R.
+
+	How it is populated. For every relation given, take its node members that
+	already exist (a placeholder ID belongs to a node created in the same
+	block, which is in the record's own lists). Find every way holding any of
+	those nodes, and return the box of each: the stored one, or one worked out
+	from the way's nodes. Way and relation members are not followed, as a
+	member way's extent is already part of the relation's own box, and a copy
+	does not follow relations that are members of relations.
+
+	upload_block calls this twice for a block: before storing it, with the
+	relations as the map had them (their old members), and afterwards, unless
+	they were deleted, with the relations as stored (their new members). The
+	record's relation_reach_bbox is the one rectangle around all the boxes
+	from both calls. It is left unset when there are none, as for any edit
+	without relations, which means there is nowhere more, not that it is
+	unknown. Being a single rectangle it can take in more than the ways
+	themselves, so a record is sometimes sent without need, never missed.
 	"""
 	nodeIds = set()
 	for i in range(relations.size()):
@@ -664,6 +699,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#The bounding box of each of those ways and relations, as they are before
 	#this block changes anything
 	existingBboxes = object_bboxes(t, originalObjData)
+	#Where these relations matter beyond their own boxes, by their members as
+	#they are before the edit. See relation_reach_bboxes.
 	reachBboxes = relation_reach_bboxes(t, originalObjData.relations)
 
 	#Get list of referenced objects
@@ -1047,6 +1084,10 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	#relatedparents: relations having a related node as a member, leaving out
 	#  any in the block or in affectedparents. Ways holding a related node, and
 	#  relations holding a related way or relation, are not followed.
+	#
+	#None of these lists holds a way that merely shares a member node with an
+	#edited relation. Where such ways are is kept as relation_reach_bbox, set
+	#further down.
 	existingObjTypes, existingObjIdVers = get_object_type_id_vers(originalObjData)
 	modifiedObjTypes, modifiedObjIdVers = get_object_type_id_vers(block)
 	affectedParentsTypes, affectedParentsIdVers = get_object_type_id_vers(affectedParents)
@@ -1065,6 +1106,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	if action != "delete":
 		updatedBboxes = object_bboxes(t, block)
 		updatedBboxes.update(node_bboxes(block.nodes))
+		#and by their members as they are after it
 		reachBboxes.extend(relation_reach_bboxes(t, block.relations))
 	activity.existingBbox = bbox_collection_wkt(existingObjTypes, existingObjIdVers, existingBboxes)
 	activity.updatedBbox = bbox_collection_wkt(modifiedObjTypes, modifiedObjIdVers, updatedBboxes,
@@ -1073,11 +1115,16 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		affectedParentsTypes, affectedParentsIdVers, parentBboxesBefore)
 	activity.affectedparentsAfterBbox = bbox_collection_wkt(
 		affectedParentsTypes, affectedParentsIdVers, object_bboxes(t, affectedParents))
-	#Where the edit matters beyond the objects themselves: see relation_reach_bboxes.
-	#A search by area tests this along with the four collections.
+	#relation_reach_bbox: one rectangle around the ways that share a member
+	#node with a relation of this block, before or after the edit. A search by
+	#area tests it along with the four collections above, which on their own
+	#would miss an edit to a relation that belongs to an area only through
+	#such a way. relation_reach_bboxes explains why, with an example. Unset
+	#when no such way exists.
 	if len(reachBboxes) > 0:
-		bbox = pgmap.vectord([min(box[0] for box in reachBboxes), min(box[1] for box in reachBboxes),
-			max(box[2] for box in reachBboxes), max(box[3] for box in reachBboxes)])
+		reach = [min(box[0] for box in reachBboxes), min(box[1] for box in reachBboxes),
+			max(box[2] for box in reachBboxes), max(box[3] for box in reachBboxes)]
+		activity.relationReachBbox = "POLYGON(({0:.17g} {1:.17g},{0:.17g} {3:.17g},{2:.17g} {3:.17g},{2:.17g} {1:.17g},{0:.17g} {1:.17g}))".format(*reach)
 	activity.existingIdVer = pgmap.vectorpairi64i64(existingObjIdVers)
 	activity.updatedType = pgmap.vectorstring(modifiedObjTypes)
 	activity.updatedIdVer = pgmap.vectorpairi64i64(modifiedObjIdVers)
