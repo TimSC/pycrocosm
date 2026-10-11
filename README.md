@@ -116,6 +116,15 @@ The admin panel is at `/admin/`: http://127.0.0.1:8000/admin/ on a local install
 
 Staff accounts can look at the extracts and map parameters; changing them needs a superuser or the matching permission. After upgrading, run `manage.py migrate` so that new admin pages and their permissions are registered.
 
+Map call formats
+----------------
+
+`/api/0.6/map?bbox=left,bottom,right,top` answers in XML, or in JSON when asked as `map.json` or with an `Accept: application/json` header. A `format` argument chooses among more: `osm`, `json`, `o5m` and `pbf`, and `osm.gz`, `json.gz` and `o5m.gz` for a gzipped file, as in
+
+     curl -o map.pbf "http://127.0.0.1:8000/api/0.6/map?bbox=-1.09,50.79,-1.06,50.81&format=pbf"
+
+The binary formats are several times smaller than XML: for the same area, around a twentieth of its size as `pbf` or `o5m.gz`.
+
 Read only mode
 --------------
 

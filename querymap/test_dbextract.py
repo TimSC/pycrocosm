@@ -2418,6 +2418,58 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(int(later[0].get("atomic_edit_id")), int(rows[0].get("atomic_edit_id")) + 1)
         self.assertEqual([int(row.get("block_index")) for row in later], [0, 1])
 
+    def test_store_handles_many_objects_and_repeats_in_one_block(self):
+        # More objects than one batch of the store holds, in one upload
+        count = 1100
+        nodes = []
+        for index in range(count):
+            node = pgmap.OsmNode()
+            node.objId = -index - 1
+            node.lon, node.lat = 0.0001 * index, 0.5
+            node.tags["n"] = "it's {}".format(index)
+            nodes.append(node)
+        created = self.upload("create", nodes)[0]
+        self.assertEqual(len(set(n.objId for n in created)), count)
+        way = self.create_way(created[:600])
+        relation = self.create_relation([("way", way, "a'b"), ("node", created[0], "")])
+        moved = []
+        for node in created:
+            copy = pgmap.OsmNode(node)
+            copy.lat = 0.6
+            moved.append(copy)
+        moved = self.upload("modify", moved)[0]
+        self.upload("delete", [pgmap.OsmNode(n) for n in moved[700:]])
+        found = self.contents()
+        self.assertEqual(sum(1 for key in found if key[0] == "node"), 700)
+        self.assertEqual(found[("node", created[5].objId)][0]["version"], "2")
+        self.assertEqual(float(found[("node", created[5].objId)][0]["lat"]), 0.6)
+        self.assertEqual(len(found[("way", way.objId)][1]), 600)
+        self.assertIn(("relation", relation.objId), found)
+        table = lambda name: sql.Identifier(self.prefixes[1] + name)
+        with self.db.cursor() as cursor:
+            # Every first version is in the history, the deleted versions too, and nothing is live twice
+            cursor.execute(sql.SQL("SELECT version, visible, count(*) FROM {} GROUP BY 1, 2 ORDER BY 1, 2").format(table("oldnodes")))
+            self.assertEqual(cursor.fetchall(), [(1, True, count), (2, True, 400), (3, False, 400)])
+            cursor.execute(sql.SQL("SELECT count(*), count(DISTINCT id) FROM {}").format(table("livenodes")))
+            self.assertEqual(cursor.fetchone(), (700, 700))
+            cursor.execute(sql.SQL("SELECT count(*), min(index), max(index) FROM {} WHERE id=%s").format(table("way_mems")), (way.objId,))
+            self.assertEqual(cursor.fetchone(), (600, 0, 599))
+            cursor.execute(sql.SQL("SELECT tags->>'n' FROM {} WHERE id=%s").format(table("livenodes")), (created[7].objId,))
+            self.assertEqual(cursor.fetchone(), ("it's 7",))
+
+        # A diff can hold several versions of one object in a single block:
+        # each is stored in turn, the last one ending up live
+        meta = 'changeset="77" uid="5" user="importer" timestamp="2026-03-01T10:00:00Z"'
+        target = created[3].objId
+        self.apply_diff([("modify", "".join('<node id="{}" version="{}" lon="{}" lat="0.7" {}/>'.format(
+            target, version, 0.001 * version, meta) for version in (3, 4, 5)))])
+        self.assertEqual(self.contents()[("node", target)][0]["version"], "5")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT version FROM {} WHERE id=%s ORDER BY version").format(table("oldnodes")), (target,))
+            self.assertEqual([row[0] for row in cursor.fetchall()], [1, 2, 3, 4])
+            cursor.execute(sql.SQL("SELECT version, ST_X(geom) FROM {} WHERE id=%s").format(table("livenodes")), (target,))
+            self.assertEqual(cursor.fetchall(), [(5, 0.005)])
+
     # Searching the records by area, and the index for changeset counts
 
     def filtered_ids(self, bbox):

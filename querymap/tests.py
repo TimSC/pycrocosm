@@ -410,6 +410,81 @@ class QueryMapTestCase(TestCase):
 			self.assertEqual([member.ref for member in relation.members],
 				[member.ref for member in relationIdDict[relation.objId].members])
 
+	def test_query_map_formats(self):
+		import gzip
+		node = create_node(self.user.id, self.user.username)
+		node2 = create_node(self.user.id, self.user.username, node)
+		way = create_way(self.user.id, self.user.username, [node.objId, node2.objId])
+		relation = create_relation(self.user.id, self.user.username, [("way", way.objId, "outer"), ("node", node.objId, "")])
+		bbox = [node.lon-0.0001, node.lat-0.0001, node.lon+0.0001, node.lat+0.0001]
+		query = "?bbox={}".format(",".join(str(c) for c in bbox))
+		expected = sorted([("node", node.objId), ("node", node2.objId), ("way", way.objId), ("relation", relation.objId)])
+
+		def objects(data):
+			found = [("node", data.nodes[i].objId) for i in range(data.nodes.size())]
+			found += [("way", data.ways[i].objId) for i in range(data.ways.size())]
+			found += [("relation", data.relations[i].objId) for i in range(data.relations.size())]
+			return sorted(found)
+		def from_xml(body):
+			data = pgmap.OsmData()
+			pgmap.LoadFromOsmXml(body.decode("utf-8"), data)
+			return data
+		def from_json(body):
+			doc = json.loads(body)
+			return sorted((e["type"], e["id"]) for e in doc["elements"])
+		def from_o5m(body):
+			data = pgmap.OsmData()
+			pgmap.LoadFromO5mBytes(body, data)
+			return data
+		def from_pbf(body):
+			data = pgmap.OsmData()
+			pgmap.LoadFromPbfBytes(body, data)
+			return data
+
+		formats = [("osm", "text/xml", False, from_xml), ("osm.gz", "application/x-gzip", True, from_xml),
+			("json", "application/json", False, from_json), ("json.gz", "application/x-gzip", True, from_json),
+			("o5m", "application/octet-stream", False, from_o5m), ("o5m.gz", "application/x-gzip", True, from_o5m),
+			("pbf", "application/octet-stream", False, from_pbf)]
+		for name, contentType, gzipped, read in formats:
+			# Asked for as a browser would, accepting compressed answers
+			response = Client().get("/api/0.6/map" + query + "&format=" + name, HTTP_ACCEPT_ENCODING="gzip")
+			self.assertEqual(response.status_code, 200, name)
+			self.assertEqual(response["Content-Type"], contentType, name)
+			body = b"".join(response.streaming_content)
+			if response.get("Content-Encoding") == "gzip":
+				# The plain text formats may be compressed on the way; the files are not
+				self.assertIn(name, ("osm", "json", "o5m"))
+				body = gzip.decompress(body)
+			if gzipped:
+				body = gzip.decompress(body)
+			found = read(body)
+			if not isinstance(found, list):
+				found = objects(found)
+			self.assertEqual(found, expected, name)
+			if name in ("osm", "json"):
+				self.assertIsNone(response.get("Content-Disposition"), name)
+			else:
+				self.assertEqual(response["Content-Disposition"], 'attachment; filename="map.{}"'.format(name))
+
+		# The position survives each binary format
+		response = Client().get("/api/0.6/map" + query + "&format=o5m")
+		data = from_o5m(b"".join(response.streaming_content))
+		positions = {data.nodes[i].objId: (data.nodes[i].lon, data.nodes[i].lat) for i in range(data.nodes.size())}
+		self.assertAlmostEqual(positions[node.objId][0], node.lon, places=6)
+		self.assertAlmostEqual(positions[node.objId][1], node.lat, places=6)
+
+		# The argument wins over what the request would otherwise get
+		response = Client().get("/api/0.6/map" + query + "&format=osm", HTTP_ACCEPT="application/json")
+		self.assertEqual(response["Content-Type"], "text/xml")
+		# Without it nothing changes
+		response = Client().get("/api/0.6/map" + query)
+		self.assertEqual(response["Content-Type"], "text/xml")
+		self.assertEqual(objects(from_xml(b"".join(response.streaming_content))), expected)
+		for bad in ("xml", "o5m.zip", "pbf.gz", ""):
+			response = Client().get("/api/0.6/map" + query + "&format=" + bad)
+			self.assertEqual(response.status_code, 400, bad)
+			self.assertIn(b"format must be one of", response.content)
+
 	def test_query_map_json(self):
 		node = create_node(self.user.id, self.user.username)
 		node2 = create_node(self.user.id, self.user.username, node)
