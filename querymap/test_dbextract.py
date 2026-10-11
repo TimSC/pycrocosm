@@ -2303,6 +2303,115 @@ class DbExtractTestCase(SimpleTestCase):
         with self.assertRaises(ValueError):
             collection_boxes("POINT(1 2)")
 
+    # Diffs applied by the admin tool are recorded as edits
+
+    def apply_diff(self, blocks):
+        """Apply an osmChange made of (action, object XML) blocks, as the admin tool's "Apply diffs" does."""
+        import gzip, os, tempfile
+        document = '<?xml version="1.0" encoding="UTF-8"?>\n<osmChange version="0.6">' + "".join(
+            "<{0}>{1}</{0}>".format(action, xml) for action, xml in blocks) + "</osmChange>"
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "001.osc.gz")
+        with gzip.open(path, "wb") as handle:
+            handle.write(document.encode("utf-8"))
+        error = pgmap.PgMapError()
+        admin = self.map.GetAdmin("EXCLUSIVE")
+        try:
+            self.assertTrue(admin.ApplyDiffs(folder, 0, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+            os.remove(path)
+            os.rmdir(folder)
+
+    def test_applied_diffs_are_recorded_as_edit_activity(self):
+        a = self.create_node(0.2)
+        b = self.create_node(0.4)
+        way = self.create_way([a, b])
+        far = self.create_node(40.0)
+        other = self.create_node(41.0)
+        farWay = self.create_way([far, other])
+        extract_id = self.save()
+        self.assert_current(extract_id)
+        before = self.checkpoint(extract_id)
+
+        meta = 'changeset="77" uid="5" user="importer" timestamp="2026-03-01T10:00:00Z"'
+        def node(obj_id, version, lon, lat=0):
+            return '<node id="{}" version="{}" lon="{}" lat="{}" {}/>'.format(obj_id, version, lon, lat, meta)
+        newNode, newRelation = 900001, 900002
+        self.apply_diff([
+            ("create", node(newNode, 1, 0.5)),
+            ("modify", node(a.objId, 2, 0.25)),
+            ("modify", '<way id="{}" version="2" {}><nd ref="{}"/><nd ref="{}"/></way>'.format(
+                way.objId, meta, a.objId, newNode)),
+            ("delete", node(b.objId, 2, 0.4)),
+            # A relation far from the rectangle, then its node's way is brought in
+            ("create", '<relation id="{}" version="1" {}><member type="node" ref="{}" role="stop"/></relation>'.format(
+                newRelation, meta, far.objId)),
+            ("modify", node(other.objId, 2, 0.6)),
+        ])
+
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id={}".format(before[0] + 1)))
+        rows = root.findall("editactivity")
+        def listed(row, section):
+            return [(e.tag, int(e.get("id")), int(e.get("version"))) for e in row.find(section)]
+        self.assertEqual([row.get("action") for row in rows], ["create", "modify", "modify", "delete", "create", "modify"])
+        # One diff file is one atomic edit, after the uploads before it
+        self.assertEqual(len(set(row.get("atomic_edit_id") for row in rows)), 1)
+        self.assertGreater(int(rows[0].get("atomic_edit_id")), before[1])
+        self.assertEqual([int(row.get("block_index")) for row in rows], list(range(6)))
+        self.assertEqual((rows[0].get("changeset"), rows[0].get("timestamp")), ("77", "2026-03-01T10:00:00Z"))
+        # The lists follow the rules of an upload
+        self.assertEqual((listed(rows[0], "existing"), listed(rows[0], "updated")), ([], [("node", newNode, 1)]))
+        self.assertEqual(listed(rows[1], "existing"), [("node", a.objId, 1)])
+        self.assertEqual(listed(rows[1], "updated"), [("node", a.objId, 2)])
+        self.assertEqual(listed(rows[1], "affectedparents"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[1], "related"), [("node", b.objId, 1)])
+        self.assertEqual(listed(rows[2], "existing"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[2], "updated"), [("way", way.objId, 2)])
+        self.assertEqual(sorted(listed(rows[2], "related")), sorted([("node", a.objId, 2), ("node", newNode, 1)]))
+        self.assertEqual(listed(rows[3], "existing"), [("node", b.objId, 1)])
+        self.assertEqual(listed(rows[4], "related"), [("node", far.objId, 1)])
+        self.assertEqual(listed(rows[5], "affectedparents"), [("way", farWay.objId, 1)])
+        self.assertEqual(listed(rows[5], "related"), [("node", far.objId, 1)])
+        self.assertEqual(listed(rows[5], "relatedparents"), [("relation", newRelation, 1)])
+        # and so do the boxes
+        def boxes(row, section):
+            return [None if e.get("null") == "true" else tuple(float(e.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat"))
+                    for e in row.find(section).findall("bbox")]
+        self.assertEqual(boxes(rows[1], "existing_bbox"), [(0.2, 0.0, 0.2, 0.0)])
+        self.assertEqual(boxes(rows[1], "updated_bbox"), [(0.25, 0.0, 0.25, 0.0)])
+        self.assertEqual(boxes(rows[1], "affectedparents_before_bbox"), [(0.2, 0.0, 0.4, 0.0)])
+        self.assertEqual(boxes(rows[1], "affectedparents_after_bbox"), [(0.25, 0.0, 0.4, 0.0)])
+        self.assertEqual(boxes(rows[2], "updated_bbox"), [(0.25, 0.0, 0.5, 0.0)])
+        self.assertEqual(boxes(rows[3], "updated_bbox"), [None])
+        self.assertEqual(boxes(rows[5], "affectedparents_after_bbox"), [(0.6, 0.0, 40.0, 0.0)])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT ST_XMin(relation_reach_bbox), ST_XMax(relation_reach_bbox) "
+                "FROM {} WHERE id=%s").format(sql.Identifier(self.prefixes[1] + "edit_activity")),
+                (int(rows[4].get("id")),))
+            self.assertEqual(cursor.fetchone(), (40.0, 41.0))
+
+        # The stored extract no longer counts as up to date, and updating it
+        # from the records gives what the map now has in the rectangle
+        self.update(extract_id)
+        self.assert_current(extract_id)
+        self.assertEqual(set(self.contents(extract_id)), {
+            ("node", a.objId), ("node", newNode), ("way", way.objId),
+            ("node", other.objId), ("node", far.objId), ("way", farWay.objId), ("relation", newRelation)})
+        self.assertEqual(self.compare(extract_id)[1], [])
+
+        # A second diff is a second atomic edit
+        self.apply_diff([("modify", node(newNode, 2, 0.55)), ("delete", node(other.objId, 3, 0.6))])
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=2"))
+        later = root.findall("editactivity")
+        self.assertEqual([row.get("action") for row in later], ["modify", "delete"])
+        self.assertEqual(int(later[0].get("atomic_edit_id")), int(rows[0].get("atomic_edit_id")) + 1)
+        self.assertEqual([int(row.get("block_index")) for row in later], [0, 1])
+
     # Parent lookups shared within an upload, and the index for changeset counts
 
     def test_parent_lookup_matches_pgmap_and_asks_once(self):
