@@ -48,7 +48,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -1413,7 +1413,7 @@ class DbExtractTestCase(SimpleTestCase):
                 self.assertEqual(status, 1)
                 # The meta lookup also uses a prepared statement.
                 error = pgmap.PgMapError()
-                self.assertEqual(t.GetMetaValue("schema_version", error), "14")
+                self.assertEqual(t.GetMetaValue("schema_version", error), "15")
             finally:
                 t.Abort()
             return set(self.decode_contents(output.getvalue()))
@@ -1822,7 +1822,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -1836,7 +1836,7 @@ class DbExtractTestCase(SimpleTestCase):
         self.set_auto_update(extract_id, "", True, "https://example.org/")
         admin = self.map.GetAdmin("")
         try:
-            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
             admin.Commit()
         finally:
             del admin
@@ -2198,7 +2198,7 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
             before = cursor.fetchone()[0]
             cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox").format(table))
-        with self.assertRaisesRegex(AssertionError, "ask the admin tool for schema version 14 again"):
+        with self.assertRaisesRegex(AssertionError, "ask the admin tool for the latest schema version again"):
             self.create_node(0.1)
         from replicate.remoteupdate import RemoteUpdateError
         with self.assertRaises(RemoteUpdateError):
@@ -2207,7 +2207,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 14, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -2589,6 +2589,125 @@ class DbExtractTestCase(SimpleTestCase):
                 self.assertEqual(cursor.fetchall(), expected, name)
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(self.prefixes[1] + "livenodes")))
             self.assertEqual(cursor.fetchone()[0], 0)
+
+    # Schema version 15: member tables of live versions only, with a key
+
+    def set_schema(self, version):
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(admin.CreateMapTables(0, version, False, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+
+    def member_rows(self, suffix, prefix=None):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, version, index, member FROM {} ORDER BY id, version, index, member").format(
+                sql.Identifier((prefix or self.prefixes[1]) + suffix)))
+            return cursor.fetchall()
+
+    def test_member_tables_hold_live_versions_only(self):
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        c = self.create_node(0.3)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, ""), ("node", a, ""), ("node", c, "")])
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
+        self.assertEqual(self.member_rows("relation_mems_n"),
+                         [(relation.objId, 1, 1, a.objId), (relation.objId, 1, 2, c.objId)])
+        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
+
+        # Moving a node rewrites the way holding it at the same version: its rows stay as they are
+        a = self.modify_node(a, 0.15)
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
+        # A new version replaces the rows of the old one
+        way = self.modify_way(way, [b, c, a])
+        self.assertEqual(self.member_rows("way_mems"),
+                         [(way.objId, 2, 0, b.objId), (way.objId, 2, 1, c.objId), (way.objId, 2, 2, a.objId)])
+        relation = self.modify_relation(relation, [("node", b, "")])
+        self.assertEqual(self.member_rows("relation_mems_n"), [(relation.objId, 2, 0, b.objId)])
+        self.assertEqual(self.member_rows("relation_mems_w"), [])
+        # and a deleted object has none, while its history keeps its members
+        self.upload("delete", [relation])
+        self.assertEqual(self.member_rows("relation_mems_n"), [])
+        self.upload("delete", [way])
+        self.assertEqual(self.member_rows("way_mems"), [])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT version, visible, jsonb_array_length(members) FROM {} WHERE id=%s ORDER BY version").format(
+                sql.Identifier(self.prefixes[1] + "oldways")), (way.objId,))
+            self.assertEqual(cursor.fetchall(), [(1, True, 2), (2, True, 3), (3, False, 3)])
+            # The same row cannot be there twice
+            cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            with self.assertRaises(psycopg2.IntegrityError):
+                cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            cursor.execute(sql.SQL("DELETE FROM {} WHERE id=9").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            # The views join their two halves without comparing rows
+            for kind in ("nodes", "ways", "relations"):
+                cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visible" + kind,))
+                self.assertIn("UNION ALL", cursor.fetchone()[0], kind)
+
+    def test_schema_15_rebuilds_member_tables(self):
+        # As a map at version 14 is after some editing: rows of versions that
+        # are no longer live, rows of deleted objects, and rows added twice
+        self.set_schema(14)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
+            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        c = self.create_node(0.3)
+        way = self.create_way([a, b])
+        gone = self.create_way([b, c])
+        inner = self.create_relation([("node", a, "")])
+        relation = self.create_relation([("way", way, ""), ("node", c, ""), ("relation", inner, "")])
+        way = self.modify_way(way, [a, b, c])
+        self.upload("delete", [gone])
+        self.assertEqual(len(self.member_rows("way_mems")), 2 + 3 + 2 + 2)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("INSERT INTO {0} SELECT * FROM {0}").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            cursor.execute(sql.SQL("CREATE INDEX {} ON {} (member)").format(
+                sql.Identifier(self.prefixes[1] + "way_mems_mids"), sql.Identifier(self.prefixes[1] + "way_mems")))
+        before = self.contents()
+
+        self.set_schema(15)
+        self.assertEqual(self.member_rows("way_mems"),
+                         [(way.objId, 2, 0, a.objId), (way.objId, 2, 1, b.objId), (way.objId, 2, 2, c.objId)])
+        self.assertEqual(self.member_rows("relation_mems_n"),
+                         sorted([(inner.objId, 1, 0, a.objId), (relation.objId, 1, 1, c.objId)]))
+        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
+        self.assertEqual(self.member_rows("relation_mems_r"), [(relation.objId, 1, 2, inner.objId)])
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s ORDER BY indexname", (self.prefixes[1] + "way_mems",))
+            definitions = [row[0] for row in cursor.fetchall()]
+            self.assertTrue(any("UNIQUE" in d and "(id, version, index)" in d for d in definitions), definitions)
+            # The index of members it had is put back
+            self.assertTrue(any(d.rstrip().endswith("(member)") for d in definitions), definitions)
+            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(sql.Identifier(self.prefixes[1] + "meta")))
+            self.assertEqual(cursor.fetchone(), ("15",))
+        # The map reads the same, and goes on working
+        self.assertEqual(self.contents(), before)
+        way = self.modify_way(way, [c, a])
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 3, 0, c.objId), (way.objId, 3, 1, a.objId)])
+        extract_id = self.save()
+        self.modify_node(a, 0.12)
+        self.update(extract_id)
+        self.assert_current(extract_id)
+
+        # Back at 14 the key and the newer views go, and the map still works
+        self.set_schema(14)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%UNIQUE%%'", (self.prefixes[1] + "way_mems",))
+            self.assertEqual(cursor.fetchone()[0], 0)
+            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
+            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
+        self.modify_way(way, [a, c])
+        self.assertIn(("way", way.objId), self.contents())
+        self.set_schema(15)
+        self.assertEqual(len(self.member_rows("way_mems")), 2)
 
     # Searching the records by area, and the index for changeset counts
 
