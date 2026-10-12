@@ -271,7 +271,8 @@ def track_bboxes_step2(action, block, t, affectedParents):
 
 		ok = t.StoreObjects(affectedParents, unusedNodeIds, unusedWayIds, unusedRelationIds, False, errStr)
 		if not ok:
-			return HttpResponseServerError(errStr.errStr, content_type='text/plain')
+			#Without their copies the boxes of the parents cannot be brought up to date
+			return False, errStr
 
 		#Update bbox of any affected parents
 		for i in range(affectedParents.ways.size()):
@@ -307,8 +308,11 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 	diffs.extend(upload_update_diff_result(action, "way", block.ways, createdWayIds))
 	diffs.extend(upload_update_diff_result(action, "relation", block.relations, createdRelationIds))
 
-	#Update affected bounding boxes
-	track_bboxes_step2(action, block, t, affectedParents)
+	#Update affected bounding boxes. A failure here fails the store: the
+	#boxes would otherwise be left as they were, with nothing to show for it.
+	ok, errStr = track_bboxes_step2(action, block, t, affectedParents)
+	if not ok:
+		return False, None, affectedParents, errStr
 
 	return ok, diffs, affectedParents, errStr
 
@@ -648,7 +652,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	ok, diffs, affectedParents, errStr = store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWayIds, createdRelationIds,
 		affectedParents)
 	if not ok:
-		raise HttpResponseServerError(errStr, content_type='text/plain')
+		return HttpResponseServerError(errStr.errStr, content_type='text/plain')
 
 	#Update diff result	
 	upload_update_diff_result2(diffs, responseRoot)

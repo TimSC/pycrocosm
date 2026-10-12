@@ -2590,6 +2590,274 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(self.prefixes[1] + "livenodes")))
             self.assertEqual(cursor.fetchone()[0], 0)
 
+    # The stored boxes of ways and relations, kept up as edits arrive
+
+    def stored_and_expected_boxes(self):
+        """The box each visible way and relation has stored, and the one worked
+        out afresh from where its members are now."""
+        prefix = self.prefixes[1]
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, ST_X(geom), ST_Y(geom) FROM {}").format(sql.Identifier(prefix + "visiblenodes")))
+            nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+            found = {}
+            for kind in ("way", "relation"):
+                cursor.execute(sql.SQL("SELECT id, members, ST_XMin(bbox), ST_YMin(bbox), ST_XMax(bbox), ST_YMax(bbox) FROM {}").format(
+                    sql.Identifier(prefix + "visible" + kind + "s")))
+                found[kind] = {row[0]: (row[1], None if row[2] is None else tuple(row[2:])) for row in cursor.fetchall()}
+        def around(boxes):
+            boxes = [b for b in boxes if b is not None]
+            if not boxes:
+                return None
+            return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        def point(node_id):
+            return None if node_id not in nodes else nodes[node_id] + nodes[node_id]
+        def way_box(way_id):
+            if way_id not in found["way"]:
+                return None
+            return around([point(ref) for ref in found["way"][way_id][0]])
+        def relation_box(relation_id, above=()):
+            if relation_id not in found["relation"] or relation_id in above:
+                return None
+            boxes = []
+            for kind, ref in found["relation"][relation_id][0]:
+                boxes.append(point(ref) if kind == "node" else way_box(ref) if kind == "way"
+                             else relation_box(ref, above + (relation_id,)))
+            return around(boxes)
+        stored = {("way", i): v[1] for i, v in found["way"].items()}
+        stored.update({("relation", i): v[1] for i, v in found["relation"].items()})
+        expected = {("way", i): way_box(i) for i in found["way"]}
+        expected.update({("relation", i): relation_box(i) for i in found["relation"]})
+        return stored, expected
+
+    def assert_boxes_right(self, step):
+        stored, expected = self.stored_and_expected_boxes()
+        self.assertEqual(stored, expected, step)
+
+    def test_boxes_follow_edits(self):
+        a, b, c, d, e, f = [self.create_node(0.1 * i, 0.01 * i) for i in range(1, 7)]
+        way1 = self.create_way([a, b])
+        way2 = self.create_way([c, d])
+        inner = self.create_relation([("way", way1, ""), ("node", e, "")])
+        middle = self.create_relation([("relation", inner, ""), ("way", way2, "")])
+        outer = self.create_relation([("relation", middle, "")])
+        self.assert_boxes_right("created")
+        stored = self.stored_and_expected_boxes()[0]
+        self.assertEqual(stored[("way", way1.objId)], (0.1, 0.01, 0.2, 0.02))
+        self.assertEqual(stored[("relation", outer.objId)], (0.1, 0.01, 0.5, 0.05))
+
+        # A node of a way: the way, and every relation above it, however deep
+        a = self.modify_node(a, -3.0)
+        self.assert_boxes_right("node of a way moved")
+        self.assertEqual(self.stored_and_expected_boxes()[0][("relation", outer.objId)][0], -3.0)
+        # A node that is a relation's own member
+        e = self.modify_node(e, 7.0)
+        self.assert_boxes_right("node member of a relation moved")
+        # Moving back in shrinks them again
+        a = self.modify_node(a, 0.1)
+        e = self.modify_node(e, 0.5)
+        self.assert_boxes_right("nodes moved back")
+        # A way given other nodes
+        way2 = self.modify_way(way2, [c, f])
+        self.assert_boxes_right("way given another node")
+        # Relations given other members
+        inner = self.modify_relation(inner, [("way", way1, "")])
+        self.assert_boxes_right("relation lost a node member")
+        middle = self.modify_relation(middle, [("relation", inner, "")])
+        self.assert_boxes_right("relation lost a way member")
+        middle = self.modify_relation(middle, [("relation", inner, ""), ("node", f, "")])
+        self.assert_boxes_right("relation gained a node member")
+        # Several kinds of object in one upload
+        b2 = pgmap.OsmNode(b)
+        b2.lon = 9.0
+        way1b = pgmap.OsmWay(way1)
+        way1b.refs.clear()
+        for node in (a, b, c):
+            way1b.refs.append(node.objId)
+        self.upload("modify", [b2, way1b])
+        self.assert_boxes_right("node and way modified together")
+        # A relation with nothing in it that has a position
+        empty = self.create_relation([])
+        self.assert_boxes_right("empty relation")
+        self.assertIsNone(self.stored_and_expected_boxes()[0][("relation", empty.objId)])
+        # Deleting from the top down
+        self.upload("delete", [outer])
+        self.assert_boxes_right("outer relation deleted")
+        self.upload("delete", [middle])
+        self.upload("delete", [inner])
+        self.assert_boxes_right("relations deleted")
+
+    def import_to_static(self, data):
+        import os, tempfile
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "static.o5m")
+        try:
+            with open(path, "wb") as handle:
+                data.StreamTo(pgmap.PyO5mEncode(handle))
+            error = pgmap.PgMapError()
+            admin = self.map.GetAdmin("")
+            try:
+                self.assertTrue(admin.ImportMapFile(0, path, error), error.errStr)
+                admin.Commit()
+            finally:
+                del admin
+        finally:
+            os.remove(path)
+            os.rmdir(folder)
+
+    def static_objects(self):
+        """A way and two nested relations to import as the unchanging base of the map."""
+        data = pgmap.OsmData()
+        nodes = []
+        for index in range(4):
+            node = pgmap.OsmNode()
+            node.objId = 1001 + index
+            node.metaData.version = 1
+            node.lon, node.lat = 0.1 * (index + 1), 0.25
+            data.nodes.append(node)
+            nodes.append(node)
+        for way_id, refs in ((2001, (1001, 1002)), (2002, (1003, 1004))):
+            way = pgmap.OsmWay()
+            way.objId = way_id
+            way.metaData.version = 1
+            for ref in refs:
+                way.refs.append(ref)
+            data.ways.append(way)
+        relation = pgmap.OsmRelation()
+        relation.objId = 3001
+        relation.metaData.version = 1
+        relation.AddMember("way", 2001, "")
+        relation.AddMember("way", 2002, "")
+        data.relations.append(relation)
+        above = pgmap.OsmRelation()
+        above.objId = 3002
+        above.metaData.version = 1
+        above.AddMember("relation", 3001, "")
+        data.relations.append(above)
+        return data, nodes
+
+    def update_all_boxes(self):
+        error = pgmap.PgMapError()
+        admin = self.map.GetAdmin("")
+        try:
+            self.assertTrue(admin.UpdateBboxes(0, True, True, error), error.errStr)
+            admin.Commit()
+        finally:
+            del admin
+
+    def test_boxes_follow_edits_to_imported_objects(self):
+        data, nodes = self.static_objects()
+        self.import_to_static(data)
+        self.update_all_boxes()
+        self.assert_boxes_right("imported, boxes worked out")
+        # Moving a node of an imported way: the way and the relations above it
+        # are in the base tables, and have to be taken over to be changed
+        moved = self.modify_node(nodes[0], -2.0)
+        self.assert_boxes_right("imported node moved")
+        stored = self.stored_and_expected_boxes()[0]
+        self.assertEqual(stored[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
+        self.assertEqual(stored[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(stored[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
+        self.modify_node(moved, 0.1)
+        self.assert_boxes_right("moved back")
+        # The other way, never touched, kept its box in the base tables throughout
+        self.assertEqual(self.stored_and_expected_boxes()[0][("way", 2002)], (0.3, 0.25, 0.4, 0.25))
+
+    def test_relation_box_when_member_boxes_were_never_worked_out(self):
+        data, nodes = self.static_objects()
+        # A relation holding one of the nodes itself, as well as the nested relation
+        direct = pgmap.OsmRelation()
+        direct.objId = 3003
+        direct.metaData.version = 1
+        direct.AddMember("relation", 3001, "")
+        direct.AddMember("node", 1004, "")
+        data.relations.append(direct)
+        self.import_to_static(data)
+        # As a map is whose base tables never had "Update way/relation bboxes" run
+        boxes = lambda: self.stored_and_expected_boxes()[0]
+        self.assertEqual(set(boxes().values()), {None})
+
+        # A node of way 2001 moves. Relation 3001 holds that way and way 2002,
+        # which has no stored box: its extent is taken from its nodes, so the
+        # relation's box is whole, not just the part that was edited
+        moved = self.modify_node(nodes[0], -2.0)
+        self.assertEqual(boxes()[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
+        self.assertEqual(boxes()[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(boxes()[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(boxes()[("relation", 3003)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertIsNone(boxes()[("way", 2002)])
+
+    def test_relation_box_is_unknown_when_a_member_relation_has_none(self):
+        data, nodes = self.static_objects()
+        direct = pgmap.OsmRelation()
+        direct.objId = 3003
+        direct.metaData.version = 1
+        direct.AddMember("relation", 3001, "")
+        direct.AddMember("node", 1004, "")
+        data.relations.append(direct)
+        self.import_to_static(data)
+        boxes = lambda: self.stored_and_expected_boxes()[0]
+
+        # Node 1004 is a member of relation 3003 and of way 2002. Relation 3003
+        # also holds relation 3001, whose way 2001 is not touched by this edit...
+        self.modify_node(nodes[3], 0.9)
+        self.assertEqual(boxes()[("way", 2002)], (0.3, 0.25, 0.9, 0.25))
+        # ...3001 is above way 2002, so it is worked out, and then 3003 has all it needs
+        self.assertEqual(boxes()[("relation", 3001)], (0.1, 0.25, 0.9, 0.25))
+        self.assertEqual(boxes()[("relation", 3003)], (0.1, 0.25, 0.9, 0.25))
+
+        # A relation whose member relation has no box, and members that might
+        # have an extent, is not given a partial box: its box is not known
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL WHERE id=3001").format(
+                sql.Identifier(self.prefixes[1] + "liverelations")))
+        relation = pgmap.OsmRelation()
+        relation.objId = -1
+        relation.AddMember("relation", 3001, "")
+        relation.AddMember("node", 1001, "")
+        created = self.upload("create", [relation])[2][0]
+        self.assertIsNone(boxes()[("relation", created.objId)])
+        # and the edit's record says so, which a search by area takes as anywhere
+        self.assertIsNone(self.published_boxes("updated_bbox", "updated"))
+        latest = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1")).find("editactivity").get("id")
+        self.assertIn(int(latest), self.filtered_ids("100,50,101,51"))
+        # A member relation with nothing in it has no extent to wait for
+        empty = self.create_relation([])
+        holder = pgmap.OsmRelation()
+        holder.objId = -1
+        holder.AddMember("relation", empty.objId, "")
+        holder.AddMember("node", 1001, "")
+        held = self.upload("create", [holder])[2][0]
+        self.assertEqual(boxes()[("relation", held.objId)], (0.1, 0.25, 0.1, 0.25))
+        # Once every box is worked out, all are right
+        self.update_all_boxes()
+        self.assert_boxes_right("after working out every box")
+
+    def test_upload_fails_if_parent_boxes_cannot_be_updated(self):
+        from unittest.mock import patch
+        import changeset.views
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        way = self.create_way([a, b])
+        failure = pgmap.PgMapError()
+        failure.errStr = "could not copy the parents"
+        moved = pgmap.OsmNode(a)
+        moved.lon = 0.15
+        moved.metaData.changeset = self.changeset_id
+        data = pgmap.OsmData()
+        data.nodes.append(moved)
+        t = self.map.GetTransaction("EXCLUSIVE")
+        try:
+            with patch.object(changeset.views, "track_bboxes_step2", return_value=(False, failure)):
+                result = upload_block("modify", data, self.changeset_id, t, ET.Element("diffResult"), 1,
+                                      "extract-tester", int(time.time()), *[pgmap.mapi64i64() for _ in range(3)])
+        finally:
+            t.Abort()
+        self.assertEqual(result.status_code, 500)
+        self.assertIn(b"could not copy the parents", result.content)
+        # Nothing of the failed upload was kept
+        self.assertEqual(float(self.contents()[("node", a.objId)][0]["lon"]), 0.1)
+        self.assert_boxes_right("after a failed upload")
+
     # Schema version 15: member tables of live versions only, with a key
 
     def set_schema(self, version):
@@ -2771,15 +3039,17 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
         self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
 
-        # On a map that does not store boxes a relation's reach is not known,
-        # so an edit to one does not say where it is, and is always sent
+        # On a map that does not store boxes for its ways, a relation's box is
+        # worked out from the nodes of its member ways, so an edit to one still
+        # says where it is and is only sent to the areas it concerns
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
                 sql.Identifier(self.prefixes[1] + "liveways")))
         other = self.create_relation([("way", way, "")])
         createOther = latest()
         self.modify_relation(other, [("way", way, "x")])
-        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA, createOther, latest()])
+        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
+        self.assertEqual(self.filtered_ids(inside)[-2:], [createOther, latest()])
 
     def test_relation_edit_is_found_through_a_way_sharing_its_member_node(self):
         # A way from far away into an area, and a relation holding only the
