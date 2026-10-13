@@ -512,33 +512,37 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 		#Check that deleting objects doesn't break anything
 
-		parentRelationsForRelations = pgmap.OsmData()
-		t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
-		parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
-		referencedChildren = {}
-		for parentId in parentRelationsForRelationsIndex:
-			if parentId in relationObjsById.keys():
-				continue #This object is being deleted anyway
-			parent = parentRelationsForRelationsIndex[parentId]
-			for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
-				if refTypeStr != "relation":
-					continue
-				if refId in relationObjsById.keys():
-					referencedChildren[refId] = parent.objId
-		if len(referencedChildren) > 0:
+		#A relation kept because another still uses it goes on using its own
+		#members, so with if-unused the check is repeated until nothing more
+		#has to be kept
+		while True:
+			parentRelationsForRelations = pgmap.OsmData()
+			t.GetRelationsForObjs("relation", list(relationObjsById.keys()), parentRelationsForRelations)
+			parentRelationsForRelationsIndex = GetOsmDataIndex(parentRelationsForRelations)["relation"]
+			referencedChildren = {}
+			for parentId in parentRelationsForRelationsIndex:
+				if parentId in relationObjsById.keys():
+					continue #This object is being deleted anyway
+				parent = parentRelationsForRelationsIndex[parentId]
+				for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
+					if refTypeStr != "relation":
+						continue
+					if refId in relationObjsById.keys():
+						referencedChildren[refId] = parent.objId
+			if len(referencedChildren) == 0:
+				break
 			if not ifunused:
 				k, v = GetAnyKeyValue(referencedChildren)
 				err = "The relation #{} is used in relation #{}.".format(k, v)
 				return HttpResponse(err, status=412, content_type="text/plain")
-			else:
-				filtered = pgmap.OsmData()
-				for i in range(len(block.relations)):
-					relation = block.relations[i]
-					if relation.objId in referencedChildren:
-						continue
-					filtered.relations.append(relation)
-				block.relations = filtered.relations
-				relationsObjsById = GetOsmDataIndex(block)['relation']
+			filtered = pgmap.OsmData()
+			for i in range(len(block.relations)):
+				relation = block.relations[i]
+				if relation.objId in referencedChildren:
+					continue
+				filtered.relations.append(relation)
+			block.relations = filtered.relations
+			relationObjsById = GetOsmDataIndex(block)['relation']
 
 		parentRelationsForWays = pgmap.OsmData()
 		t.GetRelationsForObjs("way", list(wayObjsById.keys()), parentRelationsForWays)
@@ -599,6 +603,8 @@ def upload_block(action, block, changesetId, t, responseRoot,
 		parentRelationsForNodesIndex = GetOsmDataIndex(parentRelationsForNodes)["relation"]
 		referencedChildren = {}
 		for parentId in parentRelationsForNodesIndex:
+			if parentId in relationObjsById.keys():
+				continue #This object is being deleted anyway
 			parent = parentRelationsForNodesIndex[parentId]
 			for refTypeStr, refId in ((member.TypeName(), member.ref) for member in parent.members):
 				if refTypeStr != "node":
@@ -675,7 +681,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 	t.GetObjectsById("node", list(wayNodeIds), wayNodes)
 	outerBbox = calc_bbox_of_nodes(wayNodes.nodes, outerBbox)
 
-	if action == "modifiy":
+	if action == "modify":
 		originalObjIndex = GetOsmDataIndex(originalObjData)
 		originalRelationIndex = originalObjIndex["relation"]
 
@@ -684,7 +690,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 			assert relation.objId in originalRelationIndex
 			originalRel = originalRelationIndex[relation.objId]
 
-			tagsChanged = relation.tags != originalRel.tags
+			tagsChanged = dict(relation.tags) != dict(originalRel.tags)
 
 			mchNodes, mchWays, mchRelations = get_relation_members(relation)
 			ochNodes, ochWays, ochRelations = get_relation_members(originalRel)

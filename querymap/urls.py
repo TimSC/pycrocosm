@@ -5,5 +5,4 @@ from . import views
 app_name = 'querymap'
 urlpatterns = [
 	url(r'^map$', views.index, name='querymap'),
-	url(r'^historic_map$', views.historic_map, name='historic_map'),
 ]

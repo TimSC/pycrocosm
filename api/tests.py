@@ -337,3 +337,20 @@ class BehindHttpsProxyTestCase(TestCase):
 			self.assertIsNone(settings.SECURE_PROXY_SSL_HEADER)
 		if not os.environ.get("DJANGO_CSRF_TRUSTED_ORIGINS"):
 			self.assertEqual(settings.CSRF_TRUSTED_ORIGINS, [])
+
+class MapCallArgumentsTestCase(TestCase):
+	"""What the map call makes of its arguments, before it reads the map."""
+
+	def test_malformed_bbox_is_refused(self):
+		for bad in ("a,b,c,d", "1,2,3", "1,2,3,4,5", "", "1,,3,4", "1;2;3;4", "nan,0,1,1", "0,0,inf,1", "0x1,0,1,1"):
+			response = Client().get("/api/0.6/map?bbox=" + bad)
+			self.assertEqual(response.status_code, 400, bad)
+			self.assertIn(b"bbox", response.content.lower())
+		self.assertEqual(Client().get("/api/0.6/map").status_code, 400)
+		# Out of range, or the wrong way round, is refused as before
+		for bad in ("-181,0,1,1", "0,0,1,91", "2,0,1,1"):
+			self.assertEqual(Client().get("/api/0.6/map?bbox=" + bad).status_code, 400, bad)
+
+	def test_historic_map_has_gone(self):
+		response = Client().get("/api/0.6/historic_map?bbox=0,0,1,1&datetime=2020-01-01T00:00:00Z")
+		self.assertEqual(response.status_code, 404)

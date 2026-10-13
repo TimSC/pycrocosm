@@ -1,7 +1,6 @@
 from django.shortcuts import render
 from django.http import HttpResponse, HttpResponseBadRequest, StreamingHttpResponse
 from django.conf import settings
-from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
@@ -11,6 +10,7 @@ from pycrocosm import common
 from pycrocosm.mapdb import get_pgmap
 import pgmap
 import io
+import math
 import random
 import time
 import zlib
@@ -120,9 +120,12 @@ def index(request):
 	if file_format is not None and file_format not in MAP_FORMATS:
 		return HttpResponseBadRequest("format must be one of: " + ", ".join(sorted(MAP_FORMATS)), content_type="text/plain")
 
-	bbox = list(map(float, bbox.split(",")))
-	if len(bbox) != 4:
-		return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
+	try:
+		bbox = [float(value) for value in bbox.split(",")]
+	except ValueError:
+		bbox = []
+	if len(bbox) != 4 or not all(math.isfinite(value) for value in bbox):
+		return HttpResponseBadRequest("Invalid bbox: give four numbers as left,bottom,right,top", content_type="text/plain")
 
 	#left,bottom,right,top
 	dLon = bbox[2] - bbox[0]
@@ -162,41 +165,3 @@ def index(request):
 
 # The view has a format argument of its own
 index.cls.content_negotiation_class = IgnoreFormatArgument
-
-@gzip_page #Control gzip on a per-page basis because of BREACH vun. This page contains no secrets.
-@csrf_exempt #Contain no secrets to avoid BREACH vun (and this page is never POSTed anyway).
-@api_view(['GET'])
-def historic_map(request):
-	bbox = request.GET.get('bbox', None)
-	if bbox is None:
-		return HttpResponseBadRequest("bbox must be specified as an argument", content_type="text/plain")
-
-	dt = request.GET.get('datetime', None)
-	print (dt)
-	if dt is None:
-		return HttpResponseBadRequest("datetime must be specified as an argument", content_type="text/plain")
-	dt2 = int(round(common.get_utc_posix_timestamp(parse_datetime(dt))))
-
-	bbox = list(map(float, bbox.split(",")))
-	if len(bbox) != 4:
-		return HttpResponseBadRequest("Invalid bbox", content_type="text/plain")
-
-	#left,bottom,right,top
-	dLon = bbox[2] - bbox[0]
-	dLat = bbox[3] - bbox[1]
-	area = dLon * dLat
-	if area > settings.AREA_MAXIMUM:
-		err = "The maximum bbox size is {}, and your request was too large. Either request a smaller area, or use planet.osm".format(settings.AREA_MAXIMUM)
-		response = HttpResponseBadRequest(err, content_type="text/plain")
-		response["Error"] = err
-		return response
-
-	t = get_pgmap().GetTransaction("ACCESS SHARE")
-
-	sio = io.BytesIO()
-	enc = common.make_osm_encoder(request, sio)
-	ret = t.GetHistoricMapQuery(bbox, dt2, enc)
-
-	t.Commit()
-
-	return HttpResponse(sio.getvalue(), content_type=common.response_content_type(request))

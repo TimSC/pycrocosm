@@ -2930,6 +2930,114 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(float(self.contents()[("node", a.objId)][0]["lon"]), 0.1)
         self.assert_boxes_right("after a failed upload")
 
+    # Checks made by an upload
+
+    def upload_result(self, action, objects, ifunused=False):
+        """As upload(), giving back what upload_block answers, committed if it succeeded."""
+        data = pgmap.OsmData()
+        for obj in objects:
+            obj.metaData.changeset = self.changeset_id
+            (data.nodes if isinstance(obj, pgmap.OsmNode) else
+             data.ways if isinstance(obj, pgmap.OsmWay) else data.relations).append(obj)
+        t = self.map.GetTransaction("EXCLUSIVE")
+        try:
+            result = upload_block(action, data, self.changeset_id, t, ET.Element("diffResult"), 1,
+                                  "extract-tester", int(time.time()),
+                                  *[pgmap.mapi64i64() for _ in range(3)], ifunused=ifunused)
+            if result is True:
+                t.Commit()
+            else:
+                t.Abort()
+        except BaseException:
+            t.Abort()
+            raise
+        return result
+
+    def test_relation_and_its_member_node_deleted_together(self):
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        relation = self.create_relation([("node", a, ""), ("node", b, "")])
+        other = self.create_relation([("node", b, "")])
+        # The node is used only by a relation that is going in the same block
+        self.assertIs(self.upload_result("delete", [pgmap.OsmNode(a), pgmap.OsmRelation(relation)]), True)
+        found = self.contents()
+        self.assertNotIn(("node", a.objId), found)
+        self.assertNotIn(("relation", relation.objId), found)
+        # A node another relation still uses is refused as before
+        result = self.upload_result("delete", [pgmap.OsmNode(b)])
+        self.assertEqual(result.status_code, 412)
+        self.assertIn("still used by relation #{}".format(other.objId).encode(), result.content)
+        self.assertIn(("node", b.objId), self.contents())
+
+    def test_if_unused_keeps_what_a_kept_relation_uses(self):
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        way = self.create_way([a, b])
+        low = self.create_relation([("way", way, "")])
+        middle = self.create_relation([("relation", low, "")])
+        top = self.create_relation([("relation", middle, "")])
+        # Asked to delete the way and the two lower relations, if unused. The
+        # top relation is not being deleted and uses the middle one, so that
+        # is kept; it uses the low one, which is kept; and that uses the way.
+        result = self.upload_result("delete", [pgmap.OsmWay(way), pgmap.OsmRelation(low), pgmap.OsmRelation(middle)],
+                                    ifunused=True)
+        self.assertIs(result, True)
+        def versions():
+            # Asked for by ID: a map query does not follow relations of relations
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                data = pgmap.OsmData()
+                t.GetObjectsById("way", [way.objId], data)
+                t.GetObjectsById("relation", [low.objId, middle.objId, top.objId], data)
+                found = {("way", data.ways[i].objId): data.ways[i].metaData.version for i in range(data.ways.size())}
+                found.update({("relation", data.relations[i].objId): data.relations[i].metaData.version
+                              for i in range(data.relations.size())})
+                return found
+            finally:
+                t.Abort()
+        self.assertEqual(versions(), {("way", way.objId): 1, ("relation", low.objId): 1,
+                                      ("relation", middle.objId): 1, ("relation", top.objId): 1})
+        # Nothing was left pointing at something that has gone
+        self.assertEqual(self.member_rows("relation_mems_w"), [(low.objId, 1, 0, way.objId)])
+        # With the top one deleted too, all of them go
+        result = self.upload_result("delete", [pgmap.OsmRelation(top), pgmap.OsmRelation(middle),
+                                               pgmap.OsmRelation(low), pgmap.OsmWay(way)], ifunused=True)
+        self.assertIs(result, True)
+        self.assertEqual(versions(), {})
+
+    def test_changeset_box_grows_when_a_relation_is_modified(self):
+        def box(changeset_id):
+            with self.db.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM {} WHERE id=%s").format(
+                    sql.Identifier(self.prefixes[1] + "changesets")), [changeset_id])
+                return cursor.fetchone()
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.4)
+        c = self.create_node(7.0, 8.0)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("node", a, "")])
+        # A second changeset, so that only what the modification adds is in its box
+        first = self.changeset_id
+        error = pgmap.PgMapError()
+        t = self.map.GetTransaction("EXCLUSIVE")
+        changeset = pgmap.PgChangeset()
+        changeset.uid = 1
+        changeset.username = "extract-tester"
+        changeset.is_open = True
+        changeset.open_timestamp = int(time.time())
+        self.changeset_id = t.CreateChangeset(changeset, error)
+        t.Commit()
+        try:
+            self.assertEqual(box(self.changeset_id), (None, None, None, None))
+            # Members added and removed: the way coming in, the node going out
+            relation = self.modify_relation(relation, [("way", way, "")])
+            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 0.3, 0.4))
+            # A member far away stretches it
+            relation = self.modify_relation(relation, [("way", way, ""), ("node", c, "")])
+            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 7.0, 8.0))
+        finally:
+            self.changeset_id = first
+
     # The indices of the map tables have a version of their own
 
     def test_index_version_is_recorded_by_the_index_step(self):
