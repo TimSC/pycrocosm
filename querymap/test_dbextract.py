@@ -1229,7 +1229,8 @@ class DbExtractTestCase(SimpleTestCase):
 
         response, notes = call(model_admin.update_view, first, updater)
         self.assertEqual((response.status_code, response["Location"]), (302, listing))
-        self.assertEqual(notes, ["Database extract {}: updated.".format(first)])
+        self.assertEqual(len(notes), 1)
+        self.assertRegex(notes[0], r"^Database extract {}: updated( \(\d+ activity rows?\))?\.$".format(first))
         self.assert_current(first)
         self.assertNotEqual(self.contents(first), stale)
         self.assertEqual(self.contents(second), kept)
@@ -1899,7 +1900,7 @@ class DbExtractTestCase(SimpleTestCase):
         added = self.create_node(0.5)
         key = ("node", added.objId)
         lines = self.update_command()
-        self.assertRegex(lines[0], r"^Extract {} \(automatic\): updated in \d+\.\ds$".format(automatic))
+        self.assertRegex(lines[0], r"^Extract {} \(automatic\): updated( \(\d+ activity rows?\))? in \d+\.\ds$".format(automatic))
         self.assertRegex(lines[1], r"^Extract {}: updated from {} \(1 activity row\) in \d+\.\ds$".format(
             remote, re.escape(self.REMOTE)))
         self.assertEqual(lines[2], "2 updated, 0 already up to date, 0 failed")
@@ -1913,7 +1914,7 @@ class DbExtractTestCase(SimpleTestCase):
 
         # Chosen by ID, an extract is updated whatever its setting
         lines = self.update_command("--id", str(manual))
-        self.assertRegex(lines[0], r"^Extract {} \(manual\): updated in".format(manual))
+        self.assertRegex(lines[0], r"^Extract {} \(manual\): updated( \(\d+ activity rows?\))? in".format(manual))
         self.assertEqual(lines[1], "1 updated, 0 already up to date, 0 failed")
         self.assertIn(key, self.contents(manual))
 
@@ -2590,6 +2591,77 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(self.prefixes[1] + "livenodes")))
             self.assertEqual(cursor.fetchone()[0], 0)
 
+    # An extract of this map updated from the edits recorded, not taken afresh
+
+    def update_as_the_server_does(self, extract_id):
+        from replicate import extracts
+        with patch.object(extracts, "get_pgmap", return_value=self.map):
+            return extracts.update_db_extract(extract_id)
+
+    def varied_edits(self, inside):
+        nodes = [self.create_node(0.01 * i) for i in range(1, 6)] + [self.create_node(3), self.create_node(4)]
+        way = self.create_way(nodes[:3])
+        outer = self.create_way(nodes[4:])
+        self.create_relation([("node", nodes[6], ""), ("way", outer, "")])
+        self.create_relation([("way", way, "outer"), ("node", inside, "")])
+        nodes[1] = self.modify_node(nodes[1], 5)
+        way = self.modify_way(way, [nodes[0], nodes[3], nodes[5]])
+        nodes[5] = self.modify_node(nodes[5], 0.7)
+        self.upload("delete", [nodes[2]])
+        return 12
+
+    def test_local_extract_is_updated_from_the_recorded_edits(self):
+        inside = self.create_node(0)
+        extract_id = self.save()
+        self.varied_edits(inside)
+        outcome = self.update_as_the_server_does(extract_id)
+        self.assertRegex(outcome, r"^updated \(\d+ activity rows\)$")
+        self.assert_current(extract_id)
+        self.assertEqual(self.compare(extract_id)[1], [])
+        self.assertEqual(self.update_as_the_server_does(extract_id), "already up to date")
+        # One more edit, far away: nothing to apply, and it has still caught up
+        self.create_node(60)
+        from django.conf import settings
+        filtering = getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True)
+        self.assertEqual(self.update_as_the_server_does(extract_id),
+                         "updated (0 activity rows)" if filtering else "updated (1 activity row)")
+        self.assert_current(extract_id)
+        # An edit moving a node out of the rectangle
+        self.modify_node(inside, 9)
+        self.assertEqual(self.update_as_the_server_does(extract_id), "updated (1 activity row)")
+        self.assert_current(extract_id)
+
+    def test_local_extract_is_taken_afresh_when_records_will_not_do(self):
+        from django.test import override_settings
+        inside = self.create_node(0)
+        table = sql.Identifier(self.prefixes[1] + "extracts")
+        # An extract that selects by stored boxes cannot be kept up from the records
+        boxed = self.save("boxed")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET use_bbox_in_query=true WHERE id=%s").format(table), [boxed])
+        plain = self.save("plain")
+        legacy = self.save("legacy")
+        off = self.save("off")
+        self.varied_edits(inside)
+        self.assertEqual(self.update_as_the_server_does(boxed), "updated")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT use_bbox_in_query FROM {} WHERE id=%s").format(table), [boxed])
+            self.assertEqual(cursor.fetchone(), (True,))
+        self.assertEqual(self.checkpoint(boxed), self.checkpoint(self.save("now")))
+        # With the setting off, every extract is taken afresh
+        with override_settings(EXTRACT_UPDATE_FROM_RECORDS=False):
+            self.assertEqual(self.update_as_the_server_does(off), "updated")
+        self.assert_current(off)
+        # Records from before they held all an update needs: afresh, saying why
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET related_parents=NULL").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+        outcome = self.update_as_the_server_does(legacy)
+        self.assertRegex(outcome, r"^updated afresh from the map \(Activity row \d+ was recorded before")
+        self.assert_current(legacy)
+        # and all of them hold the same
+        self.assertEqual(self.contents(off), self.contents(legacy))
+
     # The stored boxes of ways and relations, kept up as edits arrive
 
     def stored_and_expected_boxes(self):
@@ -2857,6 +2929,65 @@ class DbExtractTestCase(SimpleTestCase):
         # Nothing of the failed upload was kept
         self.assertEqual(float(self.contents()[("node", a.objId)][0]["lon"]), 0.1)
         self.assert_boxes_right("after a failed upload")
+
+    # The indices of the map tables have a version of their own
+
+    def test_index_version_is_recorded_by_the_index_step(self):
+        def versions():
+            found = []
+            with self.db.cursor() as cursor:
+                for prefix in self.prefixes:
+                    cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='index_version'").format(
+                        sql.Identifier(prefix + "meta")))
+                    row = cursor.fetchone()
+                    found.append(None if row is None else row[0])
+            return found
+        def admin_call(work):
+            admin = self.map.GetAdmin()
+            try:
+                return work(admin)
+            finally:
+                del admin
+        latest = admin_call(lambda admin: admin.GetLatestIndexVersion())
+        self.assertGreaterEqual(latest, 1)
+        # Tables that have only been created: nothing is recorded, and the tool says what to do
+        self.assertEqual(versions(), [None, None, None])
+        notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
+        self.assertEqual(len(notes), 3)
+        for prefix, note in zip(self.prefixes, notes):
+            self.assertEqual(note, 'The indices of the {} tables have no recorded version (the current version '
+                             'is {}): run "Create indicies".'.format(prefix, latest))
+        # The schema version is a different thing, and says nothing about them
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
+                sql.Identifier(self.prefixes[1] + "meta")))
+            self.assertEqual(cursor.fetchone(), ("15",))
+
+        a = self.create_node(0.1)
+        error = pgmap.PgMapError()
+        self.assertTrue(admin_call(lambda admin: admin.CreateMapIndices(0, error)), error.errStr)
+        self.assertEqual(versions(), [str(latest)] * 3)
+        self.assertEqual(admin_call(lambda admin: admin.GetIndexVersionNotes()), "")
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s", (self.prefixes[1] + "livenodes",))
+            built = cursor.fetchone()[0]
+            self.assertGreaterEqual(built, 3)
+            # An older version on record is reported, and running the step again
+            # checks every index and records the current version
+            cursor.execute(sql.SQL("UPDATE {} SET value='0' WHERE key='index_version'").format(
+                sql.Identifier(self.prefixes[0] + "meta")))
+            cursor.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier(self.prefixes[1] + "livenodes_ts")))
+        notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
+        self.assertEqual(len(notes), 1)
+        self.assertIn(self.prefixes[0], notes[0])
+        self.assertTrue(admin_call(lambda admin: admin.CreateMapIndices(0, error)), error.errStr)
+        self.assertEqual(versions(), [str(latest)] * 3)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s", (self.prefixes[1] + "livenodes",))
+            self.assertEqual(cursor.fetchone()[0], built)
+        # The map goes on working with its indices in place
+        self.modify_node(a, 0.2)
+        self.assertIn(("node", a.objId), self.contents())
 
     # Schema version 15: member tables of live versions only, with a key
 

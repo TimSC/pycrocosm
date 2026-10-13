@@ -19,6 +19,9 @@ class Known:
 KNOWN = {
 	"schema_version": Known("The layout of the map tables. Only pgmap's admin tool changes it, "
 		"when it upgrades or downgrades them.", protected=True),
+	"index_version": Known("The version of the indices on the map tables, recorded by \"Create indicies\" "
+		"in pgmap's admin tool when it has built them. The admin tool says when they are behind and "
+		"that step needs running again.", protected=True),
 	"useBboxInQuery": Known("1: find ways and relations in an area by the bounding box stored with "
 		"each, which is quicker and also finds those that cross the area without a node in it. "
 		"Every way and relation must have its box stored first, with \"Update way/relation bboxes\" "

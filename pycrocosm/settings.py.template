@@ -305,6 +305,10 @@ EDIT_ACTIVITY_MAXIMUM_RECORDS = 100
 # Whether an extract updated from another server's web API asks only for the
 # edits that concern its own rectangle. False asks for every edit.
 EXTRACT_UPDATE_USE_BBOX = True
+# Whether an extract of this server's own map is brought up to date from the
+# edits recorded since it was last updated. False takes the whole extract from
+# the map afresh each time, which is slow for a large one.
+EXTRACT_UPDATE_FROM_RECORDS = True
 # How many of the latest records replication/edit_activities sends when a
 # request does not say which it wants
 EDIT_ACTIVITY_DEFAULT_RECORDS = 20

@@ -86,9 +86,18 @@ def update_db_extract(extract_id, fetch=None):
 	named by its update URL, without reading this map. fetch, for tests,
 	stands in for reading a web address.
 
+	An extract of this map is updated from the edits recorded since its
+	checkpoint, which takes time in proportion to those edits. Taking the
+	whole extract from the map afresh, which takes time in proportion to its
+	size, is kept for three cases: an extract that selects ways and relations
+	by their stored bounding boxes, which the recorded edits cannot keep up;
+	edits recorded before they held all that an update needs; and when
+	EXTRACT_UPDATE_FROM_RECORDS is set to False.
+
 	Returns a short description of what was done.
 	"""
-	from .remoteupdate import update_extract_from_remote
+	from django.conf import settings
+	from .remoteupdate import RemoteUpdateError, update_extract_from_records, update_extract_from_remote
 	extract = get_db_extract(extract_id)
 	if extract is None:
 		raise RuntimeError("Extract not found")
@@ -100,8 +109,16 @@ def update_db_extract(extract_id, fetch=None):
 			"" if applied == 1 else "s")
 	if extract["up_to_date"]:
 		return "already up to date"
+	reason = ""
+	if extract["query_mode"] == "membership" and getattr(settings, "EXTRACT_UPDATE_FROM_RECORDS", True):
+		try:
+			applied = update_extract_from_records(get_pgmap(), extract)
+			return "updated ({} activity row{})".format(applied, "" if applied == 1 else "s")
+		except RemoteUpdateError as err:
+			# Whatever was applied before the failure is replaced along with the rest
+			reason = " afresh from the map ({})".format(err)
 	change_db_extract("UpdateExtract", extract_id)
-	return "updated"
+	return "updated" + reason
 
 def change_db_extract(method, extract_id):
 	"""Run PgTransaction.UpdateExtract or DeleteExtract on one extract and commit."""

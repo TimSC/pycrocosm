@@ -31,8 +31,12 @@ from django.conf import settings
 import pgmap
 from pycrocosm import common
 
-# Activity rows asked for at a time
-ACTIVITY_WINDOW = 50
+# The range of activity row IDs asked about at a time. With the filter by
+# area only some of them come back, and applying them costs what they touch,
+# not what the extract holds, so the range can be wide.
+ACTIVITY_WINDOW = 2000
+# Rows read from this map's own table in one query
+LOCAL_ROWS_PER_QUERY = 100
 
 class RemoteUpdateError(Exception):
 	"""The extract could not be updated from the other server."""
@@ -93,6 +97,54 @@ class RemoteServer:
 			if following <= first_id:
 				raise RemoteUpdateError("{}replication/edit_activities cut its answer short without "
 					"saying where to continue".format(self.base))
+			first_id = following
+		return rows
+
+class LocalServer:
+	"""This map's own edit activity, read straight from its table.
+
+	It answers what RemoteServer asks another server over the web, with the
+	same records in the same form, so an extract of this map is brought up to
+	date by the edits that concern it, not by being taken from the map afresh.
+	"""
+	def __init__(self, pgmap_object):
+		self.map = pgmap_object
+
+	def latest_edit_ids(self):
+		t = self.map.GetTransaction("ACCESS SHARE")
+		try:
+			latest = t.GetLatestEditIds()
+			return int(latest[0]), int(latest[1])
+		finally:
+			common.abort_transaction(t)
+
+	def activities(self, first_id, last_id, bbox=None):
+		from . import views # Which writes the records; imported late, as it imports this module's users
+		rows = []
+		area = pgmap.vectord([float(v) for v in bbox] if bbox else [])
+		while first_id <= last_id:
+			t = self.map.GetTransaction("ACCESS SHARE")
+			try:
+				results = pgmap.vectorsharedptreditactivity()
+				error = pgmap.PgMapError()
+				t.QueryEditActivityByIds(first_id, last_id, 0, results, error, LOCAL_ROWS_PER_QUERY + 1, area, False)
+				if error.errStr:
+					raise RemoteUpdateError("The edit activity could not be read: " + error.errStr)
+				sent = min(results.size(), LOCAL_ROWS_PER_QUERY)
+				activities = [results[i] for i in range(sent)]
+				lists = [views.activity_object_lists(activity) for activity in activities]
+				fragments = views.fetch_activity_objects(lists, t)
+				document = ["<editactivities>"]
+				for activity, recordLists in zip(activities, lists):
+					document.extend(views.edit_activity_xml(activity, recordLists, fragments))
+				document.append("</editactivities>")
+				more = results.size() > LOCAL_ROWS_PER_QUERY
+				following = activities[-1].objId + 1 if activities else last_id + 1
+			finally:
+				common.abort_transaction(t)
+			rows.extend(ET.fromstring("".join(document)).findall("editactivity"))
+			if not more:
+				break
 			first_id = following
 		return rows
 
@@ -214,6 +266,22 @@ class RemoteExtractUpdate:
 			# same records would be asked about on every update.
 			self.patching(lambda patch: patch.SetCheckpoint(latest_activity, latest_atomic))
 		return applied
+
+def update_extract_from_records(pgmap_object, extract):
+	"""Update one extract of this map from the map's own edit activity.
+
+	The work is in proportion to the edits that concern the extract, where
+	taking it from the map afresh is in proportion to its size. It follows the
+	rule of a map without stored bounding boxes, as an update from another
+	server does. Returns the number of activity rows applied.
+	"""
+	if extract["edit_activity_id"] is None or extract["atomic_edit_id"] is None:
+		raise RemoteUpdateError("Extract has no established synchronization checkpoint")
+	bbox = None
+	if getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True) and len(extract.get("bbox") or []) == 4:
+		bbox = list(extract["bbox"])
+	return RemoteExtractUpdate(pgmap_object, extract["id"], LocalServer(pgmap_object), bbox).run(
+		(extract["edit_activity_id"], extract["atomic_edit_id"]))
 
 def update_extract_from_remote(pgmap_object, extract, fetch=None):
 	"""Update one extract, described as replicate.extracts gives it, from its update_url.
