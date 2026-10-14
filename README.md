@@ -227,6 +227,40 @@ Overpass queries
 
 The server answers a subset of [Overpass QL](https://wiki.openstreetmap.org/wiki/Overpass_API/Overpass_QL) at `/api/interpreter`, and the older XAPI requests under `/overpass/xapi/`. What it understands, how it differs from the main Overpass servers and the settings that limit it are described in [overpass/README.md](overpass/README.md).
 
+Bounding boxes and search indices
+---------------------------------
+
+Out of the box, the map finds the ways and relations in an area through their nodes: a way is in the area if one of its nodes is. Every way and relation can also have its bounding box stored with it, and with that and two optional sets of indices, searches by area and by tag can go straight to what they want. Three steps in pgmap's admin tool and one setting in the admin panel turn this on.
+
+### 1. "Update way/relation bboxes" (admin tool, option e)
+
+Works out and stores the box of every way and relation. Edits keep the boxes of what they touch up to date from then on, so this is needed once after an import, and again only if the boxes have been lost. Run "Create indicies" first.
+
+On a whole planet this is a long step, as every way has to find its nodes, and it can take days. The ways are done 50,000 at a time and each batch is kept as it finishes, so the tool shows how far it has got and loses nothing if stopped: run it again and answer 1 to "Only ways that have no box yet" to carry on from where it was. The relations are worked out at the end. Put the server in read only mode while it runs.
+
+### 2. "Create/drop bbox indices" (admin tool, option h)
+
+Builds two kinds of index:
+
+* a spatial index on the stored box of each way and relation, without which finding them by box means reading them all, and
+* a text index on the tags of every node, way and relation, which the tag filters of Overpass and XAPI queries (`[k]`, `[k=v]`) use. These help whether or not boxes are used.
+
+A search for a tag within an area uses both. On a planet the text index takes a long time to build, as it reads the tags of every object; a generous `maintenance_work_mem` helps (see pgmap's README). The same option drops them again. Tables that have the single combined index earlier versions built keep it; drop and create to change over.
+
+### 3. Setting `useBboxInQuery`
+
+In the admin panel, under "Map parameters", set `useBboxInQuery` to 1. If some ways still have no box, the page says how many (an estimate on a large map), as those ways would no longer be found by area. Setting it back to 0 returns to finding ways and relations through their nodes, at once.
+
+### What it changes
+
+With `useBboxInQuery` at 1:
+
+* **Overpass and XAPI queries** find the ways and relations in a bounding box with one indexed search on their boxes, where otherwise they find every node in the area and then what holds those nodes. A query such as `way[highway](bbox)` becomes a single lookup. The details are in [overpass/README.md](overpass/README.md).
+* **The map call** (`/api/0.6/map`) selects ways and relations whose boxes overlap the area. This also returns ways that cross the area without a node inside it, which the node rule misses, so the answer can be a little larger than before.
+* **Stored extracts saved while it is on** follow the same rule. They are brought up to date by being taken from the map afresh, which takes time in proportion to their size, as the recorded edits cannot keep up a selection made by boxes.
+
+Without the boxes being worked out first, step 1, ways and relations with no box are simply not found by area, which is why the admin panel warns. The boxes are kept up to date by edits whatever the setting, and the edit activity records take their boxes from them, so step 1 is worth doing on any map whose edits other servers follow to keep their extracts up to date: without them, an edit to a relation that holds other relations is recorded as possibly concerning anywhere, and is sent to every extract.
+
 Highly loaded servers
 ---------------------
 
