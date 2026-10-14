@@ -70,11 +70,17 @@ class ExtractDownload:
         """
         infos = pgmap.vectorextractinfo()
         self.transaction.ListExtracts(infos)
-        chosen = [(info.editActivityId, info.atomicEditId) for info in infos
+        chosen = [(info.editActivityId, info.atomicEditId, info.rectangular, info.boundaryWkt) for info in infos
             if (info.extractId == extract_id if extract_id else info.name == name)]
-        if len(chosen) != 1 or chosen[0][0] < 0 or chosen[0][1] < 0:
+        if len(chosen) != 1:
             return {}
-        return {"edit_activity_id": str(chosen[0][0]), "atomic_edit_id": str(chosen[0][1])}
+        attribs = {}
+        if chosen[0][0] >= 0 and chosen[0][1] >= 0:
+            attribs.update({"edit_activity_id": str(chosen[0][0]), "atomic_edit_id": str(chosen[0][1])})
+        # A boundary that is not a rectangle, which the file's bounds cannot hold
+        if not chosen[0][2]:
+            attribs["boundary"] = chosen[0][3]
+        return attribs
 
     def __iter__(self):
         return self

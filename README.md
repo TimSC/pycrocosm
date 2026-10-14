@@ -200,6 +200,18 @@ It is written to `static/planet/`, which is created if need be, with a name such
 
 The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The dumps are listed, newest first with their sizes, on a public page at `/replication/planet`, linked from the replication page at `/replication/`. Each entry links to the file under `PLANET_DUMP_URL`, the address at which the web server offers the dump folder: `/static/planet/` by default, which the development server serves. A dump still being written is not listed.
 
+Extract boundaries
+------------------
+
+An extract covers a rectangle, or any single polygon given as WKT, such as a town's boundary. To save one from the command line:
+
+    docker compose run --rm web python3 manage.py saveextract --bbox -1.078,50.788,-1.074,50.790 --name harbour
+    docker compose run --rm web python3 manage.py saveextract --wkt-file town.wkt --name town
+
+(`--wkt` takes the polygon itself in place of a file.) In the admin panel, fill in "Or a boundary (WKT)" in place of the four sides; pgmap's `extract --save-db` and `import_extract` take `--wkt` too. Longitude comes before latitude, for example `POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))`. Only a single valid polygon is taken: a multipolygon, a self-crossing ring, or a shape crossing the antimeridian (anything wider than 180 degrees of longitude) is refused with the reason.
+
+The extract holds what is inside the polygon, by the same rules as a rectangle, and is kept up to date and compared with the map the same way. Files downloaded from it carry the rectangle around the polygon as their bounds, which is all those formats have room for, and the polygon itself as a `boundary` attribute of the file (in .osm, .o5m and .json, not .pbf), so that importing the file again gives the same extract. The extracts page shows a polygon as "polygon within" its rectangle.
+
 Updating database extracts
 --------------------------
 

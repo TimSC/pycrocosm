@@ -10,7 +10,11 @@ def describe_db_extract(info):
 	extract = {
 		"id": info.extractId,
 		"name": info.name,
+		# The rectangle around the boundary, and the boundary itself, which may
+		# be any polygon
 		"bbox": list(info.bbox),
+		"boundary": info.boundaryWkt,
+		"rectangular": bool(info.rectangular),
 		"query_mode": "bbox" if info.useBboxInQuery else "membership",
 		"performed_at": datetime.datetime.fromtimestamp(info.performedAt, datetime.timezone.utc),
 		"edit_activity_id": info.editActivityId if info.editActivityId >= 0 else None,
@@ -60,11 +64,13 @@ def get_db_extract(extract_id):
 	finally:
 		t.Abort() # Read only; nothing to commit.
 
-def save_db_extract(bbox, name):
-	"""Store a snapshot of the map within bbox and return the new extract's ID."""
+def save_db_extract(bbox, name, wkt=None):
+	"""Store a snapshot of the map within bbox, or within the polygon given as
+	WKT, and return the new extract's ID. A boundary pgmap cannot take is
+	refused with the reason."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	try:
-		extract_id = t.SaveExtract(bbox, name)
+		extract_id = t.SaveExtractWkt(wkt, name) if wkt else t.SaveExtract(bbox, name)
 		t.Commit()
 		return extract_id
 	except BaseException:

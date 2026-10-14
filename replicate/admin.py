@@ -15,16 +15,37 @@ from .models import DbExtract
 class DbExtractForm(forms.Form):
 	name = forms.CharField(required=False, max_length=255,
 		help_text="Optional. Must be unique, so the extract can be selected by name.")
-	west = forms.FloatField(min_value=-180, max_value=180, label="West (minimum longitude)")
-	south = forms.FloatField(min_value=-90, max_value=90, label="South (minimum latitude)")
-	east = forms.FloatField(min_value=-180, max_value=180, label="East (maximum longitude)")
-	north = forms.FloatField(min_value=-90, max_value=90, label="North (maximum latitude)")
+	west = forms.FloatField(required=False, min_value=-180, max_value=180, label="West (minimum longitude)")
+	south = forms.FloatField(required=False, min_value=-90, max_value=90, label="South (minimum latitude)")
+	east = forms.FloatField(required=False, min_value=-180, max_value=180, label="East (maximum longitude)")
+	north = forms.FloatField(required=False, min_value=-90, max_value=90, label="North (maximum latitude)")
+	boundary = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 4, "cols": 80}),
+		label="Or a boundary (WKT)",
+		help_text="Instead of the rectangle above: a single polygon in WKT, longitude before latitude, "
+			"for example POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78)). "
+			"It may not cross the antimeridian.")
 
 	def clean_name(self):
 		return self.cleaned_data["name"].strip()
 
+	def clean_boundary(self):
+		return self.cleaned_data["boundary"].strip()
+
 	def clean(self):
 		data = super().clean()
+		sides = [data.get(key) for key in ("west", "south", "east", "north")]
+		given = [side is not None for side in sides]
+		if data.get("boundary"):
+			if any(given):
+				raise forms.ValidationError("Give either a rectangle or a boundary, not both.")
+			return data
+		if not any(given):
+			raise forms.ValidationError("Give all four sides of a rectangle, or a boundary.")
+		for key, side in zip(("west", "south", "east", "north"), sides):
+			if side is None and key not in self.errors:
+				self.add_error(key, "This field is required.")
+		if not all(given):
+			return data
 		if None not in (data.get("west"), data.get("east")) and data["west"] >= data["east"]:
 			self.add_error("east", "East must be greater than west.")
 		if None not in (data.get("south"), data.get("north")) and data["south"] >= data["north"]:
@@ -33,6 +54,9 @@ class DbExtractForm(forms.Form):
 
 	def bbox(self):
 		return [self.cleaned_data[key] for key in ("west", "south", "east", "north")]
+
+	def wkt(self):
+		return self.cleaned_data.get("boundary") or None
 
 @admin.register(DbExtract)
 class DbExtractAdmin(admin.ModelAdmin):
@@ -104,7 +128,10 @@ class DbExtractAdmin(admin.ModelAdmin):
 					form.add_error("name", "An extract with this name already exists.")
 				else:
 					# Runs in this request; a large bbox takes a long time.
-					extract_id = save_db_extract(form.bbox(), name)
+					if form.wkt():
+						extract_id = save_db_extract(None, name, form.wkt())
+					else:
+						extract_id = save_db_extract(form.bbox(), name)
 					self.message_user(request, "Saved database extract {}.".format(extract_id))
 					return HttpResponseRedirect(reverse("admin:replicate_dbextract_changelist"))
 			except Exception as err:

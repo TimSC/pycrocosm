@@ -1717,7 +1717,9 @@ class DbExtractTestCase(SimpleTestCase):
                 self.assertEqual(len(decoded.bounds), 1)
                 # o5m carries the extract's edit IDs; PBF has nowhere to put them
                 ids = self.checkpoint(extract_id)
-                self.assertEqual(dict(decoded.attributes), {} if extension == "pbf" else
+                # (an extract whose boundary is not a rectangle also carries that)
+                attributes = {k: v for k, v in dict(decoded.attributes).items() if k != "boundary"}
+                self.assertEqual(attributes, {} if extension == "pbf" else
                                  {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])})
                 way = decoded.ways[0]
                 self.assertEqual(len(way.refs), 3)

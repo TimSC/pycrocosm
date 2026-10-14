@@ -17,6 +17,7 @@
 <tr><th>ID</th><td>{{ extract.id }}</td></tr>
 <tr><th>Name</th><td>{{ extract.name|default:"-" }}</td></tr>
 <tr><th>Bbox (west, south, east, north)</th><td>{{ extract.bbox|join:", " }}</td></tr>
+{% if not extract.rectangular %}<tr><th>Boundary</th><td><code id="boundary">{{ extract.boundary }}</code></td></tr>{% endif %}
 <tr><th>Query mode</th><td>{{ extract.query_mode }}</td></tr>
 <tr><th>Automatic updates</th><td id="extract_auto_update">{% if extract.auto_update %}enabled{% else %}disabled{% endif %}</td></tr>
 <tr><th>Update from</th><td id="extract_update_url">{{ extract.update_url|default:"this map" }}</td></tr>
