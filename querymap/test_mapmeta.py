@@ -110,21 +110,30 @@ class MapParameterAdminTestCase(TestCase):
 
 	def test_ways_without_boxes_are_warned_about(self):
 		from unittest.mock import patch
-		with patch.object(pgmap.PgTransaction, "CountWaysWithoutBbox", return_value=[36489, 36000]):
+		with patch.object(pgmap.PgTransaction, "EstimateWaysWithoutBbox", return_value=[36489, 36000, 1]):
 			response, html = self.post(self.set_url, key="useBboxInQuery", value="1")
 		self.assertIn("36000 of the map&#x27;s 36489 ways have no bounding box stored", html)
 		self.assertEqual(self.stored()["useBboxInQuery"], "1")
-		with patch.object(pgmap.PgTransaction, "CountWaysWithoutBbox", return_value=[36489, 0]):
+		# A large map's are estimated, and say so
+		with patch.object(pgmap.PgTransaction, "EstimateWaysWithoutBbox", return_value=[123866528, 4200000, 0]):
+			response, html = self.post(self.set_url, key="useBboxInQuery", value="1")
+		self.assertIn("About 4,200,000 of the map&#x27;s roughly 123,866,528 ways have no bounding box stored", html)
+		with patch.object(pgmap.PgTransaction, "EstimateWaysWithoutBbox", return_value=[36489, 0, 1]):
 			response, html = self.post(self.set_url, key="useBboxInQuery", value="1")
 		self.assertNotIn("no bounding box stored", html)
-		# The count itself: every way of the map, and those without a box
+		# Setting it to 0 asks nothing
+		with patch.object(pgmap.PgTransaction, "EstimateWaysWithoutBbox", side_effect=AssertionError("asked")):
+			response, html = self.post(self.set_url, key="useBboxInQuery", value="0")
+		self.assertEqual(self.stored()["useBboxInQuery"], "0")
+		# The estimate itself: every way of the map, and those without a box
 		t = get_pgmap().GetTransaction("ACCESS SHARE")
 		try:
-			total, missing = list(t.CountWaysWithoutBbox())
+			total, missing, exact = list(t.EstimateWaysWithoutBbox())
 		finally:
 			t.Abort()
 		self.assertGreaterEqual(total, missing)
 		self.assertGreaterEqual(missing, 0)
+		self.assertIn(exact, (0, 1))
 
 	def test_refused_changes(self):
 		version = self.stored()["schema_version"]

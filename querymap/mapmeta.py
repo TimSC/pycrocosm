@@ -87,18 +87,31 @@ def set_parameter(key, value):
 		error = pgmap.PgMapError()
 		if not t.SetMetaValue(key, value, error):
 			raise ParameterError(error.errStr or "The map database refused the change.")
-		warning = None
-		if key == "useBboxInQuery" and value == "1":
-			total, missing = list(t.CountWaysWithoutBbox())
-			if missing > 0:
-				warning = ("{} of the map's {} ways have no bounding box stored, so searches by area "
-					"will not find them. Run \"Update way/relation bboxes\" in pgmap's admin tool, "
-					"or set useBboxInQuery back to 0.".format(missing, total))
 		t.Commit()
-		return warning
 	except BaseException:
 		common.abort_transaction(t)
 		raise
+	if key == "useBboxInQuery" and value == "1":
+		return ways_without_boxes_warning()
+	return None
+
+def ways_without_boxes_warning():
+	"""What to say if ways have no stored box, which searches by area then miss,
+	or None. Asked after the change is stored, outside the lock that edits
+	wait for, and estimated for a large map, where counting would take minutes."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		total, missing, exact = list(t.EstimateWaysWithoutBbox())
+	finally:
+		common.abort_transaction(t)
+	if missing <= 0:
+		return None
+	if exact:
+		counts = "{} of the map's {} ways have".format(missing, total)
+	else:
+		counts = "About {:,} of the map's roughly {:,} ways have".format(missing, total)
+	return (counts + " no bounding box stored, so searches by area will not find them. Run "
+		"\"Update way/relation bboxes\" in pgmap's admin tool, or set useBboxInQuery back to 0.")
 
 def remove_parameter(key):
 	"""Remove a parameter, so that its default applies. Returns whether it was set."""
