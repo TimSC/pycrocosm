@@ -238,7 +238,7 @@ Works out and stores the box of every way and relation. Edits keep the boxes of 
 
 On a whole planet this is a long step, as every way has to find its nodes, and it can take days. The ways are done 50,000 at a time and each batch is kept as it finishes, so the tool shows how far it has got and loses nothing if stopped: run it again and answer 1 to "Only ways that have no box yet" to carry on from where it was. The relations are worked out at the end. Put the server in read only mode while it runs.
 
-### 2. "Create/drop bbox indices" (admin tool, option h)
+### 2. "Create/drop bbox indices" (admin tool, option i)
 
 Builds two kinds of index:
 

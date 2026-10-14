@@ -3067,7 +3067,7 @@ class DbExtractTestCase(SimpleTestCase):
         notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
         self.assertEqual(len(notes), 3)
         for prefix, note in zip(self.prefixes, notes):
-            self.assertEqual(note, 'The indices of the {} tables have no recorded version (the current version '
+            self.assertEqual(note, 'The indices of the {} tables are not recorded as built (the current version '
                              'is {}): run "Create indicies".'.format(prefix, latest))
         # The schema version is a different thing, and says nothing about them
         with self.db.cursor() as cursor:
@@ -3104,8 +3104,40 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s", (self.prefixes[1] + "livenodes",))
             self.assertEqual(cursor.fetchone()[0], built)
         # The map goes on working with its indices in place
-        self.modify_node(a, 0.2)
+        a = self.modify_node(a, 0.2)
         self.assertIn(("node", a.objId), self.contents())
+
+        # Downgraded to 0, every index and key the step builds is gone, and recorded so
+        def indexed():
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=ANY(%s)",
+                               ([self.prefixes[1] + t for t in ("livenodes", "oldnodes", "liveways", "way_mems", "usernames")],))
+                return cursor.fetchone()[0]
+        with_indices = indexed()
+        self.assertTrue(admin_call(lambda admin: admin.SetIndexVersion(0, 0, error)), error.errStr)
+        self.assertEqual(versions(), ["0"] * 3)
+        self.assertEqual(admin_call(lambda admin: list(admin.GetIndexVersions())), [0, 0, 0])
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexname FROM pg_indexes WHERE tablename=ANY(%s) ORDER BY indexname",
+                           ([self.prefixes[1] + t for t in ("livenodes", "oldnodes", "liveways", "way_mems", "usernames")],))
+            # Only what the schema itself has: the key of the member table
+            self.assertEqual([row[0] for row in cursor.fetchall()], [self.prefixes[1] + "way_mems_key"])
+        self.assertEqual(len(admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()), 3)
+        # The map still works without them, if slowly
+        self.modify_node(a, 0.3)
+        self.assertIn(("node", a.objId), self.contents())
+        # An earlier numbered version has the same indices, and is recorded as asked
+        self.assertTrue(admin_call(lambda admin: admin.SetIndexVersion(0, 13, error)), error.errStr)
+        self.assertEqual(versions(), ["13"] * 3)
+        self.assertEqual(indexed(), with_indices)
+        # A version that does not exist is refused, and nothing is changed
+        for unknown in (5, 99, -1):
+            self.assertFalse(admin_call(lambda admin: admin.SetIndexVersion(0, unknown, error)))
+            self.assertIn("is not known", error.errStr)
+        self.assertEqual(versions(), ["13"] * 3)
+        self.assertTrue(admin_call(lambda admin: admin.SetIndexVersion(0, latest, error)), error.errStr)
+        self.assertEqual(versions(), [str(latest)] * 3)
+        self.assertEqual(indexed(), with_indices)
 
     # Schema version 15: member tables of live versions only, with a key
 
