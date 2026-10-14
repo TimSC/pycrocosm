@@ -219,14 +219,20 @@ Everything the admin panel does with extracts stored in the map database can als
 Extract boundaries
 ------------------
 
-An extract covers a rectangle, or any single polygon given as WKT, such as a town's boundary. To save one from the command line:
+An extract covers a rectangle, or any polygon given as WKT, such as a town's boundary, or a multipolygon of several, such as a region with islands. To save one from the command line:
 
     docker compose run --rm web python3 manage.py saveextract --bbox -1.078,50.788,-1.074,50.790 --name harbour
     docker compose run --rm web python3 manage.py saveextract --wkt-file town.wkt --name town
 
-(`--wkt` takes the polygon itself in place of a file.) In the admin panel, fill in "Or a boundary (WKT)" in place of the four sides; `importextract` and pgmap's `extract --save-db` take `--wkt` too. Longitude comes before latitude, for example `POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))`. Only a single valid polygon is taken: a multipolygon, a self-crossing ring, or a shape crossing the antimeridian (anything wider than 180 degrees of longitude) is refused with the reason.
+(`--wkt` takes the shape itself in place of a file.) In the admin panel, fill in "Or a boundary (WKT)" in place of the four sides; `importextract` and pgmap's `extract --save-db` take `--wkt` too. Longitude comes before latitude, for example `POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))`, or `MULTIPOLYGON(((...)), ((...)))` for several pieces. Only a valid POLYGON or MULTIPOLYGON is taken: other kinds of geometry, a self-crossing ring, or a shape crossing the antimeridian (anything wider than 180 degrees of longitude) are refused with the reason. Multipolygon boundaries need schema version 15; going back to 14 is refused while any extract has one.
 
-The extract holds what is inside the polygon, by the same rules as a rectangle, and is kept up to date and compared with the map the same way. Files downloaded from it carry the rectangle around the polygon as their bounds, which is all those formats have room for, and the polygon itself as a `boundary` attribute of the file (in .osm, .o5m and .json, not .pbf), so that importing the file again gives the same extract. The extracts page shows a polygon as "polygon within" its rectangle.
+To take in a margin around a boundary, add `--buffer` with a distance in metres, to `saveextract`, `importextract` or pgmap's `extract --wkt`, or fill in "Buffer (metres)" in the admin panel:
+
+    docker compose run --rm web python3 manage.py saveextract --wkt-file town.wkt --buffer 2000 --name town-and-around
+
+The boundary is grown outwards by that distance on the ground (with PostGIS's `ST_Buffer` on geography) before it is checked and stored, and the extract's boundary is then the grown shape, as if it had been given that way: that is what the extracts page, downloads and updates use. Pieces of a multipolygon closer together than twice the distance join into one. A buffer goes with a WKT boundary only, not a rectangle, and is refused if the grown shape would cross the antimeridian.
+
+The extract holds what is inside the shape, by the same rules as a rectangle, and is kept up to date and compared with the map the same way: a way with a node in any piece is in it, with all its nodes. Files downloaded from it carry the rectangle around the shape as their bounds, which is all those formats have room for, and the shape itself as a `boundary` attribute of the file (in .osm, .o5m and .json, not .pbf), so that importing the file again gives the same extract. The extracts page shows a polygon as "polygon within" its rectangle, and a multipolygon as "multipolygon within" it.
 
 Updating database extracts
 --------------------------

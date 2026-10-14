@@ -21,9 +21,11 @@ class DbExtractForm(forms.Form):
 	north = forms.FloatField(required=False, min_value=-90, max_value=90, label="North (maximum latitude)")
 	boundary = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 4, "cols": 80}),
 		label="Or a boundary (WKT)",
-		help_text="Instead of the rectangle above: a single polygon in WKT, longitude before latitude, "
-			"for example POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78)). "
-			"It may not cross the antimeridian.")
+		help_text="Instead of the rectangle above: a polygon in WKT, longitude before latitude, "
+			"for example POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78)), or a MULTIPOLYGON "
+			"of several, such as a region with islands. It may not cross the antimeridian.")
+	buffer = forms.FloatField(required=False, min_value=0, label="Buffer (metres)",
+		help_text="Optional: grow the boundary outwards by this distance before saving it.")
 
 	def clean_name(self):
 		return self.cleaned_data["name"].strip()
@@ -39,6 +41,8 @@ class DbExtractForm(forms.Form):
 			if any(given):
 				raise forms.ValidationError("Give either a rectangle or a boundary, not both.")
 			return data
+		if data.get("buffer"):
+			self.add_error("buffer", "A buffer grows a boundary; give one, or leave this empty.")
 		if not any(given):
 			raise forms.ValidationError("Give all four sides of a rectangle, or a boundary.")
 		for key, side in zip(("west", "south", "east", "north"), sides):
@@ -57,6 +61,9 @@ class DbExtractForm(forms.Form):
 
 	def wkt(self):
 		return self.cleaned_data.get("boundary") or None
+
+	def buffer_metres(self):
+		return self.cleaned_data.get("buffer") or 0
 
 @admin.register(DbExtract)
 class DbExtractAdmin(admin.ModelAdmin):
@@ -129,7 +136,7 @@ class DbExtractAdmin(admin.ModelAdmin):
 				else:
 					# Runs in this request; a large bbox takes a long time.
 					if form.wkt():
-						extract_id = save_db_extract(None, name, form.wkt())
+						extract_id = save_db_extract(None, name, form.wkt(), form.buffer_metres())
 					else:
 						extract_id = save_db_extract(form.bbox(), name)
 					self.message_user(request, "Saved database extract {}.".format(extract_id))

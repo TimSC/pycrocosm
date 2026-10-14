@@ -16,6 +16,8 @@ class Command(BaseCommand):
 			help="The rectangle the extract covers, in place of the file's bounds")
 		parser.add_argument("--wkt", help="The polygon the extract covers, as WKT, in place of the file's bounds")
 		parser.add_argument("--wkt-file", metavar="FILE", help="A file holding the polygon as WKT")
+		parser.add_argument("--buffer", type=float, default=0, metavar="METRES",
+			help="Grow the --wkt or --wkt-file boundary outwards by this many metres first")
 		parser.add_argument("--edit-activity-id", type=int, default=-1,
 			help="The edit activity ID the contents are current to, in place of the file's")
 		parser.add_argument("--atomic-edit-id", type=int, default=-1,
@@ -25,6 +27,8 @@ class Command(BaseCommand):
 		begin = time.time()
 		if sum(1 for key in ("bbox", "wkt", "wkt_file") if options[key]) > 1:
 			raise CommandError("Give at most one of --bbox, --wkt and --wkt-file")
+		if options["buffer"] and not (options["wkt"] or options["wkt_file"]):
+			raise CommandError("--buffer grows a --wkt or --wkt-file boundary, and needs one")
 		bbox = None
 		if options["bbox"]:
 			try:
@@ -47,7 +51,7 @@ class Command(BaseCommand):
 			raise CommandError("An extract named {} already exists".format(name))
 		try:
 			extract_id, nodes, ways, relations = import_db_extract(options["source"], name, bbox, wkt,
-				(options["edit_activity_id"], options["atomic_edit_id"]))
+				(options["edit_activity_id"], options["atomic_edit_id"]), options["buffer"])
 		except Exception as err:
 			raise CommandError("Could not import {}: {}".format(options["source"], pgmap_error_text(err)))
 		self.stdout.write(self.style.SUCCESS("Imported {} as extract {}: {} nodes, {} ways, {} relations, in {}".format(

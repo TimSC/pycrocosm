@@ -11,10 +11,12 @@ def describe_db_extract(info):
 		"id": info.extractId,
 		"name": info.name,
 		# The rectangle around the boundary, and the boundary itself, which may
-		# be any polygon
+		# be any polygon, or several (a multipolygon)
 		"bbox": list(info.bbox),
 		"boundary": info.boundaryWkt,
 		"rectangular": bool(info.rectangular),
+		"shape": "rectangle" if info.rectangular else
+			("multipolygon" if info.boundaryWkt.lstrip().upper().startswith("MULTI") else "polygon"),
 		"query_mode": "bbox" if info.useBboxInQuery else "membership",
 		"performed_at": datetime.datetime.fromtimestamp(info.performedAt, datetime.timezone.utc),
 		"edit_activity_id": info.editActivityId if info.editActivityId >= 0 else None,
@@ -64,12 +66,15 @@ def get_db_extract(extract_id):
 	finally:
 		t.Abort() # Read only; nothing to commit.
 
-def save_db_extract(bbox, name, wkt=None):
+def save_db_extract(bbox, name, wkt=None, buffer=0):
 	"""Store a snapshot of the map within bbox, or within the polygon given as
-	WKT, and return the new extract's ID. A boundary pgmap cannot take is
-	refused with the reason."""
+	WKT, grown outwards by buffer metres, and return the new extract's ID. A
+	boundary pgmap cannot take is refused with the reason."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	try:
+		if wkt and buffer:
+			# The extract's boundary is the grown one; nothing after this needs to know
+			wkt = t.BufferExtractBoundary(wkt, float(buffer))
 		extract_id = t.SaveExtractWkt(wkt, name) if wkt else t.SaveExtract(bbox, name)
 		t.Commit()
 		return extract_id
@@ -151,10 +156,13 @@ def export_db_extract(extract_id, path, edit_ids=True):
 	finally:
 		t.Abort() # Read only; nothing to commit.
 
-def import_db_extract(path, name, bbox=None, wkt=None, edit_ids=(-1, -1)):
-	"""Store a map file as a new extract. Returns (ID, nodes, ways, relations)."""
+def import_db_extract(path, name, bbox=None, wkt=None, edit_ids=(-1, -1), buffer=0):
+	"""Store a map file as a new extract, its boundary wkt grown outwards by
+	buffer metres if both are given. Returns (ID, nodes, ways, relations)."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	try:
+		if wkt and buffer:
+			wkt = t.BufferExtractBoundary(wkt, float(buffer))
 		found = list(t.ImportExtractFromFile(path, name, pgmap.vectord(bbox or []), wkt or "", *edit_ids))
 		t.Commit()
 		return tuple(found)

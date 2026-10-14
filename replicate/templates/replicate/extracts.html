@@ -17,7 +17,7 @@ and atomic edit ID <strong id="server_atomic_edit_id">{{ latest.atomic_edit_id }
 {% if not extracts %}
 <p>No extracts are available.</p>
 {% else %}
-<p>Each extract is a snapshot of the map inside a rectangle, or inside a polygon within the rectangle shown. Its edit IDs say which edits it includes:
+<p>Each extract is a snapshot of the map inside a rectangle, or inside a polygon or multipolygon within the rectangle shown. Its edit IDs say which edits it includes:
 an extract on the same IDs as the map is up to date.</p>
 <table border="1" cellpadding="4">
 <thead>
@@ -28,7 +28,7 @@ an extract on the same IDs as the map is up to date.</p>
 {% for extract in extracts %}
 <tr>
 <td>{{ extract.name|default:"(unnamed)" }}</td>
-<td>{% if extract.rectangular %}{{ extract.bbox|join:", " }}{% else %}polygon within {{ extract.bbox|join:", " }}{% endif %}</td>
+<td>{% if extract.rectangular %}{{ extract.bbox|join:", " }}{% else %}{{ extract.shape }} within {{ extract.bbox|join:", " }}{% endif %}</td>
 <td>{{ extract.performed_at|date:"Y-m-d H:i" }} UTC</td>
 <td class="edit_activity_id">{{ extract.edit_activity_id|default_if_none:"not set" }}</td>
 <td class="atomic_edit_id">{{ extract.atomic_edit_id|default_if_none:"not set" }}</td>

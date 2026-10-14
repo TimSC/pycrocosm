@@ -13,8 +13,10 @@ class Command(BaseCommand):
 			help="The rectangle the extract covers, for example -1.078,50.788,-1.074,50.790")
 		parser.add_argument("--wkt", metavar="WKT",
 			help="The polygon the extract covers, longitude before latitude, for example "
-				"\"POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))\"")
-		parser.add_argument("--wkt-file", metavar="FILE", help="A file holding the polygon as WKT")
+				"\"POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))\", or a MULTIPOLYGON of several")
+		parser.add_argument("--wkt-file", metavar="FILE", help="A file holding the polygon or multipolygon as WKT")
+		parser.add_argument("--buffer", type=float, default=0, metavar="METRES",
+			help="Grow the --wkt or --wkt-file boundary outwards by this many metres before saving it")
 		parser.add_argument("--name", default="",
 			help="A name for the extract, which must be unique, so that it can be chosen by name")
 
@@ -23,6 +25,8 @@ class Command(BaseCommand):
 		given = [key for key in ("bbox", "wkt", "wkt_file") if options[key]]
 		if len(given) != 1:
 			raise CommandError("Give one of --bbox, --wkt and --wkt-file")
+		if options["buffer"] and options["bbox"]:
+			raise CommandError("--buffer grows a --wkt or --wkt-file boundary; it cannot be used with --bbox")
 
 		bbox, wkt = None, None
 		if options["bbox"]:
@@ -45,7 +49,7 @@ class Command(BaseCommand):
 		if name and any(extract["name"] == name for extract in list_db_extracts()):
 			raise CommandError("An extract named {} already exists".format(name))
 		try:
-			extract_id = save_db_extract(bbox, name, wkt)
+			extract_id = save_db_extract(bbox, name, wkt, options["buffer"])
 		except Exception as err:
 			raise CommandError("Could not save the extract: {}".format(pgmap_error_text(err)))
 		self.stdout.write(self.style.SUCCESS("Saved database extract {} in {}".format(
