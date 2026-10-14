@@ -49,5 +49,5 @@ class Command(BaseCommand):
 		# A dump is for publishing, so anyone may read it; pgmap makes its
 		# files readable by their owner alone.
 		os.chmod(path, 0o644)
-		self.stdout.write(self.style.SUCCESS("Wrote {} ({} bytes) in {:.1f}s".format(
-			path, os.path.getsize(path), time.time() - begin)))
+		self.stdout.write(self.style.SUCCESS("Wrote {} ({} bytes) in {}".format(
+			path, os.path.getsize(path), common.format_elapsed(time.time() - begin))))

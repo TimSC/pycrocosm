@@ -1,6 +1,7 @@
 import time
 
 from django.core.management.base import BaseCommand, CommandError
+from pycrocosm.common import format_elapsed, pgmap_error_text
 from pycrocosm.singlerun import one_at_a_time
 from replicate.extracts import list_db_extracts, update_db_extract
 
@@ -43,7 +44,7 @@ class Command(BaseCommand):
 				# brought up to date from that server, the rest from this map.
 				outcome = update_db_extract(extract["id"])
 			except Exception as err:
-				message = str(err).replace("Standard runtime exception: ", "")
+				message = pgmap_error_text(err)
 				self.stdout.write(self.style.ERROR("{}: failed, {}".format(label, message)))
 				failed += 1
 				continue
@@ -51,7 +52,7 @@ class Command(BaseCommand):
 				self.stdout.write("{}: {}".format(label, outcome))
 				current += 1
 			else:
-				self.stdout.write(self.style.SUCCESS("{}: {} in {:.1f}s".format(label, outcome, time.time() - start)))
+				self.stdout.write(self.style.SUCCESS("{}: {} in {}".format(label, outcome, format_elapsed(time.time() - start))))
 				updated += 1
 
 		if len(selected) == 0:

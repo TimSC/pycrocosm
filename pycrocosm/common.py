@@ -18,6 +18,19 @@ def get_utc_posix_timestamp(dt):
 
 	return dt.timestamp()
 
+def format_elapsed(seconds):
+	"""How long something took, as a person reads it: 4.2s, 12m 05s, 3h 07m 10s."""
+	if seconds < 60:
+		return "{:.1f}s".format(seconds)
+	whole = int(seconds)
+	if whole < 3600:
+		return "{}m {:02d}s".format(whole // 60, whole % 60)
+	return "{}h {:02d}m {:02d}s".format(whole // 3600, (whole // 60) % 60, whole % 60)
+
+def pgmap_error_text(err):
+	"""What a pgmap error says, without the prefix the bindings give it."""
+	return str(err).replace("Standard runtime exception: ", "").replace("Standard exception: ", "")
+
 def abort_transaction(t):
 	try:
 		t.Abort()

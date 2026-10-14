@@ -1584,6 +1584,117 @@ class DbExtractTestCase(SimpleTestCase):
         self.update(imported)
         self.assert_current(imported)
 
+    def extract_command(self, *arguments, answer=None):
+        from django.core.management import call_command
+        out = io.StringIO()
+        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
+             patch("builtins.input", side_effect=EOFError if answer is None else lambda prompt: answer):
+            call_command(*arguments, stdout=out, no_color=True)
+        return out.getvalue().strip()
+
+    def test_export_import_and_delete_commands(self):
+        import os, tempfile
+        from django.core.management.base import CommandError
+        original = self.populated_extract()
+        folder = tempfile.mkdtemp()
+        try:
+            for filename in ("copy.osm.gz", "copy.o5m", "copy.json"):
+                path = os.path.join(folder, filename)
+                self.assertRegex(self.extract_command("exportextract", "--id", str(original), "--out", path),
+                                 r"^Exported extract {} to {} in \d+\.\ds$".format(original, re.escape(path)))
+                line = self.extract_command("importextract", "--in", path, "--name", filename)
+                found = re.fullmatch(r"Imported {} as extract (\d+): \d+ nodes, \d+ ways, \d+ relations, in \d+\.\ds".format(
+                    re.escape(path)), line)
+                self.assertIsNotNone(found, line)
+                imported = int(found.group(1))
+                # The file carries the checkpoint and area, so the copy is kept up to date like
+                # the original. o5m rounds positions to seven decimal places.
+                self.assertEqual(self.checkpoint(imported), self.checkpoint(original))
+                self.assertEqual(self.stored_rows(imported)["extracts"], self.stored_rows(original)["extracts"])
+                if filename.endswith(".o5m"):
+                    self.assertEqual(set(self.contents(imported)), set(self.contents(original)))
+                else:
+                    self.assertEqual(self.contents(imported), self.contents(original))
+
+            # Selected by name; without the edit IDs the copy cannot be updated
+            path = os.path.join(folder, "bare.osm")
+            self.extract_command("exportextract", "--name", "copy.json", "--out", path, "--no-edit-ids")
+            bare = int(re.search(r"extract (\d+)", self.extract_command("importextract", "--in", path)).group(1))
+            self.assertEqual(self.checkpoint(bare), (None, None))
+            self.assertEqual(self.contents(bare), self.contents(original))
+            # Unless the checkpoint is given
+            given = int(re.search(r"extract (\d+)", self.extract_command("importextract", "--in", path,
+                "--edit-activity-id", str(self.checkpoint(original)[0]),
+                "--atomic-edit-id", str(self.checkpoint(original)[1]))).group(1))
+            self.assertEqual(self.checkpoint(given), self.checkpoint(original))
+
+            for arguments, message in (
+                    (("exportextract", "--out", path), "Give an extract's ID or its name"),
+                    (("exportextract", "--id", "99999", "--out", path), "No extract with ID 99999"),
+                    (("exportextract", "--name", "nowhere", "--out", path), "No extract named nowhere"),
+                    (("exportextract", "--id", str(original), "--out", os.path.join(folder, "copy.txt")), "Could not export"),
+                    (("importextract", "--in", path, "--name", "copy.o5m"), "already exists"),
+                    (("importextract", "--in", path, "--edit-activity-id", "1"), "both"),
+                    (("importextract", "--in", path, "--bbox", "1,2,3"), "four numbers"),
+                    (("importextract", "--in", path, "--bbox", "-1,-1,1,1", "--wkt", "POLYGON((0 0,1 0,1 1,0 0))"), "at most one"),
+                    (("importextract", "--in", os.path.join(folder, "missing.osm")), "Could not import"),
+                    (("deleteextract", "--id", "99999", "--yes"), "No extract with ID 99999")):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaisesRegex(CommandError, message):
+                        self.extract_command(*arguments)
+        finally:
+            for filename in os.listdir(folder):
+                os.remove(os.path.join(folder, filename))
+            os.rmdir(folder)
+
+        # Deleting asks first; anything but "delete", or no answer at all, keeps the extract
+        for answer in (None, "yes"):
+            with self.assertRaisesRegex(CommandError, "Nothing was deleted"):
+                self.extract_command("deleteextract", "--id", str(bare), answer=answer)
+        self.assertIsNotNone(self.checkpoint(bare))
+        self.assertRegex(self.extract_command("deleteextract", "--id", str(bare), answer="delete"),
+                         r"^Deleted extract {} in \d+\.\ds$".format(bare))
+        self.assertIsNone(self.checkpoint(bare))
+        self.assertRegex(self.extract_command("deleteextract", "--name", "copy.json", "--yes"),
+                         r"^Deleted extract \d+ \(copy\.json\) in \d+\.\ds$")
+        self.assertEqual(self.contents(given), self.contents(original))
+
+    def test_compare_command(self):
+        from django.core.management.base import CommandError
+        original = self.populated_extract()
+        other = self.save("other")
+        lines = self.extract_command("compareextract", "--id", str(original)).splitlines()
+        self.assertEqual(lines[1:4], ["nodes: extract {0}, query {0}".format(len([k for k in self.contents(original) if k[0] == "node"])),
+                                      "ways: extract {0}, query {0}".format(len([k for k in self.contents(original) if k[0] == "way"])),
+                                      "relations: extract {0}, query {0}".format(len([k for k in self.contents(original) if k[0] == "relation"]))])
+        self.assertRegex(lines[-2], r"^Extract {} \(\w+\) matches query$".format(original))
+        self.assertRegex(lines[-1], r"^Checked in \d+\.\ds$")
+
+        # After an edit the extracts are behind the map, and say so
+        added = self.create_node(0.5, 0.25)
+        with self.assertRaisesRegex(CommandError, "^2 extracts differ from their queries$"):
+            self.extract_command("compareextract", "--all")
+        with patch("replicate.extracts.get_pgmap", return_value=self.map):
+            from django.core.management import call_command
+            out = io.StringIO()
+            with self.assertRaises(CommandError):
+                call_command("compareextract", "--name", "other", stdout=out, no_color=True)
+        lines = out.getvalue().splitlines()
+        self.assertIn("node {}: missing from extract (query version 1)".format(added.objId), lines)
+        self.assertIn("Note: the map has edits later than the extract's checkpoint; run manage.py updateextracts", lines)
+        self.assertEqual(lines[-2], "Extract {} (other) differs from query: 1 missing from extract, 0 not in query, "
+                                    "0 version mismatches".format(other))
+
+        self.update(other)
+        lines = self.extract_command("compareextract", "--id", str(other)).splitlines()
+        self.assertEqual(lines[-2], "Extract {} (other) matches query".format(other))
+        for arguments, message in ((("--all", "--id", str(other)), "Give --id, --name or --all"),
+                                   ((), "Give --id, --name or --all"),
+                                   (("--id", "99999"), "No extract with ID 99999")):
+            with self.subTest(arguments=arguments):
+                with self.assertRaisesRegex(CommandError, message):
+                    self.extract_command("compareextract", *arguments)
+
     def test_import_checkpoint_and_bbox_arguments_override_document(self):
         original = self.populated_extract()
         ids = self.checkpoint(original)

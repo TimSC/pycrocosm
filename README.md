@@ -200,6 +200,22 @@ It is written to `static/planet/`, which is created if need be, with a name such
 
 The file takes its name only once it is complete, so a dump being written is never seen half finished, and an existing dump is never replaced. Except in .pbf, the header records the edit activity ID and atomic edit ID the dump is current to. The dumps are listed, newest first with their sizes, on a public page at `/replication/planet`, linked from the replication page at `/replication/`. Each entry links to the file under `PLANET_DUMP_URL`, the address at which the web server offers the dump folder: `/static/planet/` by default, which the development server serves. A dump still being written is not listed.
 
+Database extracts from the command line
+---------------------------------------
+
+Everything the admin panel does with extracts stored in the map database can also be done with manage.py (prefix each with `docker compose run --rm web` with the Docker setup):
+
+| Command | What it does |
+|---|---|
+| `python3 manage.py saveextract --bbox W,S,E,N --name harbour` | Saves a new extract of the map in a rectangle, or a polygon with `--wkt` or `--wkt-file` (see below), and prints its ID |
+| `python3 manage.py updateextracts --id N` | Brings extracts up to date (see "Updating database extracts") |
+| `python3 manage.py exportextract --id N --out harbour.osm.gz` | Writes an extract to a file; `--name` selects it by its name instead |
+| `python3 manage.py importextract --in harbour.osm.gz --name harbour` | Stores a file as a new extract and prints its ID |
+| `python3 manage.py compareextract --id N` | Compares an extract with a fresh map query of its area and lists the objects that differ; `--all` compares every extract |
+| `python3 manage.py deleteextract --id N` | Deletes an extract, after you type `delete` to confirm, or straight away with `--yes` |
+
+`exportextract` and `importextract` take the format from the file name: .osm, .o5m, .pbf or .json, optionally followed by .gz. The file's header records the edit activity ID and atomic edit ID the extract is current to, unless `--no-edit-ids` is given or the format is .pbf, which has no room for them, and also any polygon boundary. `importextract` reads them back, so a file written by `exportextract` comes back as an extract that can be kept up to date. Give `--edit-activity-id` and `--atomic-edit-id` together to set the checkpoint instead, and `--bbox`, `--wkt` or `--wkt-file` to set the area instead of the file's bounds; the contents are stored as they are and are not trimmed to the area. A new extract's name must not already be in use. Each command reports how long it took.
+
 Extract boundaries
 ------------------
 
@@ -208,7 +224,7 @@ An extract covers a rectangle, or any single polygon given as WKT, such as a tow
     docker compose run --rm web python3 manage.py saveextract --bbox -1.078,50.788,-1.074,50.790 --name harbour
     docker compose run --rm web python3 manage.py saveextract --wkt-file town.wkt --name town
 
-(`--wkt` takes the polygon itself in place of a file.) In the admin panel, fill in "Or a boundary (WKT)" in place of the four sides; pgmap's `extract --save-db` and `import_extract` take `--wkt` too. Longitude comes before latitude, for example `POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))`. Only a single valid polygon is taken: a multipolygon, a self-crossing ring, or a shape crossing the antimeridian (anything wider than 180 degrees of longitude) is refused with the reason.
+(`--wkt` takes the polygon itself in place of a file.) In the admin panel, fill in "Or a boundary (WKT)" in place of the four sides; `importextract` and pgmap's `extract --save-db` take `--wkt` too. Longitude comes before latitude, for example `POLYGON((-1.08 50.78, -1.06 50.78, -1.07 50.80, -1.08 50.78))`. Only a single valid polygon is taken: a multipolygon, a self-crossing ring, or a shape crossing the antimeridian (anything wider than 180 degrees of longitude) is refused with the reason.
 
 The extract holds what is inside the polygon, by the same rules as a rectangle, and is kept up to date and compared with the map the same way. Files downloaded from it carry the rectangle around the polygon as their bounds, which is all those formats have room for, and the polygon itself as a `boundary` attribute of the file (in .osm, .o5m and .json, not .pbf), so that importing the file again gives the same extract. The extracts page shows a polygon as "polygon within" its rectangle.
 
@@ -230,7 +246,7 @@ An extract can follow the map of another pycrocosm server instead of this one. G
 
 Those records carry everything an update needs, so nothing else is asked of the other server. Edits recorded before a server kept the relations that hold an edit's related nodes (its `related_parents` column, added to schema 14 later) do not: an update that reaches one is refused, and the extract has to be saved or imported afresh from after them.
 
-The extract's contents and checkpoint have to come from that server to begin with. Download one of its extracts (the header of the .osm.gz and .o5m.gz downloads records the checkpoint) and bring it in with pgmap's `import_extract`, then set the address.
+The extract's contents and checkpoint have to come from that server to begin with. Download one of its extracts (the header of the .osm.gz and .o5m.gz downloads records the checkpoint) and bring it in with `python3 manage.py importextract`, then set the address.
 
 Such an extract always holds what a map query without stored bounding boxes selects: the nodes in its rectangle, the ways with such a node and all their nodes, and the relations with one of those nodes or ways as a member.
 

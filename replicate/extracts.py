@@ -126,6 +126,57 @@ def update_db_extract(extract_id, fetch=None):
 	change_db_extract("UpdateExtract", extract_id)
 	return "updated" + reason
 
+def find_db_extract(extract_id=None, name=None):
+	"""The one extract with the ID, or the name, given; ValueError if there is not exactly one."""
+	if (extract_id is None) == (not name):
+		raise ValueError("Give an extract's ID or its name")
+	extracts = list_db_extracts()
+	if extract_id is not None:
+		chosen = [extract for extract in extracts if extract["id"] == extract_id]
+		if not chosen:
+			raise ValueError("No extract with ID {}".format(extract_id))
+	else:
+		chosen = [extract for extract in extracts if extract["name"] == name]
+		if not chosen:
+			raise ValueError("No extract named {}".format(name))
+		if len(chosen) > 1:
+			raise ValueError("More than one extract is named {}; give its ID".format(name))
+	return chosen[0]
+
+def export_db_extract(extract_id, path, edit_ids=True):
+	"""Write an extract to a file, its format chosen by the name, as a download writes it."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		return t.ExportExtractToFile(extract_id, "", path, edit_ids)
+	finally:
+		t.Abort() # Read only; nothing to commit.
+
+def import_db_extract(path, name, bbox=None, wkt=None, edit_ids=(-1, -1)):
+	"""Store a map file as a new extract. Returns (ID, nodes, ways, relations)."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		found = list(t.ImportExtractFromFile(path, name, pgmap.vectord(bbox or []), wkt or "", *edit_ids))
+		t.Commit()
+		return tuple(found)
+	except BaseException:
+		t.Abort()
+		raise
+
+def compare_db_extracts(extract_id=None):
+	"""Compare one extract, or with None every extract, with a fresh map query of its
+	area, all in one snapshot. Returns a list of pgmap.ExtractComparison."""
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		if extract_id is None:
+			results = pgmap.vectorextractcomparison()
+			t.CompareAllExtracts(results)
+			return list(results)
+		result = pgmap.ExtractComparison()
+		t.CompareExtract(extract_id, "", result)
+		return [result]
+	finally:
+		t.Abort() # Read only; nothing to commit.
+
 def change_db_extract(method, extract_id):
 	"""Run PgTransaction.UpdateExtract or DeleteExtract on one extract and commit."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
