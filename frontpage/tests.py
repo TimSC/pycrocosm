@@ -8,10 +8,27 @@ from django.urls import reverse
 
 from overpass import ql
 
+import pgmap
+from unittest.mock import patch
+
+def front_page(useBboxInQuery=True):
+	"""The front page, as on a map with useBboxInQuery set as given."""
+	with patch.object(pgmap.PgTransaction, "UseBboxInQuery", return_value=useBboxInQuery):
+		return Client().get(reverse("frontpage:index"))
+
 class FrontPageTestCase(TestCase):
+	def test_examples_only_when_ways_are_found_by_their_boxes(self):
+		html = front_page(False).content.decode("utf-8")
+		self.assertNotIn("overpass_example", html)
+		self.assertNotIn("xapi_example", html)
+		self.assertNotIn("Example", html)
+		html = front_page(True).content.decode("utf-8")
+		self.assertIn('id="overpass_example"', html)
+		self.assertIn('id="xapi_example"', html)
+
 	@override_settings(OVERPASS_RATE_LIMIT_REQUESTS=0)
 	def test_overpass_example_is_a_working_query(self):
-		response = Client().get(reverse("frontpage:index"))
+		response = front_page()
 		self.assertEqual(response.status_code, 200)
 		html = response.content.decode("utf-8")
 		link = unescape(re.search(r'<a id="overpass_example" href="([^"]*)"', html).group(1))
@@ -31,7 +48,7 @@ class FrontPageTestCase(TestCase):
 
 	def test_xapi_example_is_a_working_request(self):
 		from querymap.tests import DecodeOsmdataResponse
-		html = Client().get(reverse("frontpage:index")).content.decode("utf-8")
+		html = front_page().content.decode("utf-8")
 		link = unescape(re.search(r'<a id="xapi_example" href="([^"]*)"', html).group(1))
 		self.assertEqual(link, "/overpass/xapi_meta?*[bbox=-6.8115234,52.9751082,-5.625,53.7097136][amenity=hospital]")
 		self.assertIn("<code>{}</code>".format(link.split("?", 1)[1]), html)

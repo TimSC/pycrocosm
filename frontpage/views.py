@@ -12,8 +12,11 @@ def index(request):
 	dbStatus = "OK"
 	if value != 0:
 		dbStatus = "Read only"
+	# The examples of area searches are shown when ways and relations are
+	# found by their stored boxes, which makes such searches quick
+	useBboxInQuery = bool(t.UseBboxInQuery())
 
 	t.Commit()
 
-	return render(request, 'frontpage/index.html', {'db_status': dbStatus})
+	return render(request, 'frontpage/index.html', {'db_status': dbStatus, 'use_bbox_in_query': useBboxInQuery})
 

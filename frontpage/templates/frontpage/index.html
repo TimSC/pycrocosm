@@ -21,6 +21,7 @@
 
 <p><a href="{% url 'replication:replicate' %}">Replication data, downloads and recent changesets</a></p>
 
+{% if use_bbox_in_query %}
 {% with query='nwr[amenity=hospital](52.9751082,-6.8115234,53.7097136,-5.625);out center;' %}
 <p><a id="overpass_example" href="{% url 'overpass_interpreter' %}?data={{ query|urlencode:'' }}">Example Overpass query</a>: <code>{{ query }}</code></p>
 {% endwith %}
@@ -28,4 +29,5 @@
 {% with query='*[bbox=-6.8115234,52.9751082,-5.625,53.7097136][amenity=hospital]' %}
 <p><a id="xapi_example" href="{% url 'overpass:xapi2' %}?{{ query }}">Example XAPI request</a>: <code>{{ query }}</code></p>
 {% endwith %}
+{% endif %}
 
