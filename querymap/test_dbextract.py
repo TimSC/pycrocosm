@@ -3057,7 +3057,11 @@ class DbExtractTestCase(SimpleTestCase):
             finally:
                 del admin
         latest = admin_call(lambda admin: admin.GetLatestIndexVersion())
-        self.assertGreaterEqual(latest, 1)
+        # Numbered with the schema: the indices of the latest schema version
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
+                sql.Identifier(self.prefixes[1] + "meta")))
+            self.assertEqual(latest, int(cursor.fetchone()[0]))
         # Tables that have only been created: nothing is recorded, and the tool says what to do
         self.assertEqual(versions(), [None, None, None])
         notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
@@ -3082,12 +3086,18 @@ class DbExtractTestCase(SimpleTestCase):
             self.assertGreaterEqual(built, 3)
             # An older version on record is reported, and running the step again
             # checks every index and records the current version
-            cursor.execute(sql.SQL("UPDATE {} SET value='0' WHERE key='index_version'").format(
+            cursor.execute(sql.SQL("UPDATE {} SET value='14' WHERE key='index_version'").format(
                 sql.Identifier(self.prefixes[0] + "meta")))
             cursor.execute(sql.SQL("DROP INDEX {}").format(sql.Identifier(self.prefixes[1] + "livenodes_ts")))
         notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
+        self.assertEqual(notes, ['The indices of the {} tables are those of schema version 14 (the current version '
+                                 'is {}): run "Create indicies".'.format(self.prefixes[0], latest)])
+        # A version recorded as 1, as index versions were first counted, is the current one
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET value='1' WHERE key='index_version'").format(
+                sql.Identifier(self.prefixes[2] + "meta")))
+        notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
         self.assertEqual(len(notes), 1)
-        self.assertIn(self.prefixes[0], notes[0])
         self.assertTrue(admin_call(lambda admin: admin.CreateMapIndices(0, error)), error.errStr)
         self.assertEqual(versions(), [str(latest)] * 3)
         with self.db.cursor() as cursor:
