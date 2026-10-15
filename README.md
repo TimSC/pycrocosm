@@ -295,11 +295,9 @@ With `useBboxInQuery` at 1:
 
 Without the boxes being worked out first, step 1, ways and relations with no box are simply not found by area, which is why the admin panel warns. The boxes are kept up to date by edits whatever the setting, and the edit activity records take their boxes from them, so step 1 is worth doing on any map whose edits other servers follow to keep their extracts up to date: without them, an edit to a relation that holds other relations is recorded as possibly concerning anywhere, and is sent to every extract.
 
-Highly loaded servers
+Running in production
 ---------------------
 
-Highly loaded Linux servers should consider increasing net.core.somaxconn to about 1024. This prevents errors such as "(11: Resource temporarily unavailable) while connecting to upstream". https://blog.narrativ.com/uwsgi-and-nginx-connection-queues-43eaba95047e Running scripts that repeatedly and rapidly access the API can trigger this problem.
-
-Add net.core.somaxconn=1024 to /etc/sysctl.conf for it to become permanent, then reboot. https://serverfault.com/a/271386/375337
+[PRODUCTION.md](PRODUCTION.md) lists the settings to change for a public server, the recommended reverse proxy and application server, and PostgreSQL settings for fast queries.
 
 All done!
