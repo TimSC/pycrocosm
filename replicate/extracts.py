@@ -3,6 +3,7 @@
 import datetime
 
 import pgmap
+from django.conf import settings
 
 from pycrocosm.mapdb import get_pgmap
 
@@ -107,7 +108,6 @@ def update_db_extract(extract_id, fetch=None):
 
 	Returns a short description of what was done.
 	"""
-	from django.conf import settings
 	from .remoteupdate import RemoteUpdateError, update_extract_from_records, update_extract_from_remote
 	extract = get_db_extract(extract_id)
 	if extract is None:
@@ -148,11 +148,23 @@ def find_db_extract(extract_id=None, name=None):
 			raise ValueError("More than one extract is named {}; give its ID".format(name))
 	return chosen[0]
 
-def export_db_extract(extract_id, path, edit_ids=True):
-	"""Write an extract to a file, its format chosen by the name, as a download writes it."""
+def public_url(request=None):
+	"""This server's address, the front page's, as files say where to keep them up
+	to date from: PUBLIC_URL in the settings, or else public_url in pgmap's
+	configuration (PGMAP_PUBLIC_URL in the environment). Without either, the
+	address request came to, if there is one, or else the empty string."""
+	url = getattr(settings, "PUBLIC_URL", None) or pgmap.GetConfigValue("public_url", "")
+	if not url and request is not None:
+		url = request.build_absolute_uri("/")
+	return url.strip()
+
+def export_db_extract(extract_id, path, update_info=True):
+	"""Write an extract to a file, its format chosen by the name, as a download
+	writes it. With update_info, the header says what keeping the file up to
+	date needs (see PgTransaction.GetExtractHeaderAttribs)."""
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 	try:
-		return t.ExportExtractToFile(extract_id, "", path, edit_ids)
+		return t.ExportExtractToFile(extract_id, "", path, update_info, public_url())
 	finally:
 		t.Abort() # Read only; nothing to commit.
 

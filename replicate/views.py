@@ -7,6 +7,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 #from defusedxml.ElementTree import fromstring
 import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
+from .extracts import public_url
 from .extracts import list_db_extracts, list_db_extracts_with_latest
 from pycrocosm import common
 import os
@@ -26,9 +27,10 @@ from django.views.decorators.http import require_GET
 # The file formats an extract can be downloaded in, by file name extension:
 # how to make the encoder, whether the encoded stream is then gzipped, and the
 # content type. PBF compresses its own blocks, so it is not gzipped again.
-# Each encoder is made for an output and the extract's edit IDs: the edit
-# activity ID and atomic edit ID it is current to, which go in the file header
-# so that whoever holds the file can tell, and can update from there. PBF has
+# Each encoder is made for an output and the header attributes that say what
+# keeping the file up to date needs: the edits it is current to, its area and
+# the server to update from (see PgTransaction.GetExtractHeaderAttribs), so
+# that whoever holds the file can tell, and can update from there. PBF has
 # nowhere to put them.
 def xml_extract_encoder(out, edit_ids):
     attribs = dict(common.xmlAttribs)
@@ -45,7 +47,7 @@ EXTRACT_FORMATS = {
 
 class ExtractDownload:
     """Stream bounded encoded batches while keeping the snapshot transaction alive."""
-    def __init__(self, extract_id, name, make_encoder=None):
+    def __init__(self, extract_id, name, make_encoder=None, public_url=""):
         self.map = get_pgmap()
         self.transaction = self.map.GetTransaction("ACCESS SHARE")
         self.buffer = io.BytesIO()
@@ -54,33 +56,15 @@ class ExtractDownload:
         self.encoder = None
         self.exporter = None
         try:
-            self.encoder = make_encoder(self.buffer, self.edit_ids(extract_id, name))
+            # What keeping the file up to date needs, read in the transaction
+            # that exports it, so the two agree
+            attribs = dict(self.transaction.GetExtractHeaderAttribs(extract_id, name, public_url))
+            self.encoder = make_encoder(self.buffer, attribs)
             self.exporter = self.transaction.StartExportExtract(extract_id, name, self.encoder)
             self.extract_id = self.exporter.GetId()
         except BaseException:
             self.close()
             raise
-
-    def edit_ids(self, extract_id, name):
-        """The checkpoint of the extract about to be exported, as header attributes.
-
-        Read in the transaction that exports it, so the two agree. Empty if the
-        extract has no checkpoint yet, or is not found: the export itself
-        reports an extract that is missing or whose name is ambiguous.
-        """
-        infos = pgmap.vectorextractinfo()
-        self.transaction.ListExtracts(infos)
-        chosen = [(info.editActivityId, info.atomicEditId, info.rectangular, info.boundaryWkt) for info in infos
-            if (info.extractId == extract_id if extract_id else info.name == name)]
-        if len(chosen) != 1:
-            return {}
-        attribs = {}
-        if chosen[0][0] >= 0 and chosen[0][1] >= 0:
-            attribs.update({"edit_activity_id": str(chosen[0][0]), "atomic_edit_id": str(chosen[0][1])})
-        # A boundary that is not a rectangle, which the file's bounds cannot hold
-        if not chosen[0][2]:
-            attribs["boundary"] = chosen[0][3]
-        return attribs
 
     def __iter__(self):
         return self
@@ -200,7 +184,7 @@ def download_extract(request, extract_id=None, file_format="osm"):
         if not 0 < extract_id <= 9223372036854775807:
             return HttpResponseBadRequest("Invalid extract ID", content_type="text/plain")
     try:
-        download = ExtractDownload(extract_id, name, make_encoder)
+        download = ExtractDownload(extract_id, name, make_encoder, public_url(request))
     except RuntimeError as error:
         message = str(error).removeprefix("Standard runtime exception: ")
         if message == "Extract not found":

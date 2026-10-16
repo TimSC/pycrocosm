@@ -31,8 +31,8 @@ class DumpPlanetTestCase(SimpleTestCase):
 		self.calls = []
 		calls = self.calls
 
-		def stand_in(transaction, filename, edit_ids):
-			calls.append((filename, edit_ids))
+		def stand_in(transaction, filename, update_info, public_url=""):
+			calls.append((filename, update_info, public_url))
 			if not re.search(r"\.(osm|o5m|pbf|json)(\.gz)?$", filename):
 				raise RuntimeError("Standard exception: Output file name must end in a known format")
 			with open(filename, "wb") as out:
@@ -46,6 +46,15 @@ class DumpPlanetTestCase(SimpleTestCase):
 		out = io.StringIO()
 		call_command("dumpplanet", *arguments, stdout=out, no_color=True)
 		return out.getvalue()
+
+	def test_update_info(self):
+		# This server's address goes in the header for keeping the dump up to
+		# date, unless asked not to
+		with override_settings(PLANET_DUMP_DIR=self.folder, PUBLIC_URL="https://maps.example.org/"):
+			self.dump("--filename", "a.o5m")
+			self.dump("--filename", "b.o5m", "--no-update-info")
+		self.assertEqual(self.calls, [(os.path.join(self.folder, "a.o5m"), True, "https://maps.example.org/"),
+			(os.path.join(self.folder, "b.o5m"), False, "https://maps.example.org/")])
 
 	def test_default_settings(self):
 		self.assertEqual(settings.PLANET_DUMP_DIR, os.path.join(settings.BASE_DIR, "static", "planet"))
@@ -61,7 +70,7 @@ class DumpPlanetTestCase(SimpleTestCase):
 		self.assertRegex(names[0], r"^fosm-planet_\d{14}\.o5m$")
 		path = os.path.join(target, names[0])
 		# pgmap is asked for that file, with the edit IDs in its header
-		self.assertEqual(self.calls, [(path, True)])
+		self.assertEqual(self.calls, [(path, True, "")])
 		self.assertRegex(message, r"^Wrote {} \(8 bytes\) in \d+\.\ds\n$".format(re.escape(path)))
 		# Anyone may read a published dump
 		self.assertEqual(os.stat(path).st_mode & 0o777, 0o644)
@@ -73,7 +82,7 @@ class DumpPlanetTestCase(SimpleTestCase):
 		other = os.path.join(self.folder, "elsewhere")
 		self.dump("--dir", other, "--filename", "planet.pbf")
 		self.assertEqual(os.listdir(other), ["planet.pbf"])
-		self.assertEqual(self.calls[-1], (os.path.join(other, "planet.pbf"), True))
+		self.assertEqual(self.calls[-1], (os.path.join(other, "planet.pbf"), True, ""))
 
 	def test_refused_dumps(self):
 		for pattern, message in (("sub/planet.o5m", "must not include a folder"),

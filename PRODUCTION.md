@@ -27,6 +27,7 @@ These go in `.env`, beside `docker-compose.yml` (`env.template` is a starting po
 | `DJANGO_ALLOWED_HOSTS` | `maps.example.org` | The names the site answers to; others are refused. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://maps.example.org` | Needed for logging in and the admin forms behind an HTTPS proxy. |
 | `DJANGO_BEHIND_HTTPS_PROXY` | `1` | Believe the proxy's `X-Forwarded-Proto`. Set only when every request comes through the proxy. |
+| `DJANGO_PUBLIC_URL` | `https://maps.example.org/` | The address extract files and planet dumps give as the server to keep them up to date from (`update_url`). pgmap's own tools read `PGMAP_PUBLIC_URL`; set both, or set `public_url` in `pgmap/config.cfg`, which the web server reads too. |
 | `DJANGO_DB_*`, `DJANGO_MAP_DB_*`, `PGMAP_*` | The database connections | `DJANGO_DB_*` is the settings database; the map database comes from `pgmap/config.cfg`, overridden by `PGMAP_*` (pgmap's tools read these too) and, for the web server only, `DJANGO_MAP_DB_*`. Use a password that is not `password`. |
 | `LOGIN_RATE_LIMIT_*`, `OAUTH2_RATE_LIMIT_*`, `OVERPASS_RATE_LIMIT_*` | Defaults are reasonable | Requests per client address in each window; zero turns a limit off. See [Known issues](#known-issues). |
 

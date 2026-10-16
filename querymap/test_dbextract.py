@@ -1826,12 +1826,9 @@ class DbExtractTestCase(SimpleTestCase):
                 found += [("relation", r.objId, r.metaData.version) for r in decoded.relations]
                 self.assertEqual(sorted(found), expected)
                 self.assertEqual(len(decoded.bounds), 1)
-                # o5m carries the extract's edit IDs; PBF has nowhere to put them
-                ids = self.checkpoint(extract_id)
-                # (an extract whose boundary is not a rectangle also carries that)
-                attributes = {k: v for k, v in dict(decoded.attributes).items() if k != "boundary"}
-                self.assertEqual(attributes, {} if extension == "pbf" else
-                                 {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])})
+                # o5m carries what keeping it up to date needs; PBF has nowhere to put it
+                self.assertEqual(dict(decoded.attributes), {} if extension == "pbf" else
+                                 self.update_info(extract_id, "http://testserver/"))
                 way = decoded.ways[0]
                 self.assertEqual(len(way.refs), 3)
                 relation = [r for r in decoded.relations if len(r.members) == 4][0]
@@ -1842,6 +1839,95 @@ class DbExtractTestCase(SimpleTestCase):
                 early = self.download(url)
                 early.close()
                 self.update(extract_id)
+
+    def update_info(self, extract_id, update_url=None):
+        """The header attributes a file of an extract should have: its edit IDs,
+        its area, and the server to update from."""
+        def number(value):
+            # As pgmap writes a number: the fewest digits that read back the same
+            text = repr(float(value))
+            return text[:-2] if text.endswith(".0") else text
+        ids = self.checkpoint(extract_id)
+        info = self.extract_info(extract_id)
+        attributes = {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])}
+        if info.rectangular:
+            attributes["bbox"] = ",".join(number(value) for value in info.bbox)
+        else:
+            attributes["boundary"] = info.boundaryWkt
+        if update_url:
+            attributes["update_url"] = update_url
+        return attributes
+
+    def header(self, path):
+        """The attributes of a file's header, read by the format its name gives."""
+        import gzip
+        with (gzip.open if path.endswith(".gz") else open)(path, "rb") as handle:
+            raw = handle.read()
+        data = pgmap.OsmData()
+        name = path[:-3] if path.endswith(".gz") else path
+        if name.endswith(".o5m"):
+            pgmap.LoadFromO5mBytes(raw, data)
+        elif name.endswith(".json"):
+            pgmap.LoadFromOsmJson(raw.decode("utf-8"), data)
+        else:
+            pgmap.LoadFromOsmXml(raw.decode("utf-8"), data)
+        return dict(data.attributes)
+
+    def test_files_say_what_keeping_them_up_to_date_needs(self):
+        import os, tempfile
+        from django.test import override_settings
+        from replicate import extracts
+        self.create_node(0.5, 0.5)
+        extract_id = self.save("described")
+        folder = tempfile.mkdtemp()
+        try:
+            def export(name, *arguments):
+                path = os.path.join(folder, name)
+                self.extract_command("exportextract", "--id", str(extract_id), "--out", path, *arguments)
+                return self.header(path)
+            # This server's address is left out when it is not known
+            with override_settings(PUBLIC_URL=""), patch.object(extracts.pgmap, "GetConfigValue", return_value=""):
+                self.assertEqual(export("plain.osm"), self.update_info(extract_id))
+            with override_settings(PUBLIC_URL="https://maps.example.org/"):
+                self.assertEqual(export("own.o5m"), self.update_info(extract_id, "https://maps.example.org/"))
+                # An extract kept up from another server names that one, whose numbering its edit IDs are in
+                self.set_auto_update(extract_id, "", False, "https://elsewhere.example.org/")
+                self.assertEqual(export("follower.osm.gz"), self.update_info(extract_id, "https://elsewhere.example.org/"))
+                self.set_auto_update(extract_id, "", False, "")
+                # Left out on request, all of it
+                self.assertEqual(export("bare.osm", "--no-update-info"), {})
+                self.assertEqual(export("bare.json", "--no-edit-ids"), {})
+                # A download falls back to the address it was asked for at
+            with override_settings(PUBLIC_URL=""), patch.object(extracts.pgmap, "GetConfigValue", return_value=""):
+                response = self.download(reverse("replication:download_extract_by_id", args=[extract_id]))
+                document = b"".join(response.streaming_content)
+                response.close()
+                path = os.path.join(folder, "downloaded.osm")
+                with open(path, "wb") as handle:
+                    handle.write(document)
+                # with the attributes every XML answer has, such as the licence
+                update_keys = ("edit_activity_id", "atomic_edit_id", "bbox", "boundary", "update_url")
+                header = {k: v for k, v in self.header(path).items() if k in update_keys}
+                self.assertEqual(header, self.update_info(extract_id, "http://testserver/"))
+
+            # A rectangle's bbox attribute is enough for an import with no bounds
+            if self.extract_info(extract_id).rectangular:
+                import xml.etree.ElementTree as ET
+                root = ET.parse(os.path.join(folder, "plain.osm")).getroot()
+                root.remove(root.find("bounds"))
+                path = os.path.join(folder, "nobounds.osm")
+                ET.ElementTree(root).write(path, encoding="utf-8", xml_declaration=True)
+                line = self.extract_command("importextract", "--in", path, "--name", "from-bbox")
+                imported = int(re.search(r"extract (\d+)", line).group(1))
+                # (each info kept while its bbox is read: the list is a view of it)
+                imported_info, original_info = self.extract_info(imported), self.extract_info(extract_id)
+                self.assertEqual(list(imported_info.bbox), list(original_info.bbox))
+                self.assertTrue(imported_info.rectangular)
+                self.assertEqual(self.checkpoint(imported), self.checkpoint(extract_id))
+        finally:
+            for name in os.listdir(folder):
+                os.remove(os.path.join(folder, name))
+            os.rmdir(folder)
 
     def test_extract_pages_link_every_format(self):
         extract_id = self.save("linked")

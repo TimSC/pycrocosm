@@ -248,6 +248,15 @@ PLANET_DUMP_FILENAME = 'fosm-planet_%Y%m%d%H%M%S.o5m'
 # default folder; change both together.
 PLANET_DUMP_URL = '/static/planet/'
 
+# This server's address, the front page's, such as https://maps.example.org/.
+# Downloaded extracts and planet dumps record it in their header (update_url),
+# so that whoever holds the file knows where to keep it up to date from. If it
+# is empty, pgmap's public_url setting is used (PGMAP_PUBLIC_URL in the
+# environment, which pgmap's own tools read too), and failing that, downloads
+# give the address they were requested at, and files written from the
+# command line leave it out.
+PUBLIC_URL = os.environ.get('DJANGO_PUBLIC_URL', '')
+
 #Stop django adding slashes to URLs that are missing
 APPEND_SLASH = False
 

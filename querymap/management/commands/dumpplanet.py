@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from pycrocosm.singlerun import one_at_a_time
 from pycrocosm import common
 from pycrocosm.mapdb import get_pgmap
+from replicate.extracts import public_url
 
 class Command(BaseCommand):
 	help = ("Write the whole map to a planet dump file. The folder and the pattern for the "
@@ -17,6 +18,9 @@ class Command(BaseCommand):
 		parser.add_argument("--dir", help="Folder to write to, instead of PLANET_DUMP_DIR")
 		parser.add_argument("--filename", help="File name pattern, instead of PLANET_DUMP_FILENAME; "
 			"strftime codes stand for the time the dump starts, in UTC")
+		parser.add_argument("--no-update-info", action="store_true",
+			help="Leave out of the file header the edits the dump is current to and the server to keep "
+				"it up to date from (update_url)")
 
 	@one_at_a_time
 	def handle(self, *args, **options):
@@ -40,7 +44,7 @@ class Command(BaseCommand):
 		try:
 			# The file is given its name only when complete, so a dump that is
 			# being written, or that failed, is never offered for download.
-			t.DumpToFile(path, True)
+			t.DumpToFile(path, not options["no_update_info"], public_url())
 		except Exception as err:
 			message = str(err).replace("Standard runtime exception: ", "").replace("Standard exception: ", "")
 			raise CommandError("Dump failed: {}".format(message))
