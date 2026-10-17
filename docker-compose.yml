@@ -13,3 +13,19 @@ services:
       - ./.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  # The edit notification server (notify/README.md). Not started by a plain
+  # "docker compose up": start it with "docker compose --profile notify up -d".
+  notifier:
+    build: ./
+    command: python3 manage.py editnotifier --port 7500
+    profiles: ["notify"]
+    restart: unless-stopped
+    volumes:
+      - ./:/usr/src/app/
+    ports:
+      - 7500:7500
+    env_file:
+      - ./.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

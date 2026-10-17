@@ -240,6 +240,11 @@ Stored extracts saved while `useBboxInQuery` is on are kept up to date by being 
 
 Leave `fsync`, `full_page_writes` and `synchronous_commit` on: edits are people's work, and turning these off risks losing or corrupting data in a crash. If you changed `wal_level` to `minimal` for an import, set it back to `replica` (with `max_wal_senders` at its default) before relying on replication or log archiving for backups.
 
+Edit notifications
+------------------
+
+If you run the edit notification server ([notify/README.md](notify/README.md)), open its port (7500 by default) only to the clients that need it: the connection is not encrypted and clients are not identified. It needs a direct connection to PostgreSQL, not one through PgBouncer in transaction mode, and counts against `max_connections` like one more application thread. Its per-connection limits (`--max-per-address`, `--requests-per-second` and others) have defaults that suit most servers.
+
 Regular jobs and backups
 ------------------------
 

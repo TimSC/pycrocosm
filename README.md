@@ -295,6 +295,11 @@ With `useBboxInQuery` at 1:
 
 Without the boxes being worked out first, step 1, ways and relations with no box are simply not found by area, which is why the admin panel warns. The boxes are kept up to date by edits whatever the setting, and the edit activity records take their boxes from them, so step 1 is worth doing on any map whose edits other servers follow to keep their extracts up to date: without them, an edit to a relation that holds other relations is recorded as possibly concerning anywhere, and is sent to every extract.
 
+Edit notifications
+------------------
+
+A TCP server can tell subscribed clients when the map has new edits, as they are made, filtered to an area each client chooses: see [notify/README.md](notify/README.md). Start it with `docker compose --profile notify up -d notifier`.
+
 Running in production
 ---------------------
 

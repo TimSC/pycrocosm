@@ -84,6 +84,7 @@ INSTALLED_APPS = [
 	'register.apps.RegisterConfig',
 	'frontpage.apps.FrontpageConfig',
 	'replicate.apps.ReplicateConfig',
+	'notify.apps.NotifyConfig',
 	'extra.apps.ExtraConfig',
 	'objectinfo.apps.ObjectinfoConfig',
 	'oauth2.apps.Oauth2Config',
