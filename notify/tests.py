@@ -49,16 +49,18 @@ class FakeSource(EditSource):
 		self.asked.append(("concerns", first_id, last_id, area))
 		return area in self.areas
 
-	def records(self, first_id, last_id, area, file_format="xml"):
+	def records(self, first_id, last_id, area, file_format="xml", limit=0):
 		"""One record for each ID in the range, if the edits concern the area."""
 		self.asked.append(("records", first_id, last_id, area, file_format))
 		if area is not None and area not in self.areas:
 			return None
+		ids = list(range(first_id, last_id + 1))[:limit or None]
+		covered = ids[-1] if limit and len(ids) == limit else last_id
 		if file_format == "msgpack":
-			return last_id - first_id + 1, [{"id": i, "updated": b"\xff\xfe"} for i in range(first_id, last_id + 1)]
+			return len(ids), [{"id": i, "updated": b"\xff\xfe"} for i in ids], covered
 		document = "<editactivities>{}</editactivities>".format(
-			"".join('<editactivity id="{}"/>'.format(i) for i in range(first_id, last_id + 1))).encode()
-		return last_id - first_id + 1, document
+			"".join('<editactivity id="{}"/>'.format(i) for i in ids)).encode()
+		return len(ids), document, covered
 
 class ServerThread:
 	"""An EditNotifier running in a thread of its own, on a free port."""
@@ -282,11 +284,118 @@ class ServerTests(SimpleTestCase):
 			with self.assertRaisesRegex(RuntimeError, r"\(-32602\)"):
 				client.call(method, options)
 
+	# What clients can make the map do
+
+	def test_wkt_areas_are_limited_in_points(self):
+		self.start(max_wkt_points=4)
+		client = self.connect()
+		with self.assertRaisesRegex(RuntimeError, r"more than 4 points.*\(-32602\)"):
+			client.call("subscribe_edits", {"wkt": "POLYGON((0 0,1 0,1 1,0 1,0 0))"})
+		# Refused before the map is asked
+		self.assertEqual(self.source.asked, [])
+		client.call("subscribe_edits", {"wkt": TRIANGLE})
+
+	def test_bboxes_are_widened_to_a_grid(self):
+		self.start()
+		self.source.areas = {NEAR}
+		close, closer = self.connect(), self.connect()
+		close.call("subscribe_records", {"bbox": [0.001, 0.002, 0.999, 0.998]})
+		closer.call("subscribe_records", {"bbox": [0, 0, 1, 1]})
+		self.new_edits()
+		self.assertEqual(close.next_notification()[0], "records")
+		self.assertEqual(closer.next_notification()[0], "records")
+		# One area, asked about once
+		self.assertEqual([a for a in self.source.asked if a[0] == "records"], [("records", 11, 15, NEAR, "xml")])
+		self.assertEqual(protocol.round_bbox((-1.105, 50.771, -1.031, 50.859), 0.01), (-1.11, 50.77, -1.03, 50.86))
+		self.assertEqual(protocol.round_bbox((-179.999, -89.999, 179.999, 89.999), 0.01), (-180.0, -90.0, 180.0, 90.0))
+		self.assertEqual(protocol.round_bbox((0.123, 0.456, 0.789, 0.987), 0), (0.123, 0.456, 0.789, 0.987))
+
+	def test_different_areas_are_limited(self):
+		self.start(max_areas=2)
+		first, second, third = self.connect(), self.connect(), self.connect()
+		first.call("subscribe_edits", {"bbox": [0, 0, 1, 1]})
+		first.call("subscribe_records", {"bbox": [2, 2, 3, 3], "format": "msgpack"})
+		with self.assertRaisesRegex(RuntimeError, r"following 2 different areas.*\(-32005\)"):
+			second.call("subscribe_edits", {"wkt": TRIANGLE})
+		# Areas already followed, in either kind or format, and everywhere, are free
+		second.call("subscribe_records", {"bbox": [0, 0, 1, 1]})
+		second.call("subscribe_edits", {"bbox": [2, 2, 3, 3]})
+		third.call("subscribe_edits")
+		third.call("subscribe_records")
+		# An area no longer followed makes room
+		first.call("unsubscribe_records")
+		second.call("unsubscribe_edits")
+		third.call("unsubscribe_edits")
+		third.call("subscribe_edits", {"wkt": TRIANGLE})
+
+	def test_records_are_split_into_messages(self):
+		self.start(records_per_message=2)
+		client = self.connect()
+		client.call("subscribe_records")
+		self.new_edits()
+		ranges = []
+		for _ in range(3):
+			method, params = client.next_notification()
+			ranges.append((params[0]["first_id"], params[0]["last_id"], params[0]["records"],
+				gzip.decompress(params[0]["xml_gz"]).count(b"<editactivity ")))
+		self.assertEqual(ranges, [(11, 12, 2, 2), (13, 14, 2, 2), (15, 15, 1, 1)])
+		self.assertTrue(quiet(client))
+
+	def test_an_area_the_map_cannot_answer_for(self):
+		class Failing(FakeSource):
+			def concerns(self, first_id, last_id, area):
+				if area == ("wkt", TRIANGLE):
+					raise RuntimeError("canceling statement due to statement timeout")
+				return super().concerns(first_id, last_id, area)
+			def records(self, first_id, last_id, area, file_format="xml", limit=0):
+				if area == ("wkt", TRIANGLE):
+					raise RuntimeError("canceling statement due to statement timeout")
+				return super().records(first_id, last_id, area, file_format, limit)
+		server = self.start(Failing())
+		self.source.areas = {NEAR}
+		edits, records, others = self.connect(), self.connect(), self.connect()
+		edits.call("subscribe_edits", {"wkt": TRIANGLE})
+		records.call("subscribe_records", {"wkt": TRIANGLE})
+		others.call("subscribe_records", {"bbox": [0, 0, 1, 1]})
+		self.new_edits()
+		# Told anyway, as it may concern them; the records cannot be sent, so
+		# their subscriber is dropped, to catch up through the API; the rest
+		# go on as usual
+		self.assertEqual(edits.next_notification(), EDITS_15)
+		self.assertTrue(closed(records))
+		self.assertEqual(others.next_notification()[0], "records")
+		self.assertTrue(any("statement timeout" in m for m in server.messages))
+		self.new_edits((16, 10))
+		self.assertEqual(edits.next_notification()[0], "edits")
+
+	def test_queries_of_the_map_are_timed(self):
+		class Transaction:
+			def __init__(self):
+				self.timeouts = []
+			def SetStatementTimeout(self, ms):
+				self.timeouts.append(ms)
+			def GetLatestEditIds(self):
+				return (1, 1)
+			def Abort(self):
+				pass
+		class Map:
+			def __init__(self):
+				self.transactions = []
+			def Ready(self):
+				return True
+			def GetTransaction(self, mode):
+				self.transactions.append(Transaction())
+				return self.transactions[-1]
+		made = Map()
+		PgmapEditSource(lambda: made, query_timeout=2.5).latest()
+		PgmapEditSource(lambda: made).latest()
+		self.assertEqual([t.timeouts for t in made.transactions], [[2500], []])
+
 	def test_no_limit_on_what_the_server_sends(self):
 		# A large records notification goes out whole, however much is waiting
 		class Large(FakeSource):
-			def records(self, first_id, last_id, area, file_format="xml"):
-				return 1, b"<editactivities>" + b"x" * 5000000 + b"</editactivities>"
+			def records(self, first_id, last_id, area, file_format="xml", limit=0):
+				return 1, b"<editactivities>" + b"x" * 5000000 + b"</editactivities>", last_id
 		self.start(Large(), max_message_bytes=1024)
 		client = self.connect()
 		client.call("subscribe_records")
@@ -324,9 +433,9 @@ class ServerTests(SimpleTestCase):
 
 	class Incompressible(FakeSource):
 		"""Records too large, even gzipped, for the system's buffers to hide."""
-		def records(self, first_id, last_id, area, file_format="xml"):
+		def records(self, first_id, last_id, area, file_format="xml", limit=0):
 			import os
-			return 1, b"<editactivities>" + os.urandom(12 * 1024 * 1024).hex().encode() + b"</editactivities>"
+			return 1, b"<editactivities>" + os.urandom(12 * 1024 * 1024).hex().encode() + b"</editactivities>", last_id
 
 	def test_clients_that_fall_behind_are_dropped(self):
 		self.start(self.Incompressible(), write_high_water=64 * 1024, behind_timeout=0.5)
@@ -461,7 +570,7 @@ class MapTests(SimpleTestCase):
 
 	def serve(self):
 		source = PgmapEditSource(lambda: pgmap.PgMap(self.connection_string, self.prefixes[0],
-			self.prefixes[1], self.prefixes[1], self.prefixes[2]))
+			self.prefixes[1], self.prefixes[1], self.prefixes[2]), query_timeout=10)
 		# A long heartbeat, so only the database's notification can bring news soon
 		server = ServerThread(source, Limits(heartbeat=60), self.connection_string, self.prefixes[1] + "edits")
 		self.addCleanup(server.stop)

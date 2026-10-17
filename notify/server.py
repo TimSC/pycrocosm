@@ -47,6 +47,12 @@ class Limits:
 	behind_timeout: float = 60 #...and seconds it may stay behind before it is dropped
 	keepalive: int = 60 #Seconds a connection may be idle before TCP checks the client is still there
 	heartbeat: float = 30 #Seconds between heartbeats, and checks for missed edits
+	#What the map is asked, which grows with what clients subscribe to
+	max_wkt_points: int = 1000 #Points a WKT area may have
+	max_areas: int = 32 #Different areas followed at once, by all connections; 0 for no limit
+	bbox_grid: float = 0.01 #Degrees a bbox is widened out to a multiple of; 0 leaves it as given
+	query_timeout: float = 10 #Seconds each query of the map may take
+	records_per_message: int = 100 #Records in one records notification, at most
 
 class EditSource:
 	"""Where the server learns about edits. Its methods block; the server calls
@@ -66,26 +72,33 @@ class EditSource:
 		"""Whether any edit activity record with an ID in the range may concern the area."""
 		raise NotImplementedError
 
-	def records(self, first_id, last_id, area, file_format="xml"):
+	def records(self, first_id, last_id, area, file_format="xml", limit=0):
 		"""The edit activity records with IDs in the range that may concern the
-		area, as (how many, the records), or None if there are none. The
-		records are the replication API's XML document of them as UTF-8, or
-		with file_format "msgpack", the list of records its msgpack document
-		holds, as maps, their objects o5m encoded."""
+		area, the first limit of them (0 for all), as (how many, the records,
+		the last ID they cover), or None if there are none. The records are the
+		replication API's XML document of them as UTF-8, or with file_format
+		"msgpack", the list of records its msgpack document holds, as maps,
+		their objects o5m encoded. They cover the range up to last_id, or if
+		limit cut them short, up to the last of them."""
 		raise NotImplementedError
 
 class PgmapEditSource(EditSource):
 	"""The map's own edit activity, read through pgmap. make_pgmap makes the
-	connection, in the thread that uses it."""
+	connection, in the thread that uses it. Each query may take query_timeout
+	seconds (0 for no limit), after which it fails."""
 
-	def __init__(self, make_pgmap):
+	def __init__(self, make_pgmap, query_timeout=0):
 		self.make_pgmap = make_pgmap
+		self.query_timeout = query_timeout
 		self.map = None
 
 	def _transaction(self):
 		if self.map is None or not self.map.Ready():
 			self.map = self.make_pgmap()
-		return self.map.GetTransaction("ACCESS SHARE")
+		t = self.map.GetTransaction("ACCESS SHARE")
+		if self.query_timeout:
+			t.SetStatementTimeout(int(self.query_timeout * 1000))
+		return t
 
 	def latest(self):
 		t = self._transaction()
@@ -126,17 +139,18 @@ class PgmapEditSource(EditSource):
 		finally:
 			t.Abort()
 
-	def records(self, first_id, last_id, area, file_format="xml"):
+	def records(self, first_id, last_id, area, file_format="xml", limit=0):
 		from replicate import views #Which writes the records as the API does
 		t = self._transaction()
 		try:
-			results = self._query(t, first_id, last_id, area, 0)
+			results = self._query(t, first_id, last_id, area, limit)
 			activities = [results[i] for i in range(results.size())]
 			if not activities:
 				return None
+			covered = activities[-1].objId if limit and len(activities) == limit else last_id
 			if file_format == "msgpack":
-				return len(activities), views.edit_activity_records(activities, t)
-			return len(activities), views.edit_activities_document(activities, t)
+				return len(activities), views.edit_activity_records(activities, t), covered
+			return len(activities), views.edit_activities_document(activities, t), covered
 		finally:
 			t.Abort()
 
@@ -217,6 +231,11 @@ def set_keepalive(sock, idle):
 	for name, value in (("TCP_KEEPIDLE", idle), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 6)):
 		if hasattr(socket, name):
 			sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), max(1, int(value)))
+
+def describe_area(area):
+	if area is None:
+		return "everywhere"
+	return "bbox {}".format(",".join(str(v) for v in area[1])) if area[0] == "bbox" else "a WKT area"
 
 class Connection(asyncio.Protocol):
 	"""One client."""
@@ -397,6 +416,12 @@ class Connection(asyncio.Protocol):
 				"Already subscribed to {}; unsubscribe first".format(kind))
 		area = protocol.parse_area(given)
 		file_format = protocol.parse_format(given) if kind == "records" else None
+		if area is not None and area[0] == "bbox":
+			area = ("bbox", protocol.round_bbox(area[1], self.limits.bbox_grid))
+		if area is not None and area[0] == "wkt" and protocol.wkt_points(area[1]) > self.limits.max_wkt_points:
+			raise ProtocolError(protocol.INVALID_PARAMS, "wkt: more than {} points; simplify the shape".format(
+				self.limits.max_wkt_points))
+		self.notifier.check_area_allowed(area)
 		if area is not None and area[0] == "wkt":
 			try:
 				area = ("wkt", await self.notifier.call_source(self.notifier.source.check_wkt, area[1]))
@@ -409,6 +434,8 @@ class Connection(asyncio.Protocol):
 		await self.notifier.refresh()
 		if self.transport.is_closing():
 			raise ProtocolError(protocol.INVALID_REQUEST, "The connection is closing")
+		#Again, as others may have subscribed meanwhile
+		self.notifier.check_area_allowed(area)
 		self.subscriptions[kind] = (area, file_format) if kind == "records" else area
 		self._set_deadline(None)
 		return protocol.edit_ids(self.notifier.latest)
@@ -563,6 +590,20 @@ class EditNotifier:
 	def _areas(self, kind):
 		return {c.subscriptions[kind] for c in self.connections if c.subscribed(kind)}
 
+	def areas(self):
+		"""The different areas followed, by subscriptions of either kind, other
+		than everywhere."""
+		return (self._areas("edits") | {area for area, file_format in self._areas("records")}) - {None}
+
+	def check_area_allowed(self, area):
+		"""Refuses a new area when as many as are allowed are followed already.
+		The map is asked about each different area at every edit, so this
+		limits what clients can make it do. One already followed is free, as is
+		everywhere, which is always allowed."""
+		if area is not None and self.limits.max_areas and area not in self.areas() and len(self.areas()) >= self.limits.max_areas:
+			raise ProtocolError(protocol.TOO_MANY_AREAS, "The server is following {} different areas, as many "
+				"as it will; subscribe to a larger area, or to everywhere".format(self.limits.max_areas))
+
 	async def _check(self):
 		latest = await self.call_source(self.source.latest)
 		if latest[0] < self.latest[0]:
@@ -577,16 +618,30 @@ class EditNotifier:
 		#subscribed while asking: whether the new edits may concern it, and for
 		#records subscribers, the records themselves, in each format asked
 		#for, encoded once for all
-		answers, records = {None: True}, {}
+		#
+		#An area the map could not answer for in time (a query timed out, say)
+		#does not hold up the others. Its edits subscribers are told anyway, as
+		#an edits notification only says the edits may concern them; its
+		#records subscribers are dropped, as they would otherwise miss records,
+		#and catch up through the API.
+		answers, records, failed = {None: True}, {}, set()
 		while True:
 			wanted = self._areas("edits") - set(answers)
-			wanted_records = self._areas("records") - set(records)
+			wanted_records = self._areas("records") - set(records) - failed
 			if not wanted and not wanted_records:
 				break
 			for area in wanted:
-				answers[area] = await self.call_source(self.source.concerns, first, last, area)
+				try:
+					answers[area] = await self.call_source(self.source.concerns, first, last, area)
+				except Exception as err:
+					self.log("Could not check edits {} to {} for {}: {}".format(first, last, describe_area(area), err))
+					answers[area] = True
 			for wanted_format in wanted_records:
-				records[wanted_format] = await self.call_source(self._records_message, first, last, *wanted_format, latest)
+				try:
+					records[wanted_format] = await self.call_source(self._records_messages, first, last, *wanted_format, latest)
+				except Exception as err:
+					self.log("Could not read records {} to {} for {}: {}".format(first, last, describe_area(wanted_format[0]), err))
+					failed.add(wanted_format)
 		self.latest = latest
 		edits = protocol.notification("edits", [protocol.edit_ids(latest)])
 		told = 0
@@ -594,28 +649,36 @@ class EditNotifier:
 			messages = []
 			if connection.subscribed("edits") and answers.get(connection.subscriptions["edits"]):
 				messages.append(edits)
-			if connection.subscribed("records") and records.get(connection.subscriptions["records"]):
-				messages.append(records[connection.subscriptions["records"]])
+			if connection.subscribed("records"):
+				if connection.subscriptions["records"] in failed:
+					connection.close("its records could not be read")
+					continue
+				messages.extend(records.get(connection.subscriptions["records"], []))
 			if messages:
 				connection.send(*messages)
 				told += 1
 		self.log("Edits up to {}: told {} of {} subscribers".format(last, told,
 			sum(1 for c in self.connections if c.subscriptions)))
 
-	def _records_message(self, first, last, area, file_format, latest):
-		"""The "records" notification for an area, in a format, or None if no new
-		record concerns it. Runs in the source's thread."""
-		found = self.source.records(first, last, area, file_format)
-		if found is None:
-			return None
-		count, document = found
-		details = {"first_id": first, "last_id": last, "records": count}
-		if file_format == "msgpack":
-			details["editactivities"] = document
-		else:
-			details["xml_gz"] = gzip.compress(document, mtime=0)
-		details.update(protocol.edit_ids(latest))
-		return protocol.notification("records", [details])
+	def _records_messages(self, first, last, area, file_format, latest):
+		"""The "records" notifications for an area, in a format: none if no new
+		record concerns it, or one for every records_per_message of them, their
+		ranges following on. Runs in the source's thread."""
+		messages = []
+		while first <= last:
+			found = self.source.records(first, last, area, file_format, self.limits.records_per_message)
+			if found is None:
+				break
+			count, document, covered = found
+			details = {"first_id": first, "last_id": covered, "records": count}
+			if file_format == "msgpack":
+				details["editactivities"] = document
+			else:
+				details["xml_gz"] = gzip.compress(document, mtime=0)
+			details.update(protocol.edit_ids(latest))
+			messages.append(protocol.notification("records", [details]))
+			first = covered + 1
+		return messages
 
 	async def _heartbeat(self):
 		while True:

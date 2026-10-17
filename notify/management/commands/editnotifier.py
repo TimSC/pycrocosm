@@ -1,6 +1,8 @@
 import asyncio
 import signal
 
+import psycopg2
+
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
@@ -41,16 +43,43 @@ class Command(BaseCommand):
 				"has gone is noticed about a minute after that (default {})".format(defaults.keepalive))
 		parser.add_argument("--heartbeat", type=float, default=defaults.heartbeat,
 			help="Seconds between heartbeats and checks for missed edits (default {})".format(defaults.heartbeat))
+		parser.add_argument("--max-wkt-points", type=int, default=defaults.max_wkt_points,
+			help="Points a WKT area may have (default {})".format(defaults.max_wkt_points))
+		parser.add_argument("--max-areas", type=int, default=defaults.max_areas,
+			help="Different areas followed at once, by all connections together; 0 for no limit (default {})".format(
+				defaults.max_areas))
+		parser.add_argument("--bbox-grid", type=float, default=defaults.bbox_grid,
+			help="Degrees a subscription's bbox is widened out to a multiple of, so nearby ones share an area; "
+				"0 to leave them as given (default {})".format(defaults.bbox_grid))
+		parser.add_argument("--query-timeout", type=float, default=defaults.query_timeout,
+			help="Seconds each query of the map may take; 0 for no limit (default {})".format(defaults.query_timeout))
+		parser.add_argument("--records-per-message", type=int, default=defaults.records_per_message,
+			help="Records in one records notification, at most (default {})".format(defaults.records_per_message))
 
 	@one_at_a_time
 	def handle(self, *args, **options):
 		limits = Limits(**{field: options[field] for field in Limits.__dataclass_fields__})
+		prefix = settings.MAP_DATABASE[mapdb.ACTIVE_DB]
 		# The channel pgmap's trigger announces this map's edits on
-		channel = settings.MAP_DATABASE[mapdb.ACTIVE_DB] + "edits"
+		channel = prefix + "edits"
+		self.check_trigger(prefix, limits)
 		asyncio.run(self.serve(options["host"], options["port"], limits, channel))
 
+	def check_trigger(self, prefix, limits):
+		"""Warns if the map does not announce its edits, when they are found
+		only at each heartbeat, rather than as they are made."""
+		with psycopg2.connect(mapdb.make_connection_string()) as connection, connection.cursor() as cursor:
+			cursor.execute("SELECT count(*) FROM pg_trigger WHERE tgrelid = to_regclass(%s) AND tgname = %s AND tgenabled <> 'D'",
+				[prefix + "edit_activity", prefix + "notify_edits"])
+			found = cursor.fetchone()[0] > 0
+		connection.close()
+		if not found:
+			self.log("Warning: {}edit_activity has no {}notify_edits trigger, so edits will be found only at each "
+				"heartbeat (every {}s), not as they are made. Set the map's schema to 15 with pgmap's admin tool "
+				"(option g) to add it.".format(prefix, prefix, limits.heartbeat))
+
 	async def serve(self, host, port, limits, channel):
-		notifier = EditNotifier(PgmapEditSource(mapdb.make_pgmap), limits, log=self.log)
+		notifier = EditNotifier(PgmapEditSource(mapdb.make_pgmap, limits.query_timeout), limits, log=self.log)
 		await notifier.start(host, port, mapdb.make_connection_string(), channel)
 		stopping = asyncio.Event()
 		loop = asyncio.get_running_loop()

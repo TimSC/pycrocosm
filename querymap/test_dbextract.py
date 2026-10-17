@@ -3405,6 +3405,10 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
             self.assertNotIn("UNION ALL", cursor.fetchone()[0])
+        # Version 14 searches each box column of the edit records through an index of its own
+        box_indexes = sorted("({})".format(column) for column in ("existing_bbox", "updated_bbox",
+            "affectedparents_before_bbox", "affectedparents_after_bbox", "relation_reach_bbox"))
+        self.assertEqual(self.activity_box_indexes(), box_indexes)
         a = self.create_node(0.1)
         b = self.create_node(0.2)
         c = self.create_node(0.3)
@@ -3438,6 +3442,13 @@ class DbExtractTestCase(SimpleTestCase):
             self.assertEqual(cursor.fetchone(), ("15",))
         # The map reads the same, and goes on working
         self.assertEqual(self.contents(), before)
+        # Records made at 14 have footprints too, and one index finds them
+        self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+            self.assertEqual(cursor.fetchone()[0], 0)
+        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
         way = self.modify_way(way, [c, a])
         self.assertEqual(self.member_rows("way_mems"), [(way.objId, 3, 0, c.objId), (way.objId, 3, 1, a.objId)])
         extract_id = self.save()
@@ -3454,6 +3465,9 @@ class DbExtractTestCase(SimpleTestCase):
             self.assertNotIn("UNION ALL", cursor.fetchone()[0])
         self.modify_way(way, [a, c])
         self.assertIn(("way", way.objId), self.contents())
+        # The footprint goes, and the indexes of the boxes come back
+        self.assertEqual(self.activity_box_indexes(), box_indexes)
+        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
         self.set_schema(15)
         self.assertEqual(len(self.member_rows("way_mems")), 2)
 
@@ -3504,19 +3518,22 @@ class DbExtractTestCase(SimpleTestCase):
 
         table = sql.Identifier(self.prefixes[1] + "edit_activity")
         with self.db.cursor() as cursor:
-            # Each of the geometry columns can be searched through an index
-            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s",
-                           (self.prefixes[1] + "edit_activity",))
-            definitions = [row[0] for row in cursor.fetchall()]
-            for column in ("existing_bbox", "updated_bbox", "affectedparents_before_bbox",
-                           "affectedparents_after_bbox", "relation_reach_bbox"):
-                self.assertTrue(any("USING gist ({})".format(column) in d for d in definitions), column)
-            self.assertFalse(any("USING gist (bbox)" in d for d in definitions))
+            # The records are searched through one index, of the ID and the
+            # footprint, in place of one on each geometry column
+            self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
+            # The footprint is the rectangle around all of a record's boxes
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id IN (%s, %s) ORDER BY id").format(table),
+                           (createA, moveA))
+            self.assertEqual([row[0] for row in cursor.fetchall()],
+                             ["POINT(0.1 0.2)", "POLYGON((0.05 0.2,0.05 5,5 5,5 0.2,0.05 0.2))"])
             # The reach is set only where a relation matters beyond its own box, which is nowhere here
             cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL").format(table))
             self.assertEqual(cursor.fetchone()[0], 0)
             # A record that does not say where its objects are could concern anywhere
             cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
+            # and has the whole world as its footprint
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(table), (createA,))
+            self.assertEqual(cursor.fetchone()[0], "POLYGON((-180 -90,-180 90,180 90,180 -90,-180 -90))")
         self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
 
         # On a map that does not store boxes for its ways, a relation's box is
@@ -3530,6 +3547,29 @@ class DbExtractTestCase(SimpleTestCase):
         self.modify_relation(other, [("way", way, "x")])
         self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
         self.assertEqual(self.filtered_ids(inside)[-2:], [createOther, latest()])
+
+    def activity_box_indexes(self):
+        """The columns of the GiST indexes of edit_activity."""
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%USING gist%%'",
+                           (self.prefixes[1] + "edit_activity",))
+            return sorted(row[0].split("USING gist ", 1)[1].strip() for row in cursor.fetchall())
+
+    def test_the_footprint_index_finds_records_by_id_and_area(self):
+        nodes = [self.create_node(0.1 * i) for i in range(1, 4)]
+        table = self.prefixes[1] + "edit_activity"
+        with self.db.cursor() as cursor:
+            # Without the plan that would read the IDs in order and test every row
+            cursor.execute("SET enable_seqscan = off")
+            cursor.execute("SET enable_indexscan = off")
+            cursor.execute(sql.SQL("EXPLAIN SELECT id FROM {} WHERE id >= 1 AND id <= 100 AND footprint && "
+                "ST_MakeEnvelope(0, 0, 1, 1, 4326)").format(sql.Identifier(table)))
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+            cursor.execute("RESET enable_seqscan")
+            cursor.execute("RESET enable_indexscan")
+        self.assertIn(table.replace("edit_activity", "activity_gix_footprint"), plan)
+        self.assertIn("id >= 1", plan.split("Index Cond:")[1])
+        self.assertIn("footprint &&", plan.split("Index Cond:")[1])
 
     def test_relation_edit_is_found_through_a_way_sharing_its_member_node(self):
         # A way from far away into an area, and a relation holding only the
@@ -3558,6 +3598,10 @@ class DbExtractTestCase(SimpleTestCase):
                 sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
             self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326,
                 "GEOMETRYCOLLECTION(POLYGON((40 10,40 10,40 10,40 10,40 10)))"))
+            # and the footprint takes in the reach
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
+            self.assertEqual(cursor.fetchone()[0], "POLYGON((0.5 0,0.5 10,40 10,40 0,0.5 0))")
         # A relation whose member node is in no way matters only where it is
         lone = self.create_node(60.0, 20.0)
         self.create_relation([("node", lone, "")])

@@ -34,9 +34,13 @@ Requests (the client sends hello first; anything else before it is refused):
 
 A connection may hold one subscription of each kind at a time: subscribing
 again needs unsubscribing first. An area is a bbox, or WKT: a valid polygon or
-multipolygon, no wider than 180 degrees of longitude. Edits concern a bbox as
-the replication API's bbox filter decides; for WKT, the box of one of an
-edit's objects must also meet the shape itself.
+multipolygon, no wider than 180 degrees of longitude, with no more points
+than the server allows. A bbox is widened out to the server's grid (0.01
+degrees by default), so that subscribers to nearby areas share one; a server
+following as many different areas as it will refuses a new one
+(TOO_MANY_AREAS), though one it already follows, or everywhere, is allowed.
+Edits concern a bbox as the replication API's bbox filter decides; for WKT,
+the box of one of an edit's objects must also meet the shape itself.
 
 Notifications from the server:
 
@@ -50,7 +54,8 @@ Notifications from the server:
 			"edit_activity_id": N, "atomic_edit_id": M, "xml_gz": <bin>}])
 		The edit activity records with IDs from A to B that may concern the
 		subscription, n of them, as a gzipped XML document in the form
-		replication/edit_activities gives. The ranges of one notification
+		replication/edit_activities gives. Many records are split over
+		several notifications. The ranges of one notification
 		and the next follow on from each other, except where a range held
 		nothing concerning the area, which is not sent.
 	records([{"first_id": A, "last_id": B, "records": n,
@@ -68,6 +73,7 @@ leaves too much unread for too long is dropped.
 """
 
 import math
+import re
 
 import msgpack
 
@@ -85,6 +91,7 @@ UNSUPPORTED_PROTOCOL = -32001
 TOO_MANY_REQUESTS = -32002
 ALREADY_SUBSCRIBED = -32003
 NOT_SUBSCRIBED = -32004
+TOO_MANY_AREAS = -32005 #The server is following as many different areas as it will
 
 class ProtocolError(Exception):
 	"""A request the server answers with an error."""
@@ -163,6 +170,21 @@ def parse_format(given):
 
 def edit_ids(ids):
 	return {"edit_activity_id": ids[0], "atomic_edit_id": ids[1]}
+
+def wkt_points(wkt):
+	"""How many points WKT has, near enough: its numbers, two to a point. A
+	shape with Z or M values counts as more, which errs on the safe side."""
+	return len(re.findall(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", wkt)) // 2
+
+def round_bbox(bbox, grid):
+	"""A bbox widened outwards to the nearest multiple of grid degrees on each
+	side, so that subscribers to nearby areas share one. No grid leaves it."""
+	if not grid:
+		return bbox
+	west, south, east, north = bbox
+	snap = lambda value, round_up: round((math.ceil if round_up else math.floor)(round(value / grid, 9)) * grid, 9)
+	return (max(-180.0, snap(west, False)), max(-90.0, snap(south, False)),
+		min(180.0, snap(east, True)), min(90.0, snap(north, True)))
 
 def parse_area(given):
 	"""The area of a subscription's options: None (everywhere), ("bbox", (west,
