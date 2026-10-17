@@ -1,18 +1,29 @@
 """A TCP server that tells subscribed clients when the map has new edits.
 
 PostgreSQL announces each edit with NOTIFY (see DbSetEditNotifications in
-pgmap's dbadmin.cpp). The server LISTENs for that, works out which subscribers
-the new edits may concern, and sends each of them an "edits" notification
-(see protocol.py). It also asks the map for its latest edit IDs now and then,
-so nothing is missed while its database connection is being remade.
+pgmap's dbadmin.cpp). The server LISTENs for that and works out which
+subscribers the new edits may concern. Each connection may hold two
+subscriptions, each at most once: to "edits" notifications, which say how far
+the map has got, and to the "records" themselves, the edit activity records
+as the replication API gives them. Each may be limited to an area, a bbox or a
+WKT polygon or multipolygon (see protocol.py). The server also asks the map
+for its latest edit IDs now and then, so nothing is missed while its database
+connection is being remade.
+
+What clients send is limited, in size and in how often. What the server sends
+them is not limited, but a client must keep up with it: one that falls behind,
+leaving more than a high-water mark unread for longer than a time limit, is
+dropped, and catches up through the replication API when it connects again.
 
 Everything runs in one asyncio loop. Calls into the map database, which block,
 run one at a time in a thread of their own.
 """
 
 import asyncio
+import collections
 import concurrent.futures
 import dataclasses
+import gzip
 import socket
 import time
 
@@ -23,28 +34,44 @@ from .protocol import ProtocolError
 
 @dataclasses.dataclass
 class Limits:
-	"""What the server allows, in all and on each connection."""
-	max_connections: int = 1000
+	"""What the server allows. Most limit what clients send; what the server
+	sends them is not limited, but a client that falls behind with it is dropped."""
+	max_connections: int = 64
 	max_per_address: int = 10 #Connections from one address at a time
-	max_message_bytes: int = 4096 #The largest request a client may send
+	max_message_bytes: int = 64 * 1024 #The largest request a client may send, WKT and all
 	requests_per_second: float = 5 #Requests each connection may make, on average...
 	request_burst: int = 20 #...and at once
 	hello_timeout: float = 10 #Seconds a new connection has to say hello
-	subscribe_timeout: float = 60 #Seconds it then has to subscribe
-	max_write_buffer: int = 256 * 1024 #Bytes waiting to be sent before a client is too slow
+	subscribe_timeout: float = 60 #Seconds it then has to subscribe to something
+	write_high_water: int = 1024 * 1024 #Bytes unread by a client before it counts as behind...
+	behind_timeout: float = 60 #...and seconds it may stay behind before it is dropped
+	keepalive: int = 60 #Seconds a connection may be idle before TCP checks the client is still there
 	heartbeat: float = 30 #Seconds between heartbeats, and checks for missed edits
 
 class EditSource:
 	"""Where the server learns about edits. Its methods block; the server calls
-	them in a thread of their own."""
+	them in a thread of their own. An area is None for everywhere,
+	("bbox", (west, south, east, north)) or ("wkt", text)."""
 
 	def latest(self):
 		"""The latest (edit activity ID, atomic edit ID)."""
 		raise NotImplementedError
 
-	def concerns(self, first_id, last_id, bbox):
-		"""Whether any edit activity record with an ID in the range may concern
-		the area (west, south, east, north)."""
+	def check_wkt(self, wkt):
+		"""The WKT of a valid polygon or multipolygon, tidied; ValueError, saying
+		why, for anything else."""
+		raise NotImplementedError
+
+	def concerns(self, first_id, last_id, area):
+		"""Whether any edit activity record with an ID in the range may concern the area."""
+		raise NotImplementedError
+
+	def records(self, first_id, last_id, area, file_format="xml"):
+		"""The edit activity records with IDs in the range that may concern the
+		area, as (how many, the records), or None if there are none. The
+		records are the replication API's XML document of them as UTF-8, or
+		with file_format "msgpack", the list of records its msgpack document
+		holds, as maps, their objects o5m encoded."""
 		raise NotImplementedError
 
 class PgmapEditSource(EditSource):
@@ -68,17 +95,48 @@ class PgmapEditSource(EditSource):
 		finally:
 			t.Abort()
 
-	def concerns(self, first_id, last_id, bbox):
-		import pgmap
+	def check_wkt(self, wkt):
 		t = self._transaction()
 		try:
-			results = pgmap.vectorsharedptreditactivity()
-			error = pgmap.PgMapError()
-			#The same filter as replication/edit_activities?bbox=; one row is enough
-			t.QueryEditActivityByIds(first_id, last_id, 0, results, error, 1, pgmap.vectord(list(bbox)), False)
-			if error.errStr:
-				raise RuntimeError(error.errStr)
-			return results.size() > 0
+			#Checked as an extract's boundary is: a valid polygon or multipolygon,
+			#in range and not crossing the antimeridian
+			return t.BufferExtractBoundary(wkt, 0)
+		except RuntimeError as err:
+			raise ValueError(str(err).replace("Standard exception: ", "").replace("Standard runtime exception: ", ""))
+		finally:
+			t.Abort()
+
+	def _query(self, t, first_id, last_id, area, limit):
+		import pgmap
+		results = pgmap.vectorsharedptreditactivity()
+		error = pgmap.PgMapError()
+		bbox = list(area[1]) if area and area[0] == "bbox" else []
+		wkt = area[1] if area and area[0] == "wkt" else ""
+		#The same filter as replication/edit_activities?bbox=, and for a WKT
+		#area, the shape itself
+		t.QueryEditActivityByIds(first_id, last_id, 0, results, error, limit, pgmap.vectord(bbox), False, wkt)
+		if error.errStr:
+			raise RuntimeError(error.errStr)
+		return results
+
+	def concerns(self, first_id, last_id, area):
+		t = self._transaction()
+		try:
+			return self._query(t, first_id, last_id, area, 1).size() > 0
+		finally:
+			t.Abort()
+
+	def records(self, first_id, last_id, area, file_format="xml"):
+		from replicate import views #Which writes the records as the API does
+		t = self._transaction()
+		try:
+			results = self._query(t, first_id, last_id, area, 0)
+			activities = [results[i] for i in range(results.size())]
+			if not activities:
+				return None
+			if file_format == "msgpack":
+				return len(activities), views.edit_activity_records(activities, t)
+			return len(activities), views.edit_activities_document(activities, t)
 		finally:
 			t.Abort()
 
@@ -148,6 +206,18 @@ class PgListener:
 		self.closed = True
 		self._drop()
 
+def set_keepalive(sock, idle):
+	"""Has TCP check that an idle connection's peer is still there: after idle
+	seconds, then every ten, giving up after six tries, so that a client that
+	has gone without a word is noticed in about idle + 60 seconds. Where the
+	system does not let these be set, its own defaults (often two hours) apply."""
+	if sock is None:
+		return
+	sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+	for name, value in (("TCP_KEEPIDLE", idle), ("TCP_KEEPINTVL", 10), ("TCP_KEEPCNT", 6)):
+		if hasattr(socket, name):
+			sock.setsockopt(socket.IPPROTO_TCP, getattr(socket, name), max(1, int(value)))
+
 class Connection(asyncio.Protocol):
 	"""One client."""
 
@@ -157,12 +227,16 @@ class Connection(asyncio.Protocol):
 		self.transport = None
 		self.address = None
 		self.greeted = False
-		self.subscribed = False
-		self.bbox = None
+		#kind: what is subscribed to, for those subscribed to: for "edits" the
+		#area, for "records" (area, format)
+		self.subscriptions = {}
 		self.unpacker = protocol.unpacker(self.limits.max_message_bytes)
 		self.tokens = float(self.limits.request_burst)
 		self.refilled = time.monotonic()
 		self.deadline = None
+		self.requests = collections.deque() #Waiting to be handled, in order
+		self.worker = None
+		self.behind = None #The timer for dropping it, while it is behind
 
 	# The connection
 
@@ -173,16 +247,26 @@ class Connection(asyncio.Protocol):
 		if not self.notifier.admit(self):
 			transport.abort()
 			return
-		sock = transport.get_extra_info("socket")
-		if sock is not None:
-			#The system notices a peer that has gone without a word
-			sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-		self.deadline = asyncio.get_running_loop().call_later(self.limits.hello_timeout, self._expire, "say hello")
+		set_keepalive(transport.get_extra_info("socket"), self.limits.keepalive)
+		#asyncio calls pause_writing when this much is waiting to be read
+		transport.set_write_buffer_limits(high=self.limits.write_high_water)
+		self._set_deadline(self.limits.hello_timeout, "say hello")
 
 	def connection_lost(self, exc):
+		self._set_deadline(None)
+		if self.behind is not None:
+			self.behind.cancel()
+		if self.worker is not None:
+			self.worker.cancel()
+		self.notifier.release(self)
+
+	def _set_deadline(self, seconds, what=None):
 		if self.deadline is not None:
 			self.deadline.cancel()
-		self.notifier.release(self)
+			self.deadline = None
+		if seconds is not None:
+			self.deadline = asyncio.get_running_loop().call_later(seconds, self.close,
+				"did not {} in time".format(what))
 
 	def close(self, reason=None):
 		if reason:
@@ -190,20 +274,37 @@ class Connection(asyncio.Protocol):
 		if self.transport is not None and not self.transport.is_closing():
 			self.transport.close()
 
-	def _expire(self, what):
-		self.close("did not {} in time".format(what))
-
-	def send(self, data):
+	def send(self, *messages):
+		"""Sends messages, however large. A client that leaves too much of them
+		unread for too long is dropped (see pause_writing)."""
 		if self.transport is None or self.transport.is_closing():
 			return
-		self.transport.write(data)
-		#A client that does not read what it is sent is not kept waiting for
-		if self.transport.get_write_buffer_size() > self.limits.max_write_buffer:
-			self.notifier.log("Closing {}: not reading what it is sent".format(self.address))
-			self.transport.abort()
+		for message in messages:
+			self.transport.write(message)
 
-	def notify(self, method, params):
-		self.send(protocol.notification(method, params))
+	def subscribed(self, kind):
+		return kind in self.subscriptions
+
+	# Clients that fall behind
+
+	def pause_writing(self):
+		"""More than write_high_water bytes are waiting for the client. Sending goes
+		on, so a client that catches up misses nothing; one that does not within
+		behind_timeout is dropped."""
+		if self.behind is None:
+			self.behind = asyncio.get_running_loop().call_later(self.limits.behind_timeout, self._too_slow)
+
+	def resume_writing(self):
+		if self.behind is not None:
+			self.behind.cancel()
+			self.behind = None
+
+	def _too_slow(self):
+		self.behind = None
+		self.notifier.log("Closing {}: fell behind with what it is sent, for {}s".format(
+			self.address, self.limits.behind_timeout))
+		if self.transport is not None:
+			self.transport.abort() #What is waiting for it is thrown away
 
 	# Requests
 
@@ -213,13 +314,14 @@ class Connection(asyncio.Protocol):
 		except msgpack.BufferFull:
 			self.close("sent a message larger than {} bytes".format(self.limits.max_message_bytes))
 			return
-		while True:
+		while not self.transport.is_closing():
 			try:
 				message = next(self.unpacker)
 			except StopIteration:
 				return
 			except (msgpack.UnpackException, ValueError) as err:
-				self.send(protocol.response(None, error=ProtocolError(protocol.PARSE_ERROR, "Cannot read: {}".format(err)).as_error()))
+				self.send(protocol.response(None, error=ProtocolError(protocol.PARSE_ERROR,
+					"Cannot read: {}".format(err)).as_error()))
 				self.close("sent what cannot be read")
 				return
 			if not self._allowed():
@@ -227,9 +329,17 @@ class Connection(asyncio.Protocol):
 					"More than {} requests a second".format(self.limits.requests_per_second)).as_error()))
 				self.close("made too many requests")
 				return
-			self._handle(message)
-			if self.transport.is_closing():
-				return
+			#Handled one at a time, in order, as some wait on the database
+			self.requests.append(message)
+			if self.worker is None:
+				self.worker = asyncio.get_running_loop().create_task(self._work())
+
+	async def _work(self):
+		try:
+			while self.requests and not self.transport.is_closing():
+				await self._handle(self.requests.popleft())
+		finally:
+			self.worker = None
 
 	def _allowed(self):
 		"""Takes a token from the bucket, which refills at requests_per_second."""
@@ -250,8 +360,8 @@ class Connection(asyncio.Protocol):
 			return message[1]
 		return None
 
-	def _handle(self, message):
-		msgid = None
+	async def _handle(self, message):
+		msgid = self._msgid(message)
 		try:
 			msgid, method, params = protocol.parse_request(message)
 			handler = getattr(self, "_request_" + method, None)
@@ -260,9 +370,9 @@ class Connection(asyncio.Protocol):
 			if method != "hello" and not self.greeted:
 				raise ProtocolError(protocol.NOT_READY, "Say hello first")
 			result = handler(params)
+			if asyncio.iscoroutine(result):
+				result = await result
 		except ProtocolError as err:
-			if msgid is None:
-				msgid = self._msgid(message)
 			self.send(protocol.response(msgid, error=err.as_error()))
 			return
 		self.send(protocol.response(msgid, result))
@@ -275,29 +385,55 @@ class Connection(asyncio.Protocol):
 				"This server speaks protocol {}".format(protocol.PROTOCOL_VERSION))
 		if not self.greeted:
 			self.greeted = True
-			self.deadline.cancel()
-			self.deadline = asyncio.get_running_loop().call_later(self.limits.subscribe_timeout, self._expire, "subscribe")
+			self._set_deadline(self.limits.subscribe_timeout, "subscribe")
 		result = {"protocol": protocol.PROTOCOL_VERSION, "server": "pycrocosm editnotifier"}
 		result.update(protocol.edit_ids(self.notifier.latest))
 		return result
 
-	def _request_subscribe(self, params):
-		given = protocol.options(params, ("bbox",))
-		self.bbox = protocol.parse_bbox(given["bbox"]) if given.get("bbox") is not None else None
-		self.subscribed = True
-		if self.deadline is not None:
-			self.deadline.cancel()
-			self.deadline = None
+	async def _subscribe(self, kind, params):
+		given = protocol.options(params, ("bbox", "wkt", "format") if kind == "records" else ("bbox", "wkt"))
+		if self.subscribed(kind):
+			raise ProtocolError(protocol.ALREADY_SUBSCRIBED,
+				"Already subscribed to {}; unsubscribe first".format(kind))
+		area = protocol.parse_area(given)
+		file_format = protocol.parse_format(given) if kind == "records" else None
+		if area is not None and area[0] == "wkt":
+			try:
+				area = ("wkt", await self.notifier.call_source(self.notifier.source.check_wkt, area[1]))
+			except ValueError as err:
+				raise ProtocolError(protocol.INVALID_PARAMS, "wkt: {}".format(err))
+		#The IDs given are the map's latest, read now: everything up to them the
+		#client fetches through the API, everything after them it is sent. So the
+		#server catches up first, and the subscription starts once it has, with
+		#nothing in between to announce twice or miss.
+		await self.notifier.refresh()
+		if self.transport.is_closing():
+			raise ProtocolError(protocol.INVALID_REQUEST, "The connection is closing")
+		self.subscriptions[kind] = (area, file_format) if kind == "records" else area
+		self._set_deadline(None)
 		return protocol.edit_ids(self.notifier.latest)
 
-	def _request_unsubscribe(self, params):
+	def _unsubscribe(self, kind, params):
 		protocol.options(params, ())
-		self.subscribed = False
-		self.bbox = None
+		if not self.subscribed(kind):
+			raise ProtocolError(protocol.NOT_SUBSCRIBED, "Not subscribed to {}".format(kind))
+		del self.subscriptions[kind]
 		#An idle connection is not kept for ever
-		if self.deadline is None:
-			self.deadline = asyncio.get_running_loop().call_later(self.limits.subscribe_timeout, self._expire, "subscribe")
+		if not self.subscriptions:
+			self._set_deadline(self.limits.subscribe_timeout, "subscribe")
 		return True
+
+	def _request_subscribe_edits(self, params):
+		return self._subscribe("edits", params)
+
+	def _request_subscribe_records(self, params):
+		return self._subscribe("records", params)
+
+	def _request_unsubscribe_edits(self, params):
+		return self._unsubscribe("edits", params)
+
+	def _request_unsubscribe_records(self, params):
+		return self._unsubscribe("records", params)
 
 	def _request_ping(self, params):
 		return "pong"
@@ -317,15 +453,19 @@ class EditNotifier:
 		self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="editsource")
 		self._checking = False
 		self._again = False
+		self._idle = None #Set while no check is running
 		self._tasks = set()
 
-	async def _call(self, method, *args):
+	async def call_source(self, method, *args):
+		"""Calls a method of the edit source, or anything else that uses it, in its thread."""
 		return await asyncio.get_running_loop().run_in_executor(self._executor, method, *args)
 
 	async def start(self, host, port, connection_string=None, channel=None):
 		"""Starts serving. With a connection string and channel, LISTENs for edits
 		there; otherwise only the periodic check notices them."""
-		self.latest = await self._call(self.source.latest)
+		self._idle = asyncio.Event()
+		self._idle.set()
+		self.latest = await self.call_source(self.source.latest)
 		self.server = await asyncio.get_running_loop().create_server(lambda: Connection(self), host, port)
 		if connection_string and channel:
 			self.listener = PgListener(connection_string, channel, self._notified, self.edits_changed, self.log)
@@ -388,10 +528,25 @@ class EditNotifier:
 		if self._checking:
 			self._again = True
 			return
+		self._start_check()
+
+	async def refresh(self):
+		"""Catches up with the map's latest edits, announcing any to subscribers,
+		and returns once it has."""
+		if self._checking:
+			self._again = True #Any check under way may have read the IDs already
+		else:
+			self._start_check()
+		await self._idle.wait()
+
+	def _start_check(self):
+		#Marked as under way at once, not when the task first runs, so that
+		#anything waiting for the server to be idle waits for this check
+		self._checking = True
+		self._idle.clear()
 		self._spawn(self._check_until_settled())
 
 	async def _check_until_settled(self):
-		self._checking = True
 		try:
 			while True:
 				self._again = False
@@ -403,9 +558,13 @@ class EditNotifier:
 					break
 		finally:
 			self._checking = False
+			self._idle.set()
+
+	def _areas(self, kind):
+		return {c.subscriptions[kind] for c in self.connections if c.subscribed(kind)}
 
 	async def _check(self):
-		latest = await self._call(self.source.latest)
+		latest = await self.call_source(self.source.latest)
 		if latest[0] < self.latest[0]:
 			#The map has gone back, as a reset one does: follow it
 			self.log("The map's edits go back to {}, from {}".format(latest[0], self.latest[0]))
@@ -414,24 +573,49 @@ class EditNotifier:
 		if latest[0] == self.latest[0]:
 			return
 		first, last = self.latest[0] + 1, latest[0]
-		#Whether the new edits concern each area subscribed to, asked once for
-		#each different area, including those subscribed while asking
-		answers = {}
+		#Asked once for each different area subscribed to, including those
+		#subscribed while asking: whether the new edits may concern it, and for
+		#records subscribers, the records themselves, in each format asked
+		#for, encoded once for all
+		answers, records = {None: True}, {}
 		while True:
-			wanted = {c.bbox for c in self.connections if c.subscribed and c.bbox is not None} - set(answers)
-			if not wanted:
+			wanted = self._areas("edits") - set(answers)
+			wanted_records = self._areas("records") - set(records)
+			if not wanted and not wanted_records:
 				break
-			for bbox in wanted:
-				answers[bbox] = await self._call(self.source.concerns, first, last, bbox)
+			for area in wanted:
+				answers[area] = await self.call_source(self.source.concerns, first, last, area)
+			for wanted_format in wanted_records:
+				records[wanted_format] = await self.call_source(self._records_message, first, last, *wanted_format, latest)
 		self.latest = latest
-		message = protocol.notification("edits", [protocol.edit_ids(latest)])
+		edits = protocol.notification("edits", [protocol.edit_ids(latest)])
 		told = 0
 		for connection in list(self.connections):
-			if connection.subscribed and (connection.bbox is None or answers.get(connection.bbox)):
-				connection.send(message)
+			messages = []
+			if connection.subscribed("edits") and answers.get(connection.subscriptions["edits"]):
+				messages.append(edits)
+			if connection.subscribed("records") and records.get(connection.subscriptions["records"]):
+				messages.append(records[connection.subscriptions["records"]])
+			if messages:
+				connection.send(*messages)
 				told += 1
 		self.log("Edits up to {}: told {} of {} subscribers".format(last, told,
-			sum(1 for c in self.connections if c.subscribed)))
+			sum(1 for c in self.connections if c.subscriptions)))
+
+	def _records_message(self, first, last, area, file_format, latest):
+		"""The "records" notification for an area, in a format, or None if no new
+		record concerns it. Runs in the source's thread."""
+		found = self.source.records(first, last, area, file_format)
+		if found is None:
+			return None
+		count, document = found
+		details = {"first_id": first, "last_id": last, "records": count}
+		if file_format == "msgpack":
+			details["editactivities"] = document
+		else:
+			details["xml_gz"] = gzip.compress(document, mtime=0)
+		details.update(protocol.edit_ids(latest))
+		return protocol.notification("records", [details])
 
 	async def _heartbeat(self):
 		while True:
@@ -441,5 +625,5 @@ class EditNotifier:
 			self.edits_changed()
 			message = protocol.notification("heartbeat", [protocol.edit_ids(self.latest)])
 			for connection in list(self.connections):
-				if connection.subscribed:
+				if connection.subscriptions:
 					connection.send(message)

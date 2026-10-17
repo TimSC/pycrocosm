@@ -10,7 +10,9 @@ from pycrocosm.singlerun import one_at_a_time
 
 class Command(BaseCommand):
 	help = ("Run the edit notification server: a TCP server that tells subscribed clients when the map has "
-		"new edits, speaking msgpack-RPC. Runs until stopped. See notify/README.md.")
+		"new edits, or sends them the edit activity records, speaking msgpack-RPC. Runs until stopped. "
+		"The options limit what clients send, and how far behind with what they are sent they may fall; "
+		"what the server sends is not limited. See notify/README.md.")
 
 	def add_arguments(self, parser):
 		defaults = Limits()
@@ -21,7 +23,7 @@ class Command(BaseCommand):
 		parser.add_argument("--max-per-address", type=int, default=defaults.max_per_address,
 			help="Connections allowed at once from one address (default {})".format(defaults.max_per_address))
 		parser.add_argument("--max-message-bytes", type=int, default=defaults.max_message_bytes,
-			help="The largest request a client may send (default {})".format(defaults.max_message_bytes))
+			help="The largest request a client may send, WKT and all (default {})".format(defaults.max_message_bytes))
 		parser.add_argument("--requests-per-second", type=float, default=defaults.requests_per_second,
 			help="Requests each connection may make a second, on average (default {})".format(defaults.requests_per_second))
 		parser.add_argument("--request-burst", type=int, default=defaults.request_burst,
@@ -29,9 +31,14 @@ class Command(BaseCommand):
 		parser.add_argument("--hello-timeout", type=float, default=defaults.hello_timeout,
 			help="Seconds a new connection has to say hello (default {})".format(defaults.hello_timeout))
 		parser.add_argument("--subscribe-timeout", type=float, default=defaults.subscribe_timeout,
-			help="Seconds a connection then has to subscribe (default {})".format(defaults.subscribe_timeout))
-		parser.add_argument("--max-write-buffer", type=int, default=defaults.max_write_buffer,
-			help="Bytes waiting for a client before it is dropped as too slow (default {})".format(defaults.max_write_buffer))
+			help="Seconds a connection then has to subscribe to something (default {})".format(defaults.subscribe_timeout))
+		parser.add_argument("--write-high-water", type=int, default=defaults.write_high_water,
+			help="Bytes unread by a client before it counts as behind (default {})".format(defaults.write_high_water))
+		parser.add_argument("--behind-timeout", type=float, default=defaults.behind_timeout,
+			help="Seconds a client may stay behind before it is dropped (default {})".format(defaults.behind_timeout))
+		parser.add_argument("--keepalive", type=int, default=defaults.keepalive,
+			help="Seconds a connection may be idle before TCP checks the client is still there; a client that "
+				"has gone is noticed about a minute after that (default {})".format(defaults.keepalive))
 		parser.add_argument("--heartbeat", type=float, default=defaults.heartbeat,
 			help="Seconds between heartbeats and checks for missed edits (default {})".format(defaults.heartbeat))
 

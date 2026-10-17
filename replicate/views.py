@@ -8,6 +8,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 import xml.etree.ElementTree as ET
 from pycrocosm.mapdb import get_pgmap
 from .extracts import public_url
+from querymap.views import IgnoreFormatArgument
 from .extracts import list_db_extracts, list_db_extracts_with_latest
 from pycrocosm import common
 import os
@@ -508,6 +509,12 @@ def fetch_activity_objects(lists, t):
 	Returns the XML element of each as text, by (type, ID, version). The same
 	object is often named by several records, and is read and encoded once.
 	"""
+	return {key: pgmap.OsmObjectXml(obj) for key, obj in read_activity_objects(lists, t).items()}
+
+def read_activity_objects(lists, t):
+	"""Every object the given records refer to, each kind read in one request,
+	by (type, ID, version)."""
+	copies = {"node": pgmap.OsmNode, "way": pgmap.OsmWay, "relation": pgmap.OsmRelation}
 	wanted = {"node": set(), "way": set(), "relation": set()}
 	for recordLists in lists:
 		for name, types, idVers in recordLists:
@@ -525,7 +532,7 @@ def fetch_activity_objects(lists, t):
 			obj = objs[i]
 			key = (objType, obj.objId, obj.metaData.version)
 			if key not in fragments:
-				fragments[key] = pgmap.OsmObjectXml(obj)
+				fragments[key] = copies[objType](obj) #A copy, to outlive data
 	return fragments
 
 def bboxes_xml(name, wkt, objTypes, objIdVers, activityId):
@@ -595,12 +602,85 @@ def edit_activity_xml(activity, lists, fragments):
 	out.append('</editactivity>')
 	return out
 
-def edit_activities_response(activities, t, rootAttribs=None):
-	"""Publish records as one XML document.
+# The formats edit activity records can be asked for in, with format=, and
+# their content types
+EDIT_ACTIVITY_FORMATS = {"xml": "text/xml", "msgpack.gz": "application/x-gzip"}
+
+def o5m_document(objects):
+	"""Objects as an o5m document: nodes, then ways, then relations."""
+	data = pgmap.OsmData()
+	for obj in objects:
+		{pgmap.OsmNode: data.nodes, pgmap.OsmWay: data.ways, pgmap.OsmRelation: data.relations}[type(obj)].append(obj)
+	out = io.BytesIO()
+	data.StreamTo(pgmap.PyO5mEncode(out))
+	return out.getvalue()
+
+def edit_activity_record(activity, lists, objects):
+	"""One record as a map, for msgpack: what edit_activity_xml writes, with each
+	list's objects as an o5m document, and each box collection as a list of
+	[type, id, min lon, min lat, max lon, max lat] entries ([type, id] for a
+	deleted object), or None where it was not recorded. The timestamp is in
+	seconds since 1970, UTC."""
+	record = {"id": activity.objId, "action": str(activity.action)}
+	if activity.changeset > 0:
+		record["changeset"] = activity.changeset
+	if activity.timestamp > 0:
+		record["timestamp"] = activity.timestamp
+	if activity.atomicEditId > 0:
+		record["atomic_edit_id"] = activity.atomicEditId
+		record["block_index"] = activity.blockIndex
+	boxes = {'existing': [('existing_bbox', activity.existingBbox)],
+		'updated': [('updated_bbox', activity.updatedBbox)],
+		'affectedparents': [('affectedparents_before_bbox', activity.affectedparentsBeforeBbox),
+			('affectedparents_after_bbox', activity.affectedparentsAfterBbox)]}
+	for name, types, idVers in lists:
+		chosen, seen = [], set()
+		for objType, (objId, objVer) in zip(types, idVers):
+			key = (objType, objId, objVer)
+			if key in objects and key not in seen:
+				seen.add(key)
+				chosen.append(objects[key])
+		record[name] = o5m_document(chosen)
+		for boxName, wkt in boxes.get(name, []):
+			record[boxName] = bboxes_list(boxName, wkt, types, idVers, activity.objId)
+	# A record made before the relations holding its related nodes were kept
+	if not activity.relatedparentsRecorded:
+		record["relatedparents"] = None
+	return record
+
+def bboxes_list(name, wkt, objTypes, objIdVers, activityId):
+	"""A box collection as bboxes_xml gives it, as a list for msgpack."""
+	if not wkt:
+		return None
+	boxes = collection_boxes(wkt)
+	if len(boxes) != len(objTypes):
+		raise ValueError("{} of activity {} does not match its objects".format(name, activityId))
+	return [[objType, objId] + ([] if box is None else [float(v) for v in box])
+		for objType, (objId, objVer), box in zip(objTypes, objIdVers, boxes)]
+
+def edit_activity_records(activities, t):
+	"""Records as maps for msgpack (see edit_activity_record), their objects read together."""
+	lists = [activity_object_lists(activity) for activity in activities]
+	objects = read_activity_objects(lists, t)
+	return [edit_activity_record(activity, recordLists, objects) for activity, recordLists in zip(activities, lists)]
+
+def edit_activities_document(activities, t, rootAttribs=None, file_format="xml"):
+	"""Records as one document: XML, as UTF-8, or with file_format
+	"msgpack.gz", a gzipped msgpack map of "editactivities", the records (see
+	edit_activity_record), and any rootAttribs.
 
 	The objects of all the records are read together, and written into the
-	response as the XML text the encoder produces for them.
+	document as the XML text the encoder produces for them, or as o5m. The
+	edit notification server (notify/) sends the same documents.
 	"""
+	if file_format == "msgpack.gz":
+		import msgpack
+		document = {"editactivities": edit_activity_records(activities, t)}
+		# The root's attributes, as their values rather than text
+		for name, value in (rootAttribs or {}).items():
+			document[name] = True if value == "true" else int(value) if value.isdigit() else value
+		return zlib.compress(msgpack.packb(document, use_bin_type=True), wbits=zlib.MAX_WBITS|16)
+
 	lists = [activity_object_lists(activity) for activity in activities]
 	fragments = fetch_activity_objects(lists, t)
 
@@ -611,14 +691,30 @@ def edit_activities_response(activities, t, rootAttribs=None):
 	for activity, recordLists in zip(activities, lists):
 		out.extend(edit_activity_xml(activity, recordLists, fragments))
 	out.append('</editactivities>')
+	return "".join(out).encode("utf-8")
 
-	return HttpResponse("".join(out).encode("utf-8"), content_type='text/xml')
+def edit_activities_response(activities, t, rootAttribs=None, file_format="xml"):
+	"""Publish records as one document (see edit_activities_document)."""
+	return HttpResponse(edit_activities_document(activities, t, rootAttribs, file_format),
+		content_type=EDIT_ACTIVITY_FORMATS[file_format])
+
+def edit_activity_format(request):
+	"""The format= argument of a request for edit activity, checked."""
+	file_format = request.GET.get('format', 'xml')
+	if file_format not in EDIT_ACTIVITY_FORMATS:
+		raise ValueError('format must be one of: ' + ', '.join(sorted(EDIT_ACTIVITY_FORMATS)))
+	return file_format
 
 @api_view(['GET'])
 def get_edit_activity(request, objId):
 
 	if not 0 < int(objId) <= 9223372036854775807:
 		return HttpResponseBadRequest("Activity ID is out of range")
+
+	try:
+		file_format = edit_activity_format(request)
+	except ValueError as error:
+		return HttpResponseBadRequest(str(error))
 
 	t = get_pgmap().GetTransaction("ACCESS SHARE")
 
@@ -633,7 +729,10 @@ def get_edit_activity(request, objId):
 	if not found:
 		return HttpResponseNotFound("Edit activity does not exist")
 
-	return edit_activities_response([activity], t)
+	return edit_activities_response([activity], t, file_format=file_format)
+
+# format= chooses the form of the records, not a DRF renderer
+get_edit_activity.cls.content_negotiation_class = IgnoreFormatArgument
 
 def utc_epoch(moment):
 	"""Seconds since 1970 for a datetime, taking one without a zone as UTC.
@@ -740,6 +839,7 @@ def query_edit_activity_by_timestamp(request):
 		id_filters = activity_id_filters(request.GET)
 		bbox = activity_bbox_filter(request.GET)
 		limit = activity_limit(request.GET)
+		file_format = edit_activity_format(request)
 	except ValueError as error:
 		return HttpResponseBadRequest(str(error))
 
@@ -787,4 +887,6 @@ def query_edit_activity_by_timestamp(request):
 		rootAttribs['truncated'] = 'true'
 		rootAttribs['next_id'] = str(results[sent - 1].objId + 1)
 
-	return edit_activities_response([results[i] for i in range(sent)], t, rootAttribs)
+	return edit_activities_response([results[i] for i in range(sent)], t, rootAttribs, file_format)
+
+query_edit_activity_by_timestamp.cls.content_negotiation_class = IgnoreFormatArgument

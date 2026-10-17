@@ -268,6 +268,54 @@ class ReplicationIndexTestCase(TestCase):
 			html = client.get("/replication/").content.decode("utf-8")
 		self.assertIn("href='edit_activities'", html)
 
+def o5m_objects(document):
+	"""The objects of an o5m document, as (type, ID, version, tags, and the
+	position, nodes or members, as the case may be)."""
+	data = pgmap.OsmData()
+	pgmap.LoadFromO5mBytes(document, data)
+	return objects_of(data)
+
+def objects_of(data):
+	out = []
+	for i in range(data.nodes.size()):
+		n = data.nodes[i]
+		out.append(("node", n.objId, n.metaData.version, dict(n.tags), round(n.lon, 7), round(n.lat, 7)))
+	for i in range(data.ways.size()):
+		w = data.ways[i]
+		out.append(("way", w.objId, w.metaData.version, dict(w.tags), list(w.refs)))
+	for i in range(data.relations.size()):
+		r = data.relations[i]
+		out.append(("relation", r.objId, r.metaData.version, dict(r.tags),
+			[(int(m.type), m.ref, m.role) for m in r.members]))
+	return out
+
+def xml_record_as_msgpack(row):
+	"""An <editactivity> element as the msgpack format gives the record, with
+	each list's objects as o5m_objects gives them, for comparing the two."""
+	import calendar
+	import xml.etree.ElementTree as ET
+	record = {"id": int(row.get("id")), "action": row.get("action")}
+	for name in ("changeset", "atomic_edit_id", "block_index"):
+		if row.get(name) is not None:
+			record[name] = int(row.get(name))
+	if row.get("timestamp") is not None:
+		record["timestamp"] = calendar.timegm(datetime.datetime.strptime(row.get("timestamp"), "%Y-%m-%dT%H:%M:%SZ").timetuple())
+	for child in row:
+		if child.get("null") == "true":
+			record[child.tag] = None
+		elif child.tag.endswith("_bbox"):
+			record[child.tag] = [[b.get("type"), int(b.get("id"))] + ([] if b.get("null") == "true" else
+				[float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")]) for b in child]
+		else:
+			data = pgmap.OsmData()
+			pgmap.LoadFromOsmXml("<osm version='0.6'>" + "".join(ET.tostring(o, encoding="unicode") for o in child) + "</osm>", data)
+			record[child.tag] = objects_of(data)
+	return record
+
+def msgpack_record_decoded(record):
+	"""A msgpack format record with its o5m documents decoded by o5m_objects."""
+	return {k: o5m_objects(v) if isinstance(v, bytes) else v for k, v in record.items()}
+
 class EditActivityApiTestCase(TestCase):
 	"""Limits and times of the edit activity API."""
 
@@ -361,6 +409,39 @@ class EditActivityApiTestCase(TestCase):
 		for bad in ("since=yesterday", "until=2026-13-45T00:00:00Z", "since="):
 			response = Client().get("/replication/edit_activities?" + bad)
 			self.assertEqual(response.status_code, 400, bad)
+
+	def test_msgpack_format(self):
+		import gzip
+		import msgpack
+		from changeset.tests import CreateTestChangeset
+		changeset = CreateTestChangeset(self.user)
+		self.edit(changeset.objId, self.start + 900, 10.5, 20.5)
+		for query in ("first_id=1", "first_id=1&limit=2", "bbox=10,20,11,21", "since=2026-01-31T12:04:00Z&limit=1"):
+			root, ids = self.ask(query)
+			response = Client().get("/replication/edit_activities?format=msgpack.gz&" + query)
+			self.assertEqual(response.status_code, 200, query)
+			self.assertEqual(response["Content-Type"], "application/x-gzip")
+			document = msgpack.unpackb(gzip.decompress(response.content))
+			# The same records, with the same objects and boxes
+			self.assertEqual([msgpack_record_decoded(r) for r in document["editactivities"]],
+				[xml_record_as_msgpack(row) for row in root.findall("editactivity")], query)
+			# Where to go on from, as values
+			self.assertEqual({k: v for k, v in document.items() if k != "editactivities"},
+				{"truncated": True, "next_id": int(root.get("next_id"))} if root.get("truncated") else {}, query)
+		# Objects are o5m encoded, and an edit's records hold some
+		record = document["editactivities"][0]
+		self.assertTrue(record["updated"].startswith(b"\xff"))
+		self.assertEqual([o[0] for o in o5m_objects(record["updated"])], ["node"])
+		# One record by ID too
+		response = Client().get("/replication/edit_activity/{}?format=msgpack.gz".format(ids[0]))
+		self.assertEqual(response.status_code, 200)
+		self.assertEqual([r["id"] for r in msgpack.unpackb(gzip.decompress(response.content))["editactivities"]], ids[:1])
+		self.assertEqual(Client().get("/replication/edit_activity/{}?format=xml".format(ids[0]))["Content-Type"], "text/xml")
+		# Only gzipped
+		for path in ("/replication/edit_activities?format=msgpack", "/replication/edit_activities?format=json",
+				"/replication/edit_activities?format=",
+				"/replication/edit_activity/{}?format=o5m".format(ids[0])):
+			self.assertEqual(Client().get(path).status_code, 400, path)
 
 	def test_latest_records_by_default(self):
 		root, everything = self.ask("first_id=1")
