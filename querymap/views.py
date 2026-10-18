@@ -41,7 +41,7 @@ class IgnoreFormatArgument(BaseContentNegotiation):
 		return (renderers[0], renderers[0].media_type)
 
 class MapQueryResponse:
-	def __init__(self, bbox, request, file_format=None):
+	def __init__(self, bbox, request, file_format=None, atomic_edit_id=0):
 		self.sio = io.BytesIO()
 		self.compressor = None
 		self.text = True
@@ -58,6 +58,8 @@ class MapQueryResponse:
 		self.p = get_pgmap()
 		self.t = self.p.GetTransaction("ACCESS SHARE")
 		self.mapQuery = self.t.GetQueryMgr()
+		if atomic_edit_id:
+			self.mapQuery.SetAtomicEditId(atomic_edit_id)
 		timestamp = time.time()
 		if self.mapQuery.Start(bbox, int(timestamp), self.enc)<0:
 			raise RuntimeError("Map query failed to start")
@@ -111,6 +113,10 @@ def index(request):
 	format chooses how it is written: osm (XML), json, o5m or pbf, and osm.gz,
 	json.gz or o5m.gz for a gzipped file. Without it the answer is XML, or
 	JSON if the request's Accept header asks for that.
+
+	atomic_edit_id asks for the map as it was just after that atomic edit
+	(see replication/edit_activities), with each object at its version then.
+	It reaches back as far as the edit activity records do.
 	"""
 	bbox = request.GET.get('bbox', None)
 	if bbox is None:
@@ -119,6 +125,12 @@ def index(request):
 	file_format = request.GET.get('format', None)
 	if file_format is not None and file_format not in MAP_FORMATS:
 		return HttpResponseBadRequest("format must be one of: " + ", ".join(sorted(MAP_FORMATS)), content_type="text/plain")
+
+	atomic_edit_id = request.GET.get('atomic_edit_id', None)
+	if atomic_edit_id is not None:
+		if not atomic_edit_id.isdigit() or not 0 < int(atomic_edit_id) <= 9223372036854775807:
+			return HttpResponseBadRequest("atomic_edit_id must be a positive whole number", content_type="text/plain")
+		atomic_edit_id = int(atomic_edit_id)
 
 	try:
 		bbox = [float(value) for value in bbox.split(",")]
@@ -150,11 +162,12 @@ def index(request):
 		return response
 
 	if file_format is None:
-		return StreamingHttpResponse(iter(MapQueryResponse(bbox, request)),
+		return StreamingHttpResponse(iter(MapQueryResponse(bbox, request, atomic_edit_id=atomic_edit_id)),
 			content_type=common.response_content_type(request))
 
 	make_encoder, compressed, content_type, text = MAP_FORMATS[file_format]
-	response = StreamingHttpResponse(iter(MapQueryResponse(bbox, request, file_format)), content_type=content_type)
+	response = StreamingHttpResponse(iter(MapQueryResponse(bbox, request, file_format, atomic_edit_id)),
+		content_type=content_type)
 	if not text:
 		# A file to keep, which is not to be compressed again on its way:
 		# pbf is compressed within, and the gzipped formats already are

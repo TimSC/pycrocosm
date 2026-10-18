@@ -37,7 +37,7 @@ class PolygonBoundary:
             t.Abort()
             raise
 
-    def contents(self, extract_id=None, name=""):
+    def contents(self, extract_id=None, name="", atomic_edit_id=0):
         if extract_id is not None:
             return super().contents(extract_id, name)
         output = io.BytesIO()
@@ -45,6 +45,8 @@ class PolygonBoundary:
         t = self.map.GetTransaction("ACCESS SHARE")
         try:
             query = t.GetQueryMgr()
+            if atomic_edit_id:
+                query.SetAtomicEditId(atomic_edit_id)
             self.assertGreaterEqual(query.Start(self.boundary, int(time.time()), encoder), 0)
             while query.Continue() == 0:
                 pass
@@ -509,8 +511,8 @@ class MultiPolygonExtractTestCase(MultiPolygonBoundary, local.DbExtractTestCase)
         self.assertEqual(self.column_type(), "geometry(Polygon,4326)")
         with self.assertRaises(Exception):
             self.save()
-        # Setting the version it already has brings it up to date
-        self.set_schema(15)
+        # Setting the version it already has, or a later one, brings it up to date
+        self.set_schema(16)
         self.assertEqual(self.column_type(), "geometry(Geometry,4326)")
         self.create_node(0.95, 0.95)
         extract_id = self.save()

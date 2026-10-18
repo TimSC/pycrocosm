@@ -125,6 +125,8 @@ Map call formats
 
 The binary formats are several times smaller than XML: for the same area, around a twentieth of its size as `pbf` or `o5m.gz`.
 
+`atomic_edit_id=N` asks for the map as it was just after atomic edit N (the IDs that `replication/edit_activities` gives each edit), with every object at its version then, in any format. It undoes the edits made since, from their edit activity records, so it takes longer the more edits there have been since N, and reaches back only as far as the records do (schema version 14). Ways and relations are found through their nodes, as stored boxes describe only their current shapes, so on a map using `useBboxInQuery` the answer for the latest edit can differ a little from the map call without it.
+
 Read only mode
 --------------
 

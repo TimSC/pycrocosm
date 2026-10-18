@@ -183,13 +183,15 @@ class DbExtractTestCase(SimpleTestCase):
             t.Abort()
             raise
 
-    def contents(self, extract_id=None, name=""):
+    def contents(self, extract_id=None, name="", atomic_edit_id=0):
         output = io.BytesIO()
         encoder = pgmap.PyOsmXmlEncode(output, common.xmlAttribs)
         t = self.map.GetTransaction("ACCESS SHARE")
         try:
             if extract_id is None:
                 query = t.GetQueryMgr()
+                if atomic_edit_id:
+                    query.SetAtomicEditId(atomic_edit_id)
                 self.assertGreaterEqual(query.Start(self.bbox, int(time.time()), encoder), 0)
                 while True:
                     status = query.Continue()
@@ -3295,12 +3297,15 @@ class DbExtractTestCase(SimpleTestCase):
         notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
         self.assertEqual(notes, ['The indices of the {} tables are those of schema version 14 (the current version '
                                  'is {}): run "Create indicies".'.format(self.prefixes[0], latest)])
-        # A version recorded as 1, as index versions were first counted, is the current one
+        # A version recorded as 1, as index versions were first counted, is
+        # version 15, the first so counted
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("UPDATE {} SET value='1' WHERE key='index_version'").format(
                 sql.Identifier(self.prefixes[2] + "meta")))
         notes = admin_call(lambda admin: admin.GetIndexVersionNotes()).splitlines()
-        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes, ['The indices of the {} tables are those of schema version {} (the current version '
+                                 'is {}): run "Create indicies".'.format(prefix, version, latest)
+                                 for prefix, version in ((self.prefixes[0], 14), (self.prefixes[2], 15))])
         self.assertTrue(admin_call(lambda admin: admin.CreateMapIndices(0, error)), error.errStr)
         self.assertEqual(versions(), [str(latest)] * 3)
         with self.db.cursor() as cursor:
@@ -3487,6 +3492,18 @@ class DbExtractTestCase(SimpleTestCase):
                 rows.extend((table,) + row for row in cursor.fetchall())
         return rows
 
+    def superseded(self, kind, obj_id):
+        """(version, superseded_atomic_edit_id) of each history row of an object,
+        and what its row in the table of IDs taken over says, if it has one."""
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT version, superseded_atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
+                sql.Identifier(self.prefixes[1] + "old" + kind + "s")), (obj_id,))
+            history = cursor.fetchall()
+            cursor.execute(sql.SQL("SELECT superseded_atomic_edit_id FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + kind + "ids")), (obj_id,))
+            taken = cursor.fetchall()
+        return history, [row[0] for row in taken]
+
     def latest_atomic_edit(self):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT max(atomic_edit_id) FROM {}").format(
@@ -3517,21 +3534,43 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertGreater(moved, first)
         self.assertEqual(self.atomic_edit_ids("node", 5000), [("live", 2, moved)])
         self.assertEqual(self.atomic_edit_ids("way", 6000), [("live", 1, None)])
+        # The imported version is hidden from then on, which the ID taken over
+        # records, as the imported map's own tables are not written to; the
+        # copy hides nothing that has changed
+        self.assertEqual(self.superseded("node", 5000), ([], [moved]))
+        self.assertEqual(self.superseded("way", 6000), ([], [None]))
+        self.assertEqual(self.superseded("node", created.objId), ([], [None]))
 
         # A new version moves the old one to history with its own
         created = self.modify_node(created, 9.5)
         modified = self.latest_atomic_edit()
         self.assertEqual(self.atomic_edit_ids("node", created.objId), [("old", 1, first), ("live", 2, modified)])
+        self.assertEqual(self.superseded("node", created.objId), ([(1, modified)], [None]))
         way = self.modify_way(way, [b, a])
         self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, self.latest_atomic_edit())])
+        self.assertEqual(self.superseded("way", 6000), ([(1, self.latest_atomic_edit())], [None]))
         # Moving a node rewrites the way holding it at the version it has, which keeps whose it was
         rewritten = self.latest_atomic_edit()
         self.modify_node(b, 1.5)
         self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, rewritten)])
         # and a deletion is a version too
         self.upload("delete", [created])
+        deleted = self.latest_atomic_edit()
         self.assertEqual(self.atomic_edit_ids("node", created.objId),
-                         [("old", 1, first), ("old", 2, modified), ("old", 3, self.latest_atomic_edit())])
+                         [("old", 1, first), ("old", 2, modified), ("old", 3, deleted)])
+        # The deletion is the current version, of an object that is not there
+        self.assertEqual(self.superseded("node", created.objId), ([(1, modified), (2, deleted), (3, None)], [None]))
+
+        # Each version an edit's activity says it replaced was replaced by that
+        # edit, in history or, for the imported map, in the IDs taken over
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        for row in root.findall("editactivity"):
+            for obj in row.find("existing"):
+                history, taken = self.superseded(obj.tag, int(obj.get("id")))
+                replaced = dict(history).get(int(obj.get("version")))
+                if replaced is None:
+                    replaced = taken[0]
+                self.assertEqual(replaced, int(row.get("atomic_edit_id")), (obj.tag, obj.get("id"), obj.get("version")))
 
         # Every version an edit's activity says it made carries that edit's ID
         root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
@@ -3541,6 +3580,55 @@ class DbExtractTestCase(SimpleTestCase):
                 self.assertEqual(versions[int(obj.get("version"))], int(row.get("atomic_edit_id")),
                                  (obj.tag, obj.get("id"), obj.get("version")))
 
+    def test_map_query_at_an_atomic_edit(self):
+        # Imported objects: a way into the area from outside, and a relation
+        a, b, far = pgmap.OsmNode(), pgmap.OsmNode(), pgmap.OsmNode()
+        a.objId, b.objId, far.objId = 5000, 5001, 5002
+        a.lon, b.lon, far.lon = 0.1, 0.2, 5
+        way = pgmap.OsmWay()
+        way.objId = 6000
+        for node in (a, b, far):
+            way.refs.append(node.objId)
+        relation = pgmap.OsmRelation()
+        relation.objId = 7000
+        self.set_members(relation, [("way", way, "outer")])
+        self.store_static([a, b, far], [way], [relation])
+
+        # After each edit, the map as it is then, and the atomic edit that made it
+        snapshots = []
+        def edited(result=None):
+            snapshots.append((self.latest_atomic_edit(), self.contents()))
+            return result
+        c = edited(self.create_node(0.3))
+        d = edited(self.create_node(6))
+        a = edited(self.modify_node(a, 7))           # an imported node leaves the area
+        d = edited(self.modify_node(d, 0.4))         # and a new one comes into it
+        way = edited(self.modify_way(way, [b, d]))   # the imported way gains it, losing the others
+        other = edited(self.create_way([c, a]))      # a way from inside to outside
+        relation = edited(self.modify_relation(relation, [("way", other, ""), ("node", far, "")]))
+        edited(self.upload("delete", [way]))
+        edited(self.upload("delete", [b]))
+        c = edited(self.modify_node(c, 0.35))
+        self.assertEqual(len({edit for edit, contents in snapshots}), len(snapshots))
+
+        # The map as it was after each edit is what it was then, whatever came after
+        for edit, then in snapshots:
+            self.assertEqual(self.contents(atomic_edit_id=edit), then, edit)
+        # An edit after the last is the map as it is
+        self.assertEqual(self.contents(atomic_edit_id=snapshots[-1][0] + 100), snapshots[-1][1])
+
+        # Through the API, by bbox, as pgmap gives it
+        edit = snapshots[4][0]
+        then = DbExtractTestCase.contents(self, atomic_edit_id=edit)
+        path = "/api/0.6/map?bbox={}&atomic_edit_id={}".format(",".join(str(v) for v in self.bbox), edit)
+        with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
+            answer = Client().get(path)
+            body = b"".join(answer.streaming_content)
+            self.assertEqual(answer.status_code, 200, body)
+            self.assertEqual(self.decode_contents(body), then)
+            for bad in ("0", "-1", "x", ""):
+                self.assertEqual(Client().get(path.rsplit("=", 1)[0] + "=" + bad).status_code, 400, bad)
+
     def test_schema_16_adds_and_removes_the_atomic_edit_columns(self):
         def columns():
             with self.db.cursor() as cursor:
@@ -3549,26 +3637,39 @@ class DbExtractTestCase(SimpleTestCase):
                 found = [row[0][len(self.prefixes[1]):] for row in cursor.fetchall()]
                 # The edit activity and extract tables have their own
                 return [name for name in found if name not in ("edit_activity", "extracts")]
+        def superseded_columns():
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT table_name FROM information_schema.columns WHERE "
+                               "column_name='superseded_atomic_edit_id' AND table_name LIKE %s ORDER BY table_name",
+                               (self.prefixes[1] + "%",))
+                return [row[0][len(self.prefixes[1]):] for row in cursor.fetchall()]
         tables = sorted(table + kind for table in ("live", "old") for kind in ("nodes", "ways", "relations"))
         views = sorted("visible" + kind for kind in ("nodes", "ways", "relations"))
+        replaced = sorted(["oldnodes", "oldways", "oldrelations", "nodeids", "wayids", "relationids"])
         self.assertEqual(columns(), sorted(tables + views))
+        self.assertEqual(superseded_columns(), replaced)
         before = self.create_node(0.1)
 
         # Back at 15 the columns go, views and all, and edits go on as before
         self.set_schema(15)
         self.assertEqual(columns(), [])
+        self.assertEqual(superseded_columns(), [])
         during = self.create_node(0.2)
         self.assertIn(("node", during.objId), self.contents())
+        self.modify_node(during, 0.25)
 
         # At 16 again, versions made meanwhile have none, and new ones do
         self.set_schema(16)
         self.assertEqual(columns(), sorted(tables + views))
+        self.assertEqual(superseded_columns(), replaced)
         after = self.create_node(0.3)
-        self.assertEqual(self.atomic_edit_ids("node", during.objId), [("live", 1, None)])
+        self.assertEqual(self.atomic_edit_ids("node", during.objId), [("old", 1, None), ("live", 2, None)])
+        self.assertEqual(self.superseded("node", during.objId), ([(1, None)], [None]))
         self.assertEqual(self.atomic_edit_ids("node", after.objId), [("live", 1, self.latest_atomic_edit())])
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT id, atomic_edit_id FROM {} WHERE id = ANY(%s) ORDER BY id").format(
                 sql.Identifier(self.prefixes[1] + "visiblenodes")), ([before.objId, during.objId, after.objId],))
+            # (the node created before going back lost its ID with the column)
             self.assertEqual([row[1] is None for row in cursor.fetchall()], [True, True, False])
             cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
                 sql.Identifier(self.prefixes[1] + "meta")))
