@@ -3629,6 +3629,44 @@ class DbExtractTestCase(SimpleTestCase):
             for bad in ("0", "-1", "x", ""):
                 self.assertEqual(Client().get(path.rsplit("=", 1)[0] + "=" + bad).status_code, 400, bad)
 
+        # A time is the latest atomic edit recorded at or before it. The
+        # records are given a minute each, from 2026-01-31T12:00:00Z.
+        start = 1769860800
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET timestamp = %s + 60 * atomic_edit_id").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")), (start,))
+        def edit_at(seconds):
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                return t.GetAtomicEditIdAtTime(seconds)
+            finally:
+                t.Abort()
+        first, last = snapshots[0][0], snapshots[-1][0]
+        self.assertEqual(edit_at(start + 60 * edit), edit)
+        self.assertEqual(edit_at(start + 60 * edit + 59), edit)
+        self.assertEqual(edit_at(start + 60 * first - 1), 0)
+        self.assertEqual(edit_at(start + 60 * last + 3600), last)
+
+        bbox = ",".join(str(v) for v in self.bbox)
+        def at_time(text):
+            with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
+                answer = Client().get("/api/0.6/map?bbox={}&timestamp={}".format(bbox, text))
+                body = b"".join(answer.streaming_content) if answer.streaming else answer.content
+            return answer.status_code, body
+        moment = time.gmtime(start + 60 * edit + 30)
+        for text in (time.strftime("%Y-%m-%dT%H:%M:%SZ", moment), time.strftime("%Y-%m-%dT%H:%M:%S", moment),
+                     # The same moment an hour ahead of UTC
+                     time.strftime("%Y-%m-%dT", moment) + "{:02d}".format(moment.tm_hour + 1) +
+                     time.strftime(":%M:%S%%2B01:00", moment)):
+            status, body = at_time(text)
+            self.assertEqual(status, 200, body)
+            self.assertEqual(self.decode_contents(body), then, text)
+        status, body = at_time(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 60 * first - 1)))
+        self.assertEqual(status, 400)
+        self.assertIn(b"No edit was recorded", body)
+        for bad in ("yesterday", "", "2026-13-45T00:00:00Z", time.strftime("%Y-%m-%dT%H:%M:%SZ", moment) + "&atomic_edit_id=1"):
+            self.assertEqual(at_time(bad)[0], 400, bad)
+
     def test_schema_16_adds_and_removes_the_atomic_edit_columns(self):
         def columns():
             with self.db.cursor() as cursor:

@@ -81,3 +81,13 @@ def json_document(members, legal=True):
 
 def json_response(members, legal=True):
 	return HttpResponse(json.dumps(json_document(members, legal)), content_type=JSON_CONTENT_TYPE)
+
+def utc_epoch(moment):
+	"""Seconds since 1970 for a datetime, taking one without a zone as UTC.
+
+	Written so as not to depend on the server's own time zone, which
+	time.mktime would bring in.
+	"""
+	if moment.tzinfo is None:
+		moment = moment.replace(tzinfo=datetime.timezone.utc)
+	return int(moment.timestamp())

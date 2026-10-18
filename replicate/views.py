@@ -11,6 +11,7 @@ from .extracts import public_url
 from querymap.views import IgnoreFormatArgument
 from .extracts import list_db_extracts, list_db_extracts_with_latest
 from pycrocosm import common
+from pycrocosm.common import utc_epoch
 import os
 import re
 import pgmap
@@ -733,16 +734,6 @@ def get_edit_activity(request, objId):
 
 # format= chooses the form of the records, not a DRF renderer
 get_edit_activity.cls.content_negotiation_class = IgnoreFormatArgument
-
-def utc_epoch(moment):
-	"""Seconds since 1970 for a datetime, taking one without a zone as UTC.
-
-	Written so as not to depend on the server's own time zone, which
-	time.mktime would bring in.
-	"""
-	if moment.tzinfo is None:
-		moment = moment.replace(tzinfo=datetime.timezone.utc)
-	return int(moment.timestamp())
 
 def utc_text(timestamp):
 	return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

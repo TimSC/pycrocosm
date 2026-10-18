@@ -4,6 +4,7 @@ from django.conf import settings
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from django.views.decorators.gzip import gzip_page
 from django.views.decorators.csrf import csrf_exempt
+from django.utils.dateparse import parse_datetime
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.negotiation import BaseContentNegotiation
 from pycrocosm import common
@@ -40,8 +41,11 @@ class IgnoreFormatArgument(BaseContentNegotiation):
 	def select_renderer(self, request, renderers, format_suffix=None):
 		return (renderers[0], renderers[0].media_type)
 
+class MapQueryAtNoEdit(Exception):
+	"""A map query was asked for at a time before every recorded edit."""
+
 class MapQueryResponse:
-	def __init__(self, bbox, request, file_format=None, atomic_edit_id=0):
+	def __init__(self, bbox, request, file_format=None, atomic_edit_id=0, timestamp=None):
 		self.sio = io.BytesIO()
 		self.compressor = None
 		self.text = True
@@ -58,6 +62,11 @@ class MapQueryResponse:
 		self.p = get_pgmap()
 		self.t = self.p.GetTransaction("ACCESS SHARE")
 		self.mapQuery = self.t.GetQueryMgr()
+		if timestamp is not None:
+			# The edit the map was at then, read in the query's own transaction
+			atomic_edit_id = self.t.GetAtomicEditIdAtTime(timestamp)
+			if atomic_edit_id == 0:
+				raise MapQueryAtNoEdit()
 		if atomic_edit_id:
 			self.mapQuery.SetAtomicEditId(atomic_edit_id)
 		timestamp = time.time()
@@ -116,7 +125,9 @@ def index(request):
 
 	atomic_edit_id asks for the map as it was just after that atomic edit
 	(see replication/edit_activities), with each object at its version then.
-	It reaches back as far as the edit activity records do.
+	It reaches back as far as the edit activity records do. timestamp, a time
+	such as 2026-01-31T12:00:00Z (UTC unless it gives an offset), asks for the
+	map as it was then: after the latest atomic edit recorded at or before it.
 	"""
 	bbox = request.GET.get('bbox', None)
 	if bbox is None:
@@ -131,6 +142,19 @@ def index(request):
 		if not atomic_edit_id.isdigit() or not 0 < int(atomic_edit_id) <= 9223372036854775807:
 			return HttpResponseBadRequest("atomic_edit_id must be a positive whole number", content_type="text/plain")
 		atomic_edit_id = int(atomic_edit_id)
+
+	timestamp = request.GET.get('timestamp', None)
+	if timestamp is not None:
+		if atomic_edit_id is not None:
+			return HttpResponseBadRequest("Give atomic_edit_id or timestamp, not both", content_type="text/plain")
+		try:
+			moment = parse_datetime(timestamp)
+		except ValueError:
+			moment = None
+		if moment is None:
+			return HttpResponseBadRequest("timestamp must be a date and time such as 2026-01-31T12:00:00Z",
+				content_type="text/plain")
+		timestamp = common.utc_epoch(moment)
 
 	try:
 		bbox = [float(value) for value in bbox.split(",")]
@@ -161,13 +185,17 @@ def index(request):
 		response["Error"] = err
 		return response
 
+	try:
+		query = MapQueryResponse(bbox, request, file_format, atomic_edit_id or 0, timestamp)
+	except MapQueryAtNoEdit:
+		return HttpResponseBadRequest("No edit was recorded at or before that time, which is as far back as the "
+			"map can be asked for", content_type="text/plain")
+
 	if file_format is None:
-		return StreamingHttpResponse(iter(MapQueryResponse(bbox, request, atomic_edit_id=atomic_edit_id)),
-			content_type=common.response_content_type(request))
+		return StreamingHttpResponse(iter(query), content_type=common.response_content_type(request))
 
 	make_encoder, compressed, content_type, text = MAP_FORMATS[file_format]
-	response = StreamingHttpResponse(iter(MapQueryResponse(bbox, request, file_format, atomic_edit_id)),
-		content_type=content_type)
+	response = StreamingHttpResponse(iter(query), content_type=content_type)
 	if not text:
 		# A file to keep, which is not to be compressed again on its way:
 		# pbf is compressed within, and the gzipped formats already are
