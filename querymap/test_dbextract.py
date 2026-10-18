@@ -48,7 +48,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -1414,7 +1414,7 @@ class DbExtractTestCase(SimpleTestCase):
                 self.assertEqual(status, 1)
                 # The meta lookup also uses a prepared statement.
                 error = pgmap.PgMapError()
-                self.assertEqual(t.GetMetaValue("schema_version", error), "15")
+                self.assertEqual(t.GetMetaValue("schema_version", error), "16")
             finally:
                 t.Abort()
             return set(self.decode_contents(output.getvalue()))
@@ -2022,7 +2022,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -2036,7 +2036,7 @@ class DbExtractTestCase(SimpleTestCase):
         self.set_auto_update(extract_id, "", True, "https://example.org/")
         admin = self.map.GetAdmin("")
         try:
-            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
             admin.Commit()
         finally:
             del admin
@@ -2397,7 +2397,8 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
             before = cursor.fetchone()[0]
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox").format(table))
+            # The footprint, worked out from it, came later still, and goes with it
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox CASCADE").format(table))
         with self.assertRaisesRegex(AssertionError, "ask the admin tool for the latest schema version again"):
             self.create_node(0.1)
         from replicate.remoteupdate import RemoteUpdateError
@@ -2407,7 +2408,7 @@ class DbExtractTestCase(SimpleTestCase):
         admin = self.map.GetAdmin("")
         error = pgmap.PgMapError()
         try:
-            self.assertTrue(admin.CreateMapTables(0, 15, False, error), error.errStr)
+            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
             admin.Commit()
         except BaseException:
             admin.Abort()
@@ -2418,6 +2419,9 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
             self.assertEqual(cursor.fetchone()[0], before + 1)
+            # with the footprint back for every record
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(table))
+            self.assertEqual(cursor.fetchone()[0], 0)
             # The column the table began with, which nothing filled in, has gone
             cursor.execute("SELECT count(*) FROM information_schema.columns WHERE table_name=%s AND column_name='bbox'",
                            (self.prefixes[1] + "edit_activity",))
@@ -3272,7 +3276,7 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
                 sql.Identifier(self.prefixes[1] + "meta")))
-            self.assertEqual(cursor.fetchone(), ("15",))
+            self.assertEqual(cursor.fetchone(), ("16",))
 
         a = self.create_node(0.1)
         error = pgmap.PgMapError()
@@ -3470,6 +3474,105 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
         self.set_schema(15)
         self.assertEqual(len(self.member_rows("way_mems")), 2)
+
+    # Schema version 16: each version records the atomic edit that made it
+
+    def atomic_edit_ids(self, kind, obj_id, prefix=None):
+        """(table, version, atomic_edit_id) of each row of an object, history first."""
+        rows = []
+        with self.db.cursor() as cursor:
+            for table in ("old", "live"):
+                cursor.execute(sql.SQL("SELECT version, atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
+                    sql.Identifier((prefix or self.prefixes[1]) + table + kind + "s")), (obj_id,))
+                rows.extend((table,) + row for row in cursor.fetchall())
+        return rows
+
+    def latest_atomic_edit(self):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT max(atomic_edit_id) FROM {}").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+            return cursor.fetchone()[0]
+
+    def test_versions_record_their_atomic_edit(self):
+        a, b = pgmap.OsmNode(), pgmap.OsmNode()
+        a.objId, b.objId = 5000, 5001
+        a.lon, b.lon = 0, 1
+        way = pgmap.OsmWay()
+        way.objId = 6000
+        way.refs.append(5000)
+        way.refs.append(5001)
+        self.store_static([a, b], [way])
+        # The imported map was made by no atomic edit
+        self.assertEqual(self.atomic_edit_ids("node", 5000, self.prefixes[0]), [("live", 1, None)])
+
+        created = self.create_node(9)
+        first = self.latest_atomic_edit()
+        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("live", 1, first)])
+
+        # A node of the imported way is moved: the node's new version is the
+        # edit's; the way, copied into the edits' tables at the version it
+        # had, is not
+        self.modify_node(a, 0.5)
+        moved = self.latest_atomic_edit()
+        self.assertGreater(moved, first)
+        self.assertEqual(self.atomic_edit_ids("node", 5000), [("live", 2, moved)])
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("live", 1, None)])
+
+        # A new version moves the old one to history with its own
+        created = self.modify_node(created, 9.5)
+        modified = self.latest_atomic_edit()
+        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("old", 1, first), ("live", 2, modified)])
+        way = self.modify_way(way, [b, a])
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, self.latest_atomic_edit())])
+        # Moving a node rewrites the way holding it at the version it has, which keeps whose it was
+        rewritten = self.latest_atomic_edit()
+        self.modify_node(b, 1.5)
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, rewritten)])
+        # and a deletion is a version too
+        self.upload("delete", [created])
+        self.assertEqual(self.atomic_edit_ids("node", created.objId),
+                         [("old", 1, first), ("old", 2, modified), ("old", 3, self.latest_atomic_edit())])
+
+        # Every version an edit's activity says it made carries that edit's ID
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        for row in root.findall("editactivity"):
+            for obj in row.find("updated"):
+                versions = dict((v, edit) for table, v, edit in self.atomic_edit_ids(obj.tag, int(obj.get("id"))))
+                self.assertEqual(versions[int(obj.get("version"))], int(row.get("atomic_edit_id")),
+                                 (obj.tag, obj.get("id"), obj.get("version")))
+
+    def test_schema_16_adds_and_removes_the_atomic_edit_columns(self):
+        def columns():
+            with self.db.cursor() as cursor:
+                cursor.execute("SELECT table_name FROM information_schema.columns WHERE column_name='atomic_edit_id' "
+                               "AND table_name LIKE %s ORDER BY table_name", (self.prefixes[1] + "%",))
+                found = [row[0][len(self.prefixes[1]):] for row in cursor.fetchall()]
+                # The edit activity and extract tables have their own
+                return [name for name in found if name not in ("edit_activity", "extracts")]
+        tables = sorted(table + kind for table in ("live", "old") for kind in ("nodes", "ways", "relations"))
+        views = sorted("visible" + kind for kind in ("nodes", "ways", "relations"))
+        self.assertEqual(columns(), sorted(tables + views))
+        before = self.create_node(0.1)
+
+        # Back at 15 the columns go, views and all, and edits go on as before
+        self.set_schema(15)
+        self.assertEqual(columns(), [])
+        during = self.create_node(0.2)
+        self.assertIn(("node", during.objId), self.contents())
+
+        # At 16 again, versions made meanwhile have none, and new ones do
+        self.set_schema(16)
+        self.assertEqual(columns(), sorted(tables + views))
+        after = self.create_node(0.3)
+        self.assertEqual(self.atomic_edit_ids("node", during.objId), [("live", 1, None)])
+        self.assertEqual(self.atomic_edit_ids("node", after.objId), [("live", 1, self.latest_atomic_edit())])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, atomic_edit_id FROM {} WHERE id = ANY(%s) ORDER BY id").format(
+                sql.Identifier(self.prefixes[1] + "visiblenodes")), ([before.objId, during.objId, after.objId],))
+            self.assertEqual([row[1] is None for row in cursor.fetchall()], [True, True, False])
+            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
+                sql.Identifier(self.prefixes[1] + "meta")))
+            self.assertEqual(cursor.fetchone(), ("16",))
 
     # Searching the records by area, and the index for changeset counts
 

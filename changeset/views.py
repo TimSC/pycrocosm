@@ -300,7 +300,8 @@ def store_objects_with_bbox_tracking(action, block, t, createdNodeIds, createdWa
 			t.GetAffectedParents(block, affectedParents)
 
 	errStr = pgmap.PgMapError()
-	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr)
+	#New versions, made by this upload's atomic edit, which they are recorded with
+	ok = t.StoreObjects(block, createdNodeIds, createdWayIds, createdRelationIds, False, errStr, True)
 	if not ok:
 		return False, None, affectedParents, errStr
 

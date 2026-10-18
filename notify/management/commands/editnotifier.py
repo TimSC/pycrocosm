@@ -75,8 +75,8 @@ class Command(BaseCommand):
 		connection.close()
 		if not found:
 			self.log("Warning: {}edit_activity has no {}notify_edits trigger, so edits will be found only at each "
-				"heartbeat (every {}s), not as they are made. Set the map's schema to 15 with pgmap's admin tool "
-				"(option g) to add it.".format(prefix, prefix, limits.heartbeat))
+				"heartbeat (every {}s), not as they are made. Set the map's schema to the latest version with pgmap's "
+				"admin tool (option g) to add it.".format(prefix, prefix, limits.heartbeat))
 
 	async def serve(self, host, port, limits, channel):
 		notifier = EditNotifier(PgmapEditSource(mapdb.make_pgmap, limits.query_timeout), limits, log=self.log)
