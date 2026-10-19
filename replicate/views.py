@@ -39,10 +39,11 @@ def xml_extract_encoder(out, edit_ids):
     attribs.update(edit_ids)
     return pgmap.PyOsmXmlEncode(out, pgmap.mapstringstring(attribs))
 
-def sorted_pbf_encoder(out):
+def sorted_pbf_encoder(out, edit_ids):
     """PBF for an extract, which is exported nodes, then ways, then relations,
-    each in ID order, and says so in its header."""
-    encoder = pgmap.PyPbfEncode(out)
+    each in ID order, and says so in its header, with what keeping it up to
+    date needs."""
+    encoder = pgmap.PyPbfEncode(out, pgmap.mapstringstring(edit_ids))
     encoder.sortedTypeThenId = True
     return encoder
 
@@ -51,7 +52,7 @@ EXTRACT_FORMATS = {
     "osm.gz": (xml_extract_encoder, True, "application/x-gzip"),
     "o5m.gz": (lambda out, edit_ids: pgmap.PyO5mEncode(out, pgmap.mapstringstring(edit_ids)),
         True, "application/x-gzip"),
-    "pbf": (lambda out, edit_ids: sorted_pbf_encoder(out), False, "application/octet-stream"),
+    "pbf": (lambda out, edit_ids: sorted_pbf_encoder(out, edit_ids), False, "application/octet-stream"),
 }
 
 class ExtractDownload:

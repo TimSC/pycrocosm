@@ -1963,7 +1963,7 @@ class DbExtractTestCase(MapTestCaseBase):
         original = self.populated_extract()
         folder = tempfile.mkdtemp()
         try:
-            for filename in ("copy.osm.gz", "copy.o5m", "copy.json"):
+            for filename in ("copy.osm.gz", "copy.o5m", "copy.json", "copy.pbf"):
                 path = os.path.join(folder, filename)
                 self.assertRegex(self.extract_command("exportextract", "--id", str(original), "--out", path),
                                  r"^Exported extract {} to {} in \d+\.\ds$".format(original, re.escape(path)))
@@ -1973,10 +1973,10 @@ class DbExtractTestCase(MapTestCaseBase):
                 self.assertIsNotNone(found, line)
                 imported = int(found.group(1))
                 # The file carries the checkpoint and area, so the copy is kept up to date like
-                # the original. o5m rounds positions to seven decimal places.
+                # the original. o5m and PBF round positions to seven decimal places.
                 self.assertEqual(self.checkpoint(imported), self.checkpoint(original))
                 self.assertEqual(self.stored_rows(imported)["extracts"], self.stored_rows(original)["extracts"])
-                if filename.endswith(".o5m"):
+                if filename.endswith((".o5m", ".pbf")):
                     self.assertEqual(set(self.contents(imported)), set(self.contents(original)))
                 else:
                     self.assertEqual(self.contents(imported), self.contents(original))
@@ -2196,9 +2196,8 @@ class DbExtractTestCase(MapTestCaseBase):
                     self.assertEqual(pbf_optional_features(data), ["Sort.Type_then_ID"])
                     kinds = {"node": 0, "way": 1, "relation": 2}
                     self.assertEqual(found, sorted(found, key=lambda o: (kinds[o[0]], o[1])))
-                # o5m carries what keeping it up to date needs; PBF has nowhere to put it
-                self.assertEqual(dict(decoded.attributes), {} if extension == "pbf" else
-                                 self.update_info(extract_id, "http://testserver/"))
+                # Every format carries what keeping it up to date needs, PBF in a header field of cppo5m's own
+                self.assertEqual(dict(decoded.attributes), self.update_info(extract_id, "http://testserver/"))
                 way = decoded.ways[0]
                 self.assertEqual(len(way.refs), 3)
                 relation = [r for r in decoded.relations if len(r.members) == 4][0]
