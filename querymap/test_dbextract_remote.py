@@ -281,6 +281,9 @@ class RemoteUpdateTestCase(local.DbExtractTestCase):
         # The filter spared it some of the records
         self.assertLess(applied[0], applied[1])
 
+# Only the tests that bring extracts up to date run again here
+local.run_only_what_a_variant_changes(RemoteUpdateTestCase)
+
 @override_settings(EXTRACT_UPDATE_USE_BBOX=False)
 class RemoteUpdateWithoutBboxTestCase(RemoteUpdateTestCase):
     """Everything again with the filter by area turned off: the extracts must come out the same."""

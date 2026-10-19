@@ -4,6 +4,7 @@ Run with: python manage.py test querymap.test_dbextract
 Uses MAP_DATABASE, but creates and removes unique table prefixes. Django's
 transaction rollback does not cover pgmap's separately committed transactions.
 """
+import inspect
 import io
 import re
 import time
@@ -21,9 +22,11 @@ from changeset.views import upload_block
 from pycrocosm import common
 from pycrocosm.mapdb import make_connection_string
 
+class MapTestCaseBase(SimpleTestCase):
 
-class DbExtractTestCase(SimpleTestCase):
+
     bbox = [-1.0, -1.0, 1.0, 1.0]
+
     # Only for the lock that keeps two runs of the update command apart
     databases = {"default"}
 
@@ -229,6 +232,582 @@ class DbExtractTestCase(SimpleTestCase):
         with patch("replicate.views.get_pgmap", return_value=self.map):
             return Client().get(url)
 
+    def checkpoint(self, extract_id):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT edit_activity_id, atomic_edit_id FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "extracts")), [extract_id])
+            return cursor.fetchone()
+
+    def assert_current(self, extract_id):
+        self.assertEqual(self.contents(extract_id), self.contents())
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT COALESCE(max(id),0), COALESCE(max(atomic_edit_id),0) FROM {}").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+            self.assertEqual(self.checkpoint(extract_id), cursor.fetchone())
+
+    def check_node_edit(self, action, inside):
+        # Keep an unrelated node in every snapshot so outside edits must preserve
+        # real contents, rather than merely leave an empty extract empty.
+        anchor = self.create_node(-0.5)
+        lon = 0.25 if inside else 2
+        node = None if action == "create" else self.create_node(lon)
+        extract_id = self.save()
+        self.assert_current(extract_id)
+        original = self.contents(extract_id)
+        before = self.checkpoint(extract_id)
+
+        if action == "create":
+            node = self.create_node(lon)
+        elif action == "modify":
+            # Move within the same region as well as changing tags/version.
+            node = self.modify_node(node, 0.5 if inside else 3)
+        else:
+            self.upload("delete", [node])
+
+        self.assertEqual(self.contents(extract_id), original)
+        self.update(extract_id)
+        self.assert_current(extract_id)
+        updated = self.contents(extract_id)
+        self.assertEqual(updated[("node", anchor.objId)], original[("node", anchor.objId)])
+        expected_ids = {("node", anchor.objId)}
+        if inside and action != "delete":
+            expected_ids.add(("node", node.objId))
+        self.assertEqual(set(updated), expected_ids)
+        if inside and action == "modify":
+            attrs, _, tags = updated[("node", node.objId)]
+            self.assertEqual(attrs["version"], "2")
+            self.assertEqual(attrs["lon"], 0.5)
+            self.assertIn(("tag", (("k", "test"), ("v", "modified"))), tags)
+        if not inside:
+            self.assertEqual(updated, original)
+        after = self.checkpoint(extract_id)
+        self.assertGreater(after[0], before[0])
+        self.assertGreater(after[1], before[1])
+
+    def store_static(self, nodes, ways=(), relations=()):
+        """Store objects in the static baseline, as an imported planet would be."""
+        data = pgmap.OsmData()
+        for obj in list(nodes) + list(ways) + list(relations):
+            obj.metaData.version = 1
+            obj.metaData.changeset = self.changeset_id
+            obj.metaData.uid = 1
+            obj.metaData.username = "extract-tester"
+            obj.metaData.timestamp = int(time.time())
+        for node in nodes:
+            data.nodes.append(node)
+        for way in ways:
+            data.ways.append(way)
+        for relation in relations:
+            data.relations.append(relation)
+        maps = [pgmap.mapi64i64() for _ in range(3)]
+        error = pgmap.PgMapError()
+        t = self.map.GetTransaction("EXCLUSIVE")
+        try:
+            self.assertTrue(t.StoreObjects(data, *maps, True, error), error.errStr)
+            t.Commit()
+        except BaseException:
+            t.Abort()
+            raise
+
+    # Moving a node never edits its parent ways, so the update must work out
+    # for itself which unchanged ways enter, stay in or leave the extract.
+
+    def way_move_fixture(self, lons):
+        """An anchor node inside the bbox plus a way with nodes at these longitudes."""
+        anchor = self.create_node(-0.5)
+        nodes = [self.create_node(lon) for lon in lons]
+        way = self.create_way(nodes)
+        extract_id = self.save()
+        self.assert_current(extract_id)
+        return anchor, nodes, way, extract_id
+
+    def way_keys(self, nodes, way):
+        return {("node", node.objId) for node in nodes} | {("way", way.objId)}
+
+    def assert_way_unedited(self, extract_id, way):
+        attrs, members, _ = self.contents(extract_id)[("way", way.objId)]
+        self.assertEqual(attrs["version"], "1")
+        self.assertEqual([int(dict(member[1])["ref"]) for member in members], list(way.refs))
+
+    def relation_members(self, extract_id, relation):
+        _, members, _ = self.contents(extract_id)[("relation", relation.objId)]
+        return [(dict(m[1])["type"], int(dict(m[1])["ref"]), dict(m[1])["role"]) for m in members]
+
+    @staticmethod
+    def differences(result):
+        return [(d.type, d.objId, d.extractVersion, d.queryVersion) for d in result.differences]
+
+    def compare(self, extract_id=0, name=""):
+        result = pgmap.ExtractComparison()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.CompareExtract(extract_id, name, result)
+        finally:
+            t.Abort()
+        return result, self.differences(result)
+
+    def compare_all(self):
+        results = pgmap.vectorextractcomparison()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.CompareAllExtracts(results)
+        finally:
+            t.Abort()
+        return [pgmap.ExtractComparison(result) for result in results]
+
+    def contents_after_update(self, extract_id):
+        self.update(extract_id)
+        return self.contents(extract_id)
+
+    # Importing a file as a stored extract
+
+    def export_document(self, extract_id, encoder_class=None, attribs=None):
+        """The stored extract as an XML (or other text format) document."""
+        output = io.BytesIO()
+        encoder = (encoder_class or pgmap.PyOsmXmlEncode)(
+            output, pgmap.mapstringstring(attribs or {}))
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.ExportExtract(extract_id, "", encoder)
+        finally:
+            t.Abort()
+        return output.getvalue().decode("utf-8")
+
+    def import_document(self, document, name="imported", bbox=(), edit_ids=(-1, -1),
+                        loader=None):
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            importer = t.StartImportExtract(name, list(bbox), *edit_ids)
+            (loader or pgmap.LoadFromOsmXml)(document, importer)
+            counts = (importer.GetNumNodes(), importer.GetNumWays(), importer.GetNumRelations())
+            extract_id = importer.GetId()
+            del importer
+            t.Commit()
+            return extract_id, counts
+        except BaseException:
+            t.Abort()
+            raise
+
+    def stored_rows(self, extract_id):
+        """Everything stored for an extract that an import is expected to reproduce."""
+        queries = {
+            "extracts": "SELECT ST_AsText(bbox), use_bbox_in_query FROM {} WHERE id=%s",
+            "extract_livenodes": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, ST_AsText(geom) FROM {} WHERE extract_id=%s ORDER BY id",
+            "extract_liveways": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, members::text, ST_AsText(bbox) FROM {} WHERE extract_id=%s ORDER BY id",
+            "extract_liverelations": "SELECT id, changeset, username, uid, timestamp, version, "
+                "tags::text, members::text, memberroles::text FROM {} WHERE extract_id=%s ORDER BY id",
+        }
+        for suffix in ("way_mems", "relation_mems_n", "relation_mems_w", "relation_mems_r"):
+            queries["extract_" + suffix] = ("SELECT id, version, index, member FROM {} "
+                                            "WHERE extract_id=%s ORDER BY id, index")
+        rows = {}
+        with self.db.cursor() as cursor:
+            for table, query in queries.items():
+                cursor.execute(sql.SQL(query).format(sql.Identifier(self.prefixes[1] + table)),
+                               [extract_id])
+                rows[table] = cursor.fetchall()
+        return rows
+
+    def extract_ids(self):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id FROM {} ORDER BY id").format(
+                sql.Identifier(self.prefixes[1] + "extracts")))
+            return [row[0] for row in cursor.fetchall()]
+
+    def populated_extract(self):
+        """A saved extract holding tagged nodes, a way that leaves the bbox and relations."""
+        tagged = pgmap.OsmNode()
+        tagged.objId = -1
+        tagged.lon, tagged.lat = 0.123456789, -0.5
+        tagged.tags["name"] = "Café \"A\" <&>"
+        tagged = self.upload("create", [tagged])[0][0]
+        inside = self.create_node(0.25, 0.5)
+        outside = self.create_node(2.5, 0.75)
+        way = self.create_way([inside, outside, tagged])
+        child = self.create_relation([("node", tagged, "stop")])
+        self.create_relation([("node", inside, ""), ("way", way, "outer"),
+                              ("relation", child, "part"), ("node", inside, "again")])
+        return self.save("original")
+
+    def extract_command(self, *arguments, answer=None):
+        from django.core.management import call_command
+        out = io.StringIO()
+        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
+             patch("builtins.input", side_effect=EOFError if answer is None else lambda prompt: answer):
+            call_command(*arguments, stdout=out, no_color=True)
+        return out.getvalue().strip()
+
+    def update_info(self, extract_id, update_url=None):
+        """The header attributes a file of an extract should have: its edit IDs,
+        its area, and the server to update from."""
+        def number(value):
+            # As pgmap writes a number: the fewest digits that read back the same
+            text = repr(float(value))
+            return text[:-2] if text.endswith(".0") else text
+        ids = self.checkpoint(extract_id)
+        info = self.extract_info(extract_id)
+        attributes = {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])}
+        if info.rectangular:
+            attributes["bbox"] = ",".join(number(value) for value in info.bbox)
+        else:
+            attributes["boundary"] = info.boundaryWkt
+        if update_url:
+            attributes["update_url"] = update_url
+        return attributes
+
+    def header(self, path):
+        """The attributes of a file's header, read by the format its name gives."""
+        import gzip
+        with (gzip.open if path.endswith(".gz") else open)(path, "rb") as handle:
+            raw = handle.read()
+        data = pgmap.OsmData()
+        name = path[:-3] if path.endswith(".gz") else path
+        if name.endswith(".o5m"):
+            pgmap.LoadFromO5mBytes(raw, data)
+        elif name.endswith(".json"):
+            pgmap.LoadFromOsmJson(raw.decode("utf-8"), data)
+        else:
+            pgmap.LoadFromOsmXml(raw.decode("utf-8"), data)
+        return dict(data.attributes)
+
+    # Automatic update settings of an extract
+
+    def extract_info(self, extract_id):
+        info = pgmap.ExtractInfo()
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            self.assertTrue(t.GetExtract(extract_id, info))
+        finally:
+            t.Abort()
+        return info
+
+    def set_auto_update(self, extract_id, name, enabled, url):
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            result = t.SetExtractAutoUpdate(extract_id, name, enabled, url)
+            t.Commit()
+            return result
+        except BaseException:
+            t.Abort()
+            raise
+
+    # The manage.py command that updates extracts
+
+    # Another server's web API, for extracts that update from one. The other
+    # server is this application, called through Django's test client against
+    # the test map, so the extract is fed by the API alone.
+    REMOTE = "http://remote.test/"
+
+    def fetch(self, url):
+        """Stands in for reading a web address."""
+        from urllib.parse import urlsplit
+        from replicate.remoteupdate import RemoteUpdateError
+        if not url.startswith(self.REMOTE):
+            raise RemoteUpdateError("{} could not be read: no such server".format(url))
+        parts = urlsplit(url)
+        path = parts.path + ("?" + parts.query if parts.query else "")
+        self.fetched.append(path)
+        with patch("replicate.views.get_pgmap", return_value=self.map), \
+             patch("elements.views.get_pgmap", return_value=self.map), \
+             patch("multifetch.views.get_pgmap", return_value=self.map):
+            response = Client().get(path)
+        if response.status_code != 200:
+            raise RemoteUpdateError("{} answered {}".format(url, response.status_code))
+        return response.content
+
+    def update_command(self, *arguments):
+        from django.core.management import call_command
+        out = io.StringIO()
+        self.fetched = []
+        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
+             patch("replicate.remoteupdate.http_fetch", self.fetch):
+            call_command("updateextracts", *arguments, stdout=out, no_color=True)
+        return out.getvalue().splitlines()
+
+    # What an edit activity record says about the relations around an edit
+
+    def activity_records(self):
+        """The published records, as (action, IDs of the relatedparents relations or None)."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        records = []
+        for row in root.findall("editactivity"):
+            holder = row.find("relatedparents")
+            records.append((row.get("action"), None if holder.get("null") == "true" else
+                            sorted(int(r.get("id")) for r in holder.findall("relation"))))
+        return records
+
+    # The box each existing way or relation had before an edit
+
+    def existing_boxes(self):
+        """For each published record: the action, the existing objects, and their existing_bbox entries."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        records = []
+        for row in root.findall("editactivity"):
+            existing = [(e.tag, int(e.get("id"))) for e in row.find("existing")]
+            holder = row.find("existing_bbox")
+            if holder.get("null") == "true":
+                boxes = None
+            else:
+                boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
+                          tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
+                         for b in holder.findall("bbox")]
+            records.append((row.get("action"), existing, boxes))
+        return records
+
+    # Diffs applied by the admin tool are recorded as edits
+
+    def apply_diff(self, blocks):
+        """Apply an osmChange made of (action, object XML) blocks, as the admin tool's "Apply diffs" does."""
+        import gzip, os, tempfile
+        document = '<?xml version="1.0" encoding="UTF-8"?>\n<osmChange version="0.6">' + "".join(
+            "<{0}>{1}</{0}>".format(action, xml) for action, xml in blocks) + "</osmChange>"
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "001.osc.gz")
+        with gzip.open(path, "wb") as handle:
+            handle.write(document.encode("utf-8"))
+        error = pgmap.PgMapError()
+        admin = self.map.GetAdmin("EXCLUSIVE")
+        try:
+            self.assertTrue(admin.ApplyDiffs(folder, 0, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+            os.remove(path)
+            os.rmdir(folder)
+
+    # An extract of this map updated from the edits recorded, not taken afresh
+
+    def update_as_the_server_does(self, extract_id):
+        from replicate import extracts
+        with patch.object(extracts, "get_pgmap", return_value=self.map):
+            return extracts.update_db_extract(extract_id)
+
+    def varied_edits(self, inside):
+        nodes = [self.create_node(0.01 * i) for i in range(1, 6)] + [self.create_node(3), self.create_node(4)]
+        way = self.create_way(nodes[:3])
+        outer = self.create_way(nodes[4:])
+        self.create_relation([("node", nodes[6], ""), ("way", outer, "")])
+        self.create_relation([("way", way, "outer"), ("node", inside, "")])
+        nodes[1] = self.modify_node(nodes[1], 5)
+        way = self.modify_way(way, [nodes[0], nodes[3], nodes[5]])
+        nodes[5] = self.modify_node(nodes[5], 0.7)
+        self.upload("delete", [nodes[2]])
+        return 12
+
+    # The stored boxes of ways and relations, kept up as edits arrive
+
+    def stored_and_expected_boxes(self):
+        """The box each visible way and relation has stored, and the one worked
+        out afresh from where its members are now."""
+        prefix = self.prefixes[1]
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, ST_X(geom), ST_Y(geom) FROM {}").format(sql.Identifier(prefix + "visiblenodes")))
+            nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+            found = {}
+            for kind in ("way", "relation"):
+                cursor.execute(sql.SQL("SELECT id, members, ST_XMin(bbox), ST_YMin(bbox), ST_XMax(bbox), ST_YMax(bbox) FROM {}").format(
+                    sql.Identifier(prefix + "visible" + kind + "s")))
+                found[kind] = {row[0]: (row[1], None if row[2] is None else tuple(row[2:])) for row in cursor.fetchall()}
+        def around(boxes):
+            boxes = [b for b in boxes if b is not None]
+            if not boxes:
+                return None
+            return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        def point(node_id):
+            return None if node_id not in nodes else nodes[node_id] + nodes[node_id]
+        def way_box(way_id):
+            if way_id not in found["way"]:
+                return None
+            return around([point(ref) for ref in found["way"][way_id][0]])
+        def relation_box(relation_id, above=()):
+            if relation_id not in found["relation"] or relation_id in above:
+                return None
+            boxes = []
+            for kind, ref in found["relation"][relation_id][0]:
+                boxes.append(point(ref) if kind == "node" else way_box(ref) if kind == "way"
+                             else relation_box(ref, above + (relation_id,)))
+            return around(boxes)
+        stored = {("way", i): v[1] for i, v in found["way"].items()}
+        stored.update({("relation", i): v[1] for i, v in found["relation"].items()})
+        expected = {("way", i): way_box(i) for i in found["way"]}
+        expected.update({("relation", i): relation_box(i) for i in found["relation"]})
+        return stored, expected
+
+    def assert_boxes_right(self, step):
+        stored, expected = self.stored_and_expected_boxes()
+        self.assertEqual(stored, expected, step)
+
+    def import_to_static(self, data):
+        import os, tempfile
+        folder = tempfile.mkdtemp()
+        path = os.path.join(folder, "static.o5m")
+        try:
+            with open(path, "wb") as handle:
+                data.StreamTo(pgmap.PyO5mEncode(handle))
+            error = pgmap.PgMapError()
+            admin = self.map.GetAdmin("")
+            try:
+                self.assertTrue(admin.ImportMapFile(0, path, error), error.errStr)
+                admin.Commit()
+            finally:
+                del admin
+        finally:
+            os.remove(path)
+            os.rmdir(folder)
+
+    def static_objects(self):
+        """A way and two nested relations to import as the unchanging base of the map."""
+        data = pgmap.OsmData()
+        nodes = []
+        for index in range(4):
+            node = pgmap.OsmNode()
+            node.objId = 1001 + index
+            node.metaData.version = 1
+            node.lon, node.lat = 0.1 * (index + 1), 0.25
+            data.nodes.append(node)
+            nodes.append(node)
+        for way_id, refs in ((2001, (1001, 1002)), (2002, (1003, 1004))):
+            way = pgmap.OsmWay()
+            way.objId = way_id
+            way.metaData.version = 1
+            for ref in refs:
+                way.refs.append(ref)
+            data.ways.append(way)
+        relation = pgmap.OsmRelation()
+        relation.objId = 3001
+        relation.metaData.version = 1
+        relation.AddMember("way", 2001, "")
+        relation.AddMember("way", 2002, "")
+        data.relations.append(relation)
+        above = pgmap.OsmRelation()
+        above.objId = 3002
+        above.metaData.version = 1
+        above.AddMember("relation", 3001, "")
+        data.relations.append(above)
+        return data, nodes
+
+    def update_all_boxes(self):
+        error = pgmap.PgMapError()
+        admin = self.map.GetAdmin("")
+        try:
+            self.assertTrue(admin.UpdateBboxes(0, True, True, error), error.errStr)
+            admin.Commit()
+        finally:
+            del admin
+
+    # Checks made by an upload
+
+    def upload_result(self, action, objects, ifunused=False):
+        """As upload(), giving back what upload_block answers, committed if it succeeded."""
+        data = pgmap.OsmData()
+        for obj in objects:
+            obj.metaData.changeset = self.changeset_id
+            (data.nodes if isinstance(obj, pgmap.OsmNode) else
+             data.ways if isinstance(obj, pgmap.OsmWay) else data.relations).append(obj)
+        t = self.map.GetTransaction("EXCLUSIVE")
+        try:
+            result = upload_block(action, data, self.changeset_id, t, ET.Element("diffResult"), 1,
+                                  "extract-tester", int(time.time()),
+                                  *[pgmap.mapi64i64() for _ in range(3)], ifunused=ifunused)
+            if result is True:
+                t.Commit()
+            else:
+                t.Abort()
+        except BaseException:
+            t.Abort()
+            raise
+        return result
+
+    # Schema version 15: member tables of live versions only, with a key
+
+    def set_schema(self, version):
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(admin.CreateMapTables(0, version, False, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+
+    def member_rows(self, suffix, prefix=None):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, version, index, member FROM {} ORDER BY id, version, index, member").format(
+                sql.Identifier((prefix or self.prefixes[1]) + suffix)))
+            return cursor.fetchall()
+
+    # Schema version 16: each version records the atomic edit that made it
+
+    def atomic_edit_ids(self, kind, obj_id, prefix=None):
+        """(table, version, atomic_edit_id) of each row of an object, history first."""
+        rows = []
+        with self.db.cursor() as cursor:
+            for table in ("old", "live"):
+                cursor.execute(sql.SQL("SELECT version, atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
+                    sql.Identifier((prefix or self.prefixes[1]) + table + kind + "s")), (obj_id,))
+                rows.extend((table,) + row for row in cursor.fetchall())
+        return rows
+
+    def superseded(self, kind, obj_id):
+        """(version, superseded_atomic_edit_id) of each history row of an object,
+        and what its row in the table of IDs taken over says, if it has one."""
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT version, superseded_atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
+                sql.Identifier(self.prefixes[1] + "old" + kind + "s")), (obj_id,))
+            history = cursor.fetchall()
+            cursor.execute(sql.SQL("SELECT superseded_atomic_edit_id FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + kind + "ids")), (obj_id,))
+            taken = cursor.fetchall()
+        return history, [row[0] for row in taken]
+
+    def latest_atomic_edit(self):
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT max(atomic_edit_id) FROM {}").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+            return cursor.fetchone()[0]
+
+    # Searching the records by area, and the index for changeset counts
+
+    def filtered_ids(self, bbox):
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1&bbox=" + bbox))
+        return [int(row.get("id")) for row in root.findall("editactivity")]
+
+    def activity_box_indexes(self):
+        """The columns of the GiST indexes of edit_activity."""
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%USING gist%%'",
+                           (self.prefixes[1] + "edit_activity",))
+            return sorted(row[0].split("USING gist ", 1)[1].strip() for row in cursor.fetchall())
+
+    # The boxes of the updated objects and of the affected parents
+
+    def published_boxes(self, section, objects):
+        """The entries of one box section of the latest published record, having
+        checked there is one for each object of the list it goes with, in order."""
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        row = root.findall("editactivity")[-1]
+        listed = [(e.tag, int(e.get("id"))) for e in row.find(objects)]
+        holder = row.find(section)
+        if holder.get("null") == "true":
+            return None
+        boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
+                  tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
+                 for b in holder.findall("bbox")]
+        self.assertEqual([entry[:2] for entry in boxes], listed, section)
+        return boxes
+
+class DbExtractTestCase(MapTestCaseBase):
+    """Stored extracts and the map query that makes them. These tests run again
+    in test_dbextract_remote and test_dbextract_polygon, with extracts brought up
+    to date from another server and with polygon boundaries."""
+
     def test_download_extract_by_id_and_name_streams_all_batches(self):
         nodes = []
         for index in range(1005):
@@ -326,58 +905,6 @@ class DbExtractTestCase(SimpleTestCase):
                     sql.Identifier(self.prefixes[1] + "extract_livenodes")))
             finally:
                 cursor.execute("ROLLBACK")
-
-    def checkpoint(self, extract_id):
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT edit_activity_id, atomic_edit_id FROM {} WHERE id=%s").format(
-                sql.Identifier(self.prefixes[1] + "extracts")), [extract_id])
-            return cursor.fetchone()
-
-    def assert_current(self, extract_id):
-        self.assertEqual(self.contents(extract_id), self.contents())
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT COALESCE(max(id),0), COALESCE(max(atomic_edit_id),0) FROM {}").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-            self.assertEqual(self.checkpoint(extract_id), cursor.fetchone())
-
-    def check_node_edit(self, action, inside):
-        # Keep an unrelated node in every snapshot so outside edits must preserve
-        # real contents, rather than merely leave an empty extract empty.
-        anchor = self.create_node(-0.5)
-        lon = 0.25 if inside else 2
-        node = None if action == "create" else self.create_node(lon)
-        extract_id = self.save()
-        self.assert_current(extract_id)
-        original = self.contents(extract_id)
-        before = self.checkpoint(extract_id)
-
-        if action == "create":
-            node = self.create_node(lon)
-        elif action == "modify":
-            # Move within the same region as well as changing tags/version.
-            node = self.modify_node(node, 0.5 if inside else 3)
-        else:
-            self.upload("delete", [node])
-
-        self.assertEqual(self.contents(extract_id), original)
-        self.update(extract_id)
-        self.assert_current(extract_id)
-        updated = self.contents(extract_id)
-        self.assertEqual(updated[("node", anchor.objId)], original[("node", anchor.objId)])
-        expected_ids = {("node", anchor.objId)}
-        if inside and action != "delete":
-            expected_ids.add(("node", node.objId))
-        self.assertEqual(set(updated), expected_ids)
-        if inside and action == "modify":
-            attrs, _, tags = updated[("node", node.objId)]
-            self.assertEqual(attrs["version"], "2")
-            self.assertEqual(attrs["lon"], 0.5)
-            self.assertIn(("tag", (("k", "test"), ("v", "modified"))), tags)
-        if not inside:
-            self.assertEqual(updated, original)
-        after = self.checkpoint(extract_id)
-        self.assertGreater(after[0], before[0])
-        self.assertGreater(after[1], before[1])
 
     def test_create_node_inside_bbox(self):
         self.check_node_edit("create", inside=True)
@@ -563,31 +1090,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertGreater(after[0], before[0] + 3)
         self.assertGreater(after[1], before[1])
 
-    def store_static(self, nodes, ways=(), relations=()):
-        """Store objects in the static baseline, as an imported planet would be."""
-        data = pgmap.OsmData()
-        for obj in list(nodes) + list(ways) + list(relations):
-            obj.metaData.version = 1
-            obj.metaData.changeset = self.changeset_id
-            obj.metaData.uid = 1
-            obj.metaData.username = "extract-tester"
-            obj.metaData.timestamp = int(time.time())
-        for node in nodes:
-            data.nodes.append(node)
-        for way in ways:
-            data.ways.append(way)
-        for relation in relations:
-            data.relations.append(relation)
-        maps = [pgmap.mapi64i64() for _ in range(3)]
-        error = pgmap.PgMapError()
-        t = self.map.GetTransaction("EXCLUSIVE")
-        try:
-            self.assertTrue(t.StoreObjects(data, *maps, True, error), error.errStr)
-            t.Commit()
-        except BaseException:
-            t.Abort()
-            raise
-
     def test_static_objects_overridden_by_edits(self):
         nodes = []
         for index, lon in enumerate((0, 2, 0.5, 3)):
@@ -644,26 +1146,6 @@ class DbExtractTestCase(SimpleTestCase):
             ("relation", relation.objId)})
         way = self.modify_way(way, [east, far])
         self.assertEqual(self.updated_ids(extract_id), set())
-
-    # Moving a node never edits its parent ways, so the update must work out
-    # for itself which unchanged ways enter, stay in or leave the extract.
-
-    def way_move_fixture(self, lons):
-        """An anchor node inside the bbox plus a way with nodes at these longitudes."""
-        anchor = self.create_node(-0.5)
-        nodes = [self.create_node(lon) for lon in lons]
-        way = self.create_way(nodes)
-        extract_id = self.save()
-        self.assert_current(extract_id)
-        return anchor, nodes, way, extract_id
-
-    def way_keys(self, nodes, way):
-        return {("node", node.objId) for node in nodes} | {("way", way.objId)}
-
-    def assert_way_unedited(self, extract_id, way):
-        attrs, members, _ = self.contents(extract_id)[("way", way.objId)]
-        self.assertEqual(attrs["version"], "1")
-        self.assertEqual([int(dict(member[1])["ref"]) for member in members], list(way.refs))
 
     def test_node_moved_outside_keeps_outside_way_out(self):
         anchor, nodes, way, extract_id = self.way_move_fixture((2, 3))
@@ -807,10 +1289,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.modify_node(east, -3)
         self.assertEqual(self.updated_ids(extract_id), set())
 
-    def relation_members(self, extract_id, relation):
-        _, members, _ = self.contents(extract_id)[("relation", relation.objId)]
-        return [(dict(m[1])["type"], int(dict(m[1])["ref"]), dict(m[1])["role"]) for m in members]
-
     def test_relation_edited_while_staying_in_extract(self):
         inside = self.create_node(0)
         other = self.create_node(0.5)
@@ -856,28 +1334,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(self.contents(extract_id)[("relation", relation.objId)][0]["version"], "3")
         self.assertEqual(self.relation_members(extract_id, relation),
                          [("node", inside.objId, "platform")])
-
-    @staticmethod
-    def differences(result):
-        return [(d.type, d.objId, d.extractVersion, d.queryVersion) for d in result.differences]
-
-    def compare(self, extract_id=0, name=""):
-        result = pgmap.ExtractComparison()
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            t.CompareExtract(extract_id, name, result)
-        finally:
-            t.Abort()
-        return result, self.differences(result)
-
-    def compare_all(self):
-        results = pgmap.vectorextractcomparison()
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            t.CompareAllExtracts(results)
-        finally:
-            t.Abort()
-        return [pgmap.ExtractComparison(result) for result in results]
 
     def test_compare_extract_with_query(self):
         inside = self.create_node(0)
@@ -932,12 +1388,6 @@ class DbExtractTestCase(SimpleTestCase):
         result, differences = self.compare(extract_id)
         self.assertFalse(result.pendingActivity)
         self.assertEqual(differences, [("node", outside.objId, 7, 1), ("way", way.objId, 0, 1)])
-
-    def test_compare_extract_errors(self):
-        with self.assertRaisesRegex(RuntimeError, "Extract not found"):
-            self.compare(12345)
-        with self.assertRaises(Exception):
-            self.compare()
 
     def test_compare_all_extracts(self):
         self.assertEqual(self.compare_all(), [])
@@ -1266,10 +1716,6 @@ class DbExtractTestCase(SimpleTestCase):
             self.assertEqual(listing + "{}/update/".format(second) in html, update)
             self.assertEqual(listing + "{}/delete/".format(second) in html, delete)
 
-    def contents_after_update(self, extract_id):
-        self.update(extract_id)
-        return self.contents(extract_id)
-
     def test_download_gzipped_extract(self):
         import gzip
         nodes = []
@@ -1398,42 +1844,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(broken.status_code, 500)
         self.assertNotIn("secret detail", broken.content.decode("utf-8"))
 
-    def test_map_query_on_several_connections(self):
-        # Prepared statements belong to one connection. Each server thread has
-        # its own, so a query must work on every connection, old or new.
-        node = self.create_node(0)
-
-        def query(connection):
-            output = io.BytesIO()
-            encoder = pgmap.PyOsmXmlEncode(output, common.xmlAttribs)
-            t = connection.GetTransaction("ACCESS SHARE")
-            try:
-                mgr = t.GetQueryMgr()
-                status = mgr.Start(self.bbox, int(time.time()), encoder)
-                while status == 0:
-                    status = mgr.Continue()
-                del mgr
-                self.assertEqual(status, 1)
-                # The meta lookup also uses a prepared statement.
-                error = pgmap.PgMapError()
-                self.assertEqual(t.GetMetaValue("schema_version", error), "16")
-            finally:
-                t.Abort()
-            return set(self.decode_contents(output.getvalue()))
-
-        def connect():
-            return pgmap.PgMap(self.connection_string, self.prefixes[0],
-                               self.prefixes[1], self.prefixes[1], self.prefixes[2])
-
-        expected = {("node", node.objId)}
-        second = connect()
-        for connection in (self.map, second, self.map, second):
-            self.assertEqual(query(connection), expected)
-        # Connections created after earlier ones have closed must work too.
-        del second
-        for _ in range(3):
-            self.assertEqual(query(connect()), expected)
-
     def test_latest_edit_ids(self):
         def latest():
             t = self.map.GetTransaction("ACCESS SHARE")
@@ -1480,78 +1890,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual((int(root.get("edit_activity_id")), int(root.get("atomic_edit_id"))), ids)
         self.assertEqual(root.find("node").get("version"), "2")
 
-    # Importing a file as a stored extract
-
-    def export_document(self, extract_id, encoder_class=None, attribs=None):
-        """The stored extract as an XML (or other text format) document."""
-        output = io.BytesIO()
-        encoder = (encoder_class or pgmap.PyOsmXmlEncode)(
-            output, pgmap.mapstringstring(attribs or {}))
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            t.ExportExtract(extract_id, "", encoder)
-        finally:
-            t.Abort()
-        return output.getvalue().decode("utf-8")
-
-    def import_document(self, document, name="imported", bbox=(), edit_ids=(-1, -1),
-                        loader=None):
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            importer = t.StartImportExtract(name, list(bbox), *edit_ids)
-            (loader or pgmap.LoadFromOsmXml)(document, importer)
-            counts = (importer.GetNumNodes(), importer.GetNumWays(), importer.GetNumRelations())
-            extract_id = importer.GetId()
-            del importer
-            t.Commit()
-            return extract_id, counts
-        except BaseException:
-            t.Abort()
-            raise
-
-    def stored_rows(self, extract_id):
-        """Everything stored for an extract that an import is expected to reproduce."""
-        queries = {
-            "extracts": "SELECT ST_AsText(bbox), use_bbox_in_query FROM {} WHERE id=%s",
-            "extract_livenodes": "SELECT id, changeset, username, uid, timestamp, version, "
-                "tags::text, ST_AsText(geom) FROM {} WHERE extract_id=%s ORDER BY id",
-            "extract_liveways": "SELECT id, changeset, username, uid, timestamp, version, "
-                "tags::text, members::text, ST_AsText(bbox) FROM {} WHERE extract_id=%s ORDER BY id",
-            "extract_liverelations": "SELECT id, changeset, username, uid, timestamp, version, "
-                "tags::text, members::text, memberroles::text FROM {} WHERE extract_id=%s ORDER BY id",
-        }
-        for suffix in ("way_mems", "relation_mems_n", "relation_mems_w", "relation_mems_r"):
-            queries["extract_" + suffix] = ("SELECT id, version, index, member FROM {} "
-                                            "WHERE extract_id=%s ORDER BY id, index")
-        rows = {}
-        with self.db.cursor() as cursor:
-            for table, query in queries.items():
-                cursor.execute(sql.SQL(query).format(sql.Identifier(self.prefixes[1] + table)),
-                               [extract_id])
-                rows[table] = cursor.fetchall()
-        return rows
-
-    def extract_ids(self):
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT id FROM {} ORDER BY id").format(
-                sql.Identifier(self.prefixes[1] + "extracts")))
-            return [row[0] for row in cursor.fetchall()]
-
-    def populated_extract(self):
-        """A saved extract holding tagged nodes, a way that leaves the bbox and relations."""
-        tagged = pgmap.OsmNode()
-        tagged.objId = -1
-        tagged.lon, tagged.lat = 0.123456789, -0.5
-        tagged.tags["name"] = "Café \"A\" <&>"
-        tagged = self.upload("create", [tagged])[0][0]
-        inside = self.create_node(0.25, 0.5)
-        outside = self.create_node(2.5, 0.75)
-        way = self.create_way([inside, outside, tagged])
-        child = self.create_relation([("node", tagged, "stop")])
-        self.create_relation([("node", inside, ""), ("way", way, "outer"),
-                              ("relation", child, "part"), ("node", inside, "again")])
-        return self.save("original")
-
     def test_import_reproduces_exported_extract(self):
         original = self.populated_extract()
         expected = self.stored_rows(original)
@@ -1585,14 +1923,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertNotEqual(self.contents(imported), self.contents())
         self.update(imported)
         self.assert_current(imported)
-
-    def extract_command(self, *arguments, answer=None):
-        from django.core.management import call_command
-        out = io.StringIO()
-        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
-             patch("builtins.input", side_effect=EOFError if answer is None else lambda prompt: answer):
-            call_command(*arguments, stdout=out, no_color=True)
-        return out.getvalue().strip()
 
     def test_export_import_and_delete_commands(self):
         import os, tempfile
@@ -1842,39 +2172,6 @@ class DbExtractTestCase(SimpleTestCase):
                 early.close()
                 self.update(extract_id)
 
-    def update_info(self, extract_id, update_url=None):
-        """The header attributes a file of an extract should have: its edit IDs,
-        its area, and the server to update from."""
-        def number(value):
-            # As pgmap writes a number: the fewest digits that read back the same
-            text = repr(float(value))
-            return text[:-2] if text.endswith(".0") else text
-        ids = self.checkpoint(extract_id)
-        info = self.extract_info(extract_id)
-        attributes = {"edit_activity_id": str(ids[0]), "atomic_edit_id": str(ids[1])}
-        if info.rectangular:
-            attributes["bbox"] = ",".join(number(value) for value in info.bbox)
-        else:
-            attributes["boundary"] = info.boundaryWkt
-        if update_url:
-            attributes["update_url"] = update_url
-        return attributes
-
-    def header(self, path):
-        """The attributes of a file's header, read by the format its name gives."""
-        import gzip
-        with (gzip.open if path.endswith(".gz") else open)(path, "rb") as handle:
-            raw = handle.read()
-        data = pgmap.OsmData()
-        name = path[:-3] if path.endswith(".gz") else path
-        if name.endswith(".o5m"):
-            pgmap.LoadFromO5mBytes(raw, data)
-        elif name.endswith(".json"):
-            pgmap.LoadFromOsmJson(raw.decode("utf-8"), data)
-        else:
-            pgmap.LoadFromOsmXml(raw.decode("utf-8"), data)
-        return dict(data.attributes)
-
     def test_files_say_what_keeping_them_up_to_date_needs(self):
         import os, tempfile
         from django.test import override_settings
@@ -1937,27 +2234,6 @@ class DbExtractTestCase(SimpleTestCase):
             html = Client().get(reverse("replication:extracts")).content.decode("utf-8")
         for extension in ("osm.gz", "o5m.gz", "pbf"):
             self.assertIn('/extract/{}.{}"'.format(extract_id, extension), html)
-
-    # Automatic update settings of an extract
-
-    def extract_info(self, extract_id):
-        info = pgmap.ExtractInfo()
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            self.assertTrue(t.GetExtract(extract_id, info))
-        finally:
-            t.Abort()
-        return info
-
-    def set_auto_update(self, extract_id, name, enabled, url):
-        t = self.map.GetTransaction("ACCESS SHARE")
-        try:
-            result = t.SetExtractAutoUpdate(extract_id, name, enabled, url)
-            t.Commit()
-            return result
-        except BaseException:
-            t.Abort()
-            raise
 
     def test_auto_update_settings(self):
         self.create_node(0)
@@ -2044,39 +2320,6 @@ class DbExtractTestCase(SimpleTestCase):
             del admin
         info = self.extract_info(extract_id)
         self.assertEqual((info.autoUpdate, info.updateUrl), (True, "https://example.org/"))
-
-    # The manage.py command that updates extracts
-
-    # Another server's web API, for extracts that update from one. The other
-    # server is this application, called through Django's test client against
-    # the test map, so the extract is fed by the API alone.
-    REMOTE = "http://remote.test/"
-
-    def fetch(self, url):
-        """Stands in for reading a web address."""
-        from urllib.parse import urlsplit
-        from replicate.remoteupdate import RemoteUpdateError
-        if not url.startswith(self.REMOTE):
-            raise RemoteUpdateError("{} could not be read: no such server".format(url))
-        parts = urlsplit(url)
-        path = parts.path + ("?" + parts.query if parts.query else "")
-        self.fetched.append(path)
-        with patch("replicate.views.get_pgmap", return_value=self.map), \
-             patch("elements.views.get_pgmap", return_value=self.map), \
-             patch("multifetch.views.get_pgmap", return_value=self.map):
-            response = Client().get(path)
-        if response.status_code != 200:
-            raise RemoteUpdateError("{} answered {}".format(url, response.status_code))
-        return response.content
-
-    def update_command(self, *arguments):
-        from django.core.management import call_command
-        out = io.StringIO()
-        self.fetched = []
-        with patch("replicate.extracts.get_pgmap", return_value=self.map), \
-             patch("replicate.remoteupdate.http_fetch", self.fetch):
-            call_command("updateextracts", *arguments, stdout=out, no_color=True)
-        return out.getvalue().splitlines()
 
     def test_update_command(self):
         from django.core.management.base import CommandError
@@ -2355,190 +2598,6 @@ class DbExtractTestCase(SimpleTestCase):
         finally:
             t.Abort()
 
-    # What an edit activity record says about the relations around an edit
-
-    def activity_records(self):
-        """The published records, as (action, IDs of the relatedparents relations or None)."""
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        records = []
-        for row in root.findall("editactivity"):
-            holder = row.find("relatedparents")
-            records.append((row.get("action"), None if holder.get("null") == "true" else
-                            sorted(int(r.get("id")) for r in holder.findall("relation"))))
-        return records
-
-    def test_activity_records_relations_of_related_nodes(self):
-        first = self.create_node(0)
-        second = self.create_node(0.1)
-        third = self.create_node(0.2)
-        holds_second = self.create_relation([("node", second, "")])
-        way = self.create_way([first, second])
-        # Creating the way: its nodes are related, and the relation holding one of them is recorded
-        self.assertEqual(self.activity_records()[-1], ("create", [holds_second.objId]))
-        # A relation that is itself edited, or an affected parent, is recorded as that, not again here
-        holds_way = self.create_relation([("way", way, ""), ("node", third, "")])
-        self.assertEqual(self.activity_records()[-1], ("create", []))
-        first = self.modify_node(first, 0.05)
-        # Moving a node: its way is an affected parent and the way's other node is related
-        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
-        self.modify_way(way, [first, second, third])
-        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
-        self.upload("delete", [holds_second])
-        self.assertEqual(self.activity_records()[-1], ("delete", []))
-        # Each is the relation as it was then: the record keeps its version
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        kept = [r for row in root.findall("editactivity") for r in row.find("relatedparents")]
-        self.assertEqual(set((r.tag, r.get("version"), r.find("member").get("ref")) for r in kept),
-                         {("relation", "1", str(second.objId))})
-
-    def test_table_from_before_the_added_columns_says_what_to_do(self):
-        # A map at schema 14 from before a column was added must be brought up
-        # to date; until then an edit is refused, with the reason, and not half recorded
-        self.create_node(0)
-        table = sql.Identifier(self.prefixes[1] + "edit_activity")
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
-            before = cursor.fetchone()[0]
-            # The footprint, worked out from it, came later still, and goes with it
-            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox CASCADE").format(table))
-        with self.assertRaisesRegex(AssertionError, "ask the admin tool for the latest schema version again"):
-            self.create_node(0.1)
-        from replicate.remoteupdate import RemoteUpdateError
-        with self.assertRaises(RemoteUpdateError):
-            self.fetch(self.REMOTE + "replication/edit_activities")
-        # Asking for schema 14 again puts it right
-        admin = self.map.GetAdmin("")
-        error = pgmap.PgMapError()
-        try:
-            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
-            admin.Commit()
-        except BaseException:
-            admin.Abort()
-            raise
-        finally:
-            del admin
-        self.create_node(0.2)
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
-            self.assertEqual(cursor.fetchone()[0], before + 1)
-            # with the footprint back for every record
-            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(table))
-            self.assertEqual(cursor.fetchone()[0], 0)
-            # The column the table began with, which nothing filled in, has gone
-            cursor.execute("SELECT count(*) FROM information_schema.columns WHERE table_name=%s AND column_name='bbox'",
-                           (self.prefixes[1] + "edit_activity",))
-            self.assertEqual(cursor.fetchone()[0], 0)
-
-    # The box each existing way or relation had before an edit
-
-    def existing_boxes(self):
-        """For each published record: the action, the existing objects, and their existing_bbox entries."""
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        records = []
-        for row in root.findall("editactivity"):
-            existing = [(e.tag, int(e.get("id"))) for e in row.find("existing")]
-            holder = row.find("existing_bbox")
-            if holder.get("null") == "true":
-                boxes = None
-            else:
-                boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
-                          tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
-                         for b in holder.findall("bbox")]
-            records.append((row.get("action"), existing, boxes))
-        return records
-
-    def test_activity_records_existing_bboxes(self):
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        c = self.create_node(0.6, 0.1)
-        way = self.create_way([a, b])
-        relation = self.create_relation([("way", way, ""), ("node", c, "")])
-        # Nothing existed before a creation
-        self.assertEqual(self.existing_boxes()[-1], ("create", [], []))
-
-        # A way: the box around its nodes as they were before the edit
-        way = self.modify_way(way, [a, b, c])
-        self.assertEqual(self.existing_boxes()[-1],
-                         ("modify", [("way", way.objId)], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))]))
-        # and after that edit it is the larger one
-        way = self.modify_way(way, [a, b])
-        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.1, 0.6, 0.5))])
-
-        # A node's entry is the position it had
-        a = self.modify_node(a, 0.15)
-        self.assertEqual(self.existing_boxes()[-1],
-                         ("modify", [("node", a.objId)], [("node", a.objId, (0.1, 0.2, 0.1, 0.2))]))
-
-        # A relation, and several objects edited together: one entry each, in the recorded order
-        relation = self.modify_relation(relation, [("way", way, "outer")])
-        action, existing, boxes = self.existing_boxes()[-1]
-        self.assertEqual((action, existing), ("modify", [("relation", relation.objId)]))
-        self.assertEqual([entry[:2] for entry in boxes], existing)
-        self.assertEqual(len(boxes[0][2]), 4)
-        self.upload("delete", [relation])
-        b2 = pgmap.OsmNode(b)
-        b2.lat = 0.9
-        way2 = pgmap.OsmWay(way)
-        self.upload("modify", [b2, way2])
-        action, existing, boxes = self.existing_boxes()[-1]
-        self.assertEqual(sorted(existing), sorted([("node", b.objId), ("way", way.objId)]))
-        self.assertEqual(len(boxes), len(existing))
-        self.assertEqual(dict((entry[:2], entry[2]) for entry in boxes),
-                         {("node", b.objId): (0.3, 0.5, 0.3, 0.5), ("way", way.objId): (0.15, 0.2, 0.3, 0.5)})
-        # Every record has as many entries as existing objects
-        for action, existing, boxes in self.existing_boxes():
-            self.assertEqual(len(boxes), len(existing), action)
-
-        # Stored as geometry: a collection with one member for each existing
-        # object, a point for the node, which the database can search by area
-        table = sql.Identifier(self.prefixes[1] + "edit_activity")
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT GeometryType(existing_bbox), ST_SRID(existing_bbox), "
-                "ST_NumGeometries(existing_bbox), ST_AsText(existing_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
-            kind, srid, count, text = cursor.fetchone()
-            self.assertEqual((kind, srid, count), ("GEOMETRYCOLLECTION", 4326, 2))
-            self.assertIn("POINT(0.3 0.5)", text)
-            self.assertIn("POLYGON((0.15 0.2,0.15 0.5,0.3 0.5,0.3 0.2,0.15 0.2))", text)
-            # A creation, with nothing existing, has an empty collection, not NULL
-            cursor.execute(sql.SQL("SELECT ST_AsText(existing_bbox) FROM {} WHERE action='create' LIMIT 1").format(table))
-            self.assertEqual(cursor.fetchone(), ("GEOMETRYCOLLECTION EMPTY",))
-            # Records whose existing ways or relations reached into an area
-            for area, expected in (((0.25, 0.25, 0.35, 0.35), True), ((5, 5, 6, 6), False)):
-                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE existing_bbox && ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table), area)
-                self.assertEqual(cursor.fetchone()[0] > 0, expected)
-
-        from replicate.views import collection_boxes
-        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION EMPTY"), [])
-        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION(POLYGON EMPTY,POLYGON((1 2,1 4,3 4,3 2,1 2)),"
-                                          "POINT(-5.5 6e0),POLYGON EMPTY)"),
-                         [None, (1.0, 2.0, 3.0, 4.0), (-5.5, 6.0, -5.5, 6.0), None])
-        with self.assertRaises(ValueError):
-            collection_boxes("POINT(1 2)")
-
-    # Diffs applied by the admin tool are recorded as edits
-
-    def apply_diff(self, blocks):
-        """Apply an osmChange made of (action, object XML) blocks, as the admin tool's "Apply diffs" does."""
-        import gzip, os, tempfile
-        document = '<?xml version="1.0" encoding="UTF-8"?>\n<osmChange version="0.6">' + "".join(
-            "<{0}>{1}</{0}>".format(action, xml) for action, xml in blocks) + "</osmChange>"
-        folder = tempfile.mkdtemp()
-        path = os.path.join(folder, "001.osc.gz")
-        with gzip.open(path, "wb") as handle:
-            handle.write(document.encode("utf-8"))
-        error = pgmap.PgMapError()
-        admin = self.map.GetAdmin("EXCLUSIVE")
-        try:
-            self.assertTrue(admin.ApplyDiffs(folder, 0, error), error.errStr)
-            admin.Commit()
-        except BaseException:
-            admin.Abort()
-            raise
-        finally:
-            del admin
-            os.remove(path)
-            os.rmdir(folder)
-
     def test_applied_diffs_are_recorded_as_edit_activity(self):
         a = self.create_node(0.2)
         b = self.create_node(0.4)
@@ -2623,6 +2682,1006 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual([row.get("action") for row in later], ["modify", "delete"])
         self.assertEqual(int(later[0].get("atomic_edit_id")), int(rows[0].get("atomic_edit_id")) + 1)
         self.assertEqual([int(row.get("block_index")) for row in later], [0, 1])
+
+    def test_local_extract_is_updated_from_the_recorded_edits(self):
+        inside = self.create_node(0)
+        extract_id = self.save()
+        self.varied_edits(inside)
+        outcome = self.update_as_the_server_does(extract_id)
+        self.assertRegex(outcome, r"^updated \(\d+ activity rows\)$")
+        self.assert_current(extract_id)
+        self.assertEqual(self.compare(extract_id)[1], [])
+        self.assertEqual(self.update_as_the_server_does(extract_id), "already up to date")
+        # One more edit, far away: nothing to apply, and it has still caught up
+        self.create_node(60)
+        from django.conf import settings
+        filtering = getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True)
+        self.assertEqual(self.update_as_the_server_does(extract_id),
+                         "updated (0 activity rows)" if filtering else "updated (1 activity row)")
+        self.assert_current(extract_id)
+        # An edit moving a node out of the rectangle
+        self.modify_node(inside, 9)
+        self.assertEqual(self.update_as_the_server_does(extract_id), "updated (1 activity row)")
+        self.assert_current(extract_id)
+
+    def test_local_extract_is_taken_afresh_when_records_will_not_do(self):
+        from django.test import override_settings
+        inside = self.create_node(0)
+        table = sql.Identifier(self.prefixes[1] + "extracts")
+        # An extract that selects by stored boxes cannot be kept up from the records
+        boxed = self.save("boxed")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET use_bbox_in_query=true WHERE id=%s").format(table), [boxed])
+        plain = self.save("plain")
+        legacy = self.save("legacy")
+        off = self.save("off")
+        self.varied_edits(inside)
+        self.assertEqual(self.update_as_the_server_does(boxed), "updated")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT use_bbox_in_query FROM {} WHERE id=%s").format(table), [boxed])
+            self.assertEqual(cursor.fetchone(), (True,))
+        self.assertEqual(self.checkpoint(boxed), self.checkpoint(self.save("now")))
+        # With the setting off, every extract is taken afresh
+        with override_settings(EXTRACT_UPDATE_FROM_RECORDS=False):
+            self.assertEqual(self.update_as_the_server_does(off), "updated")
+        self.assert_current(off)
+        # Records from before they held all an update needs: afresh, saying why
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET related_parents=NULL").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+        outcome = self.update_as_the_server_does(legacy)
+        self.assertRegex(outcome, r"^updated afresh from the map \(Activity row \d+ was recorded before")
+        self.assert_current(legacy)
+        # and all of them hold the same
+        self.assertEqual(self.contents(off), self.contents(legacy))
+
+    def test_boxes_follow_edits(self):
+        a, b, c, d, e, f = [self.create_node(0.1 * i, 0.01 * i) for i in range(1, 7)]
+        way1 = self.create_way([a, b])
+        way2 = self.create_way([c, d])
+        inner = self.create_relation([("way", way1, ""), ("node", e, "")])
+        middle = self.create_relation([("relation", inner, ""), ("way", way2, "")])
+        outer = self.create_relation([("relation", middle, "")])
+        self.assert_boxes_right("created")
+        stored = self.stored_and_expected_boxes()[0]
+        self.assertEqual(stored[("way", way1.objId)], (0.1, 0.01, 0.2, 0.02))
+        self.assertEqual(stored[("relation", outer.objId)], (0.1, 0.01, 0.5, 0.05))
+
+        # A node of a way: the way, and every relation above it, however deep
+        a = self.modify_node(a, -3.0)
+        self.assert_boxes_right("node of a way moved")
+        self.assertEqual(self.stored_and_expected_boxes()[0][("relation", outer.objId)][0], -3.0)
+        # A node that is a relation's own member
+        e = self.modify_node(e, 7.0)
+        self.assert_boxes_right("node member of a relation moved")
+        # Moving back in shrinks them again
+        a = self.modify_node(a, 0.1)
+        e = self.modify_node(e, 0.5)
+        self.assert_boxes_right("nodes moved back")
+        # A way given other nodes
+        way2 = self.modify_way(way2, [c, f])
+        self.assert_boxes_right("way given another node")
+        # Relations given other members
+        inner = self.modify_relation(inner, [("way", way1, "")])
+        self.assert_boxes_right("relation lost a node member")
+        middle = self.modify_relation(middle, [("relation", inner, "")])
+        self.assert_boxes_right("relation lost a way member")
+        middle = self.modify_relation(middle, [("relation", inner, ""), ("node", f, "")])
+        self.assert_boxes_right("relation gained a node member")
+        # Several kinds of object in one upload
+        b2 = pgmap.OsmNode(b)
+        b2.lon = 9.0
+        way1b = pgmap.OsmWay(way1)
+        way1b.refs.clear()
+        for node in (a, b, c):
+            way1b.refs.append(node.objId)
+        self.upload("modify", [b2, way1b])
+        self.assert_boxes_right("node and way modified together")
+        # A relation with nothing in it that has a position
+        empty = self.create_relation([])
+        self.assert_boxes_right("empty relation")
+        self.assertIsNone(self.stored_and_expected_boxes()[0][("relation", empty.objId)])
+        # Deleting from the top down
+        self.upload("delete", [outer])
+        self.assert_boxes_right("outer relation deleted")
+        self.upload("delete", [middle])
+        self.upload("delete", [inner])
+        self.assert_boxes_right("relations deleted")
+
+    def test_boxes_follow_edits_to_imported_objects(self):
+        data, nodes = self.static_objects()
+        self.import_to_static(data)
+        self.update_all_boxes()
+        self.assert_boxes_right("imported, boxes worked out")
+        # Moving a node of an imported way: the way and the relations above it
+        # are in the base tables, and have to be taken over to be changed
+        moved = self.modify_node(nodes[0], -2.0)
+        self.assert_boxes_right("imported node moved")
+        stored = self.stored_and_expected_boxes()[0]
+        self.assertEqual(stored[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
+        self.assertEqual(stored[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(stored[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
+        self.modify_node(moved, 0.1)
+        self.assert_boxes_right("moved back")
+        # The other way, never touched, kept its box in the base tables throughout
+        self.assertEqual(self.stored_and_expected_boxes()[0][("way", 2002)], (0.3, 0.25, 0.4, 0.25))
+
+    def test_relation_box_when_member_boxes_were_never_worked_out(self):
+        data, nodes = self.static_objects()
+        # A relation holding one of the nodes itself, as well as the nested relation
+        direct = pgmap.OsmRelation()
+        direct.objId = 3003
+        direct.metaData.version = 1
+        direct.AddMember("relation", 3001, "")
+        direct.AddMember("node", 1004, "")
+        data.relations.append(direct)
+        self.import_to_static(data)
+        # As a map is whose base tables never had "Update way/relation bboxes" run
+        boxes = lambda: self.stored_and_expected_boxes()[0]
+        self.assertEqual(set(boxes().values()), {None})
+
+        # A node of way 2001 moves. Relation 3001 holds that way and way 2002,
+        # which has no stored box: its extent is taken from its nodes, so the
+        # relation's box is whole, not just the part that was edited
+        moved = self.modify_node(nodes[0], -2.0)
+        self.assertEqual(boxes()[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
+        self.assertEqual(boxes()[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(boxes()[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertEqual(boxes()[("relation", 3003)], (-2.0, 0.25, 0.4, 0.25))
+        self.assertIsNone(boxes()[("way", 2002)])
+
+    def test_relation_box_is_unknown_when_a_member_relation_has_none(self):
+        data, nodes = self.static_objects()
+        direct = pgmap.OsmRelation()
+        direct.objId = 3003
+        direct.metaData.version = 1
+        direct.AddMember("relation", 3001, "")
+        direct.AddMember("node", 1004, "")
+        data.relations.append(direct)
+        self.import_to_static(data)
+        boxes = lambda: self.stored_and_expected_boxes()[0]
+
+        # Node 1004 is a member of relation 3003 and of way 2002. Relation 3003
+        # also holds relation 3001, whose way 2001 is not touched by this edit...
+        self.modify_node(nodes[3], 0.9)
+        self.assertEqual(boxes()[("way", 2002)], (0.3, 0.25, 0.9, 0.25))
+        # ...3001 is above way 2002, so it is worked out, and then 3003 has all it needs
+        self.assertEqual(boxes()[("relation", 3001)], (0.1, 0.25, 0.9, 0.25))
+        self.assertEqual(boxes()[("relation", 3003)], (0.1, 0.25, 0.9, 0.25))
+
+        # A relation whose member relation has no box, and members that might
+        # have an extent, is not given a partial box: its box is not known
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL WHERE id=3001").format(
+                sql.Identifier(self.prefixes[1] + "liverelations")))
+        relation = pgmap.OsmRelation()
+        relation.objId = -1
+        relation.AddMember("relation", 3001, "")
+        relation.AddMember("node", 1001, "")
+        created = self.upload("create", [relation])[2][0]
+        self.assertIsNone(boxes()[("relation", created.objId)])
+        # and the edit's record says so, which a search by area takes as anywhere
+        self.assertIsNone(self.published_boxes("updated_bbox", "updated"))
+        latest = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1")).find("editactivity").get("id")
+        self.assertIn(int(latest), self.filtered_ids("100,50,101,51"))
+        # A member relation with nothing in it has no extent to wait for
+        empty = self.create_relation([])
+        holder = pgmap.OsmRelation()
+        holder.objId = -1
+        holder.AddMember("relation", empty.objId, "")
+        holder.AddMember("node", 1001, "")
+        held = self.upload("create", [holder])[2][0]
+        self.assertEqual(boxes()[("relation", held.objId)], (0.1, 0.25, 0.1, 0.25))
+        # Once every box is worked out, all are right
+        self.update_all_boxes()
+        self.assert_boxes_right("after working out every box")
+
+    def test_upload_fails_if_parent_boxes_cannot_be_updated(self):
+        from unittest.mock import patch
+        import changeset.views
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        way = self.create_way([a, b])
+        failure = pgmap.PgMapError()
+        failure.errStr = "could not copy the parents"
+        moved = pgmap.OsmNode(a)
+        moved.lon = 0.15
+        moved.metaData.changeset = self.changeset_id
+        data = pgmap.OsmData()
+        data.nodes.append(moved)
+        t = self.map.GetTransaction("EXCLUSIVE")
+        try:
+            with patch.object(changeset.views, "track_bboxes_step2", return_value=(False, failure)):
+                result = upload_block("modify", data, self.changeset_id, t, ET.Element("diffResult"), 1,
+                                      "extract-tester", int(time.time()), *[pgmap.mapi64i64() for _ in range(3)])
+        finally:
+            t.Abort()
+        self.assertEqual(result.status_code, 500)
+        self.assertIn(b"could not copy the parents", result.content)
+        # Nothing of the failed upload was kept
+        self.assertEqual(float(self.contents()[("node", a.objId)][0]["lon"]), 0.1)
+        self.assert_boxes_right("after a failed upload")
+
+    def test_schema_15_rebuilds_member_tables(self):
+        # As a map at version 14 is after some editing: rows of versions that
+        # are no longer live, rows of deleted objects, and rows added twice
+        self.set_schema(14)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
+            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
+        # Version 14 searches each box column of the edit records through an index of its own
+        box_indexes = sorted("({})".format(column) for column in ("existing_bbox", "updated_bbox",
+            "affectedparents_before_bbox", "affectedparents_after_bbox", "relation_reach_bbox"))
+        self.assertEqual(self.activity_box_indexes(), box_indexes)
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        c = self.create_node(0.3)
+        way = self.create_way([a, b])
+        gone = self.create_way([b, c])
+        inner = self.create_relation([("node", a, "")])
+        relation = self.create_relation([("way", way, ""), ("node", c, ""), ("relation", inner, "")])
+        way = self.modify_way(way, [a, b, c])
+        self.upload("delete", [gone])
+        self.assertEqual(len(self.member_rows("way_mems")), 2 + 3 + 2 + 2)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("INSERT INTO {0} SELECT * FROM {0}").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            cursor.execute(sql.SQL("CREATE INDEX {} ON {} (member)").format(
+                sql.Identifier(self.prefixes[1] + "way_mems_mids"), sql.Identifier(self.prefixes[1] + "way_mems")))
+        before = self.contents()
+
+        self.set_schema(15)
+        self.assertEqual(self.member_rows("way_mems"),
+                         [(way.objId, 2, 0, a.objId), (way.objId, 2, 1, b.objId), (way.objId, 2, 2, c.objId)])
+        self.assertEqual(self.member_rows("relation_mems_n"),
+                         sorted([(inner.objId, 1, 0, a.objId), (relation.objId, 1, 1, c.objId)]))
+        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
+        self.assertEqual(self.member_rows("relation_mems_r"), [(relation.objId, 1, 2, inner.objId)])
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s ORDER BY indexname", (self.prefixes[1] + "way_mems",))
+            definitions = [row[0] for row in cursor.fetchall()]
+            self.assertTrue(any("UNIQUE" in d and "(id, version, index)" in d for d in definitions), definitions)
+            # The index of members it had is put back
+            self.assertTrue(any(d.rstrip().endswith("(member)") for d in definitions), definitions)
+            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(sql.Identifier(self.prefixes[1] + "meta")))
+            self.assertEqual(cursor.fetchone(), ("15",))
+        # The map reads the same, and goes on working
+        self.assertEqual(self.contents(), before)
+        # Records made at 14 have footprints too, and one index finds them
+        self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")))
+            self.assertEqual(cursor.fetchone()[0], 0)
+        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
+        way = self.modify_way(way, [c, a])
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 3, 0, c.objId), (way.objId, 3, 1, a.objId)])
+        extract_id = self.save()
+        self.modify_node(a, 0.12)
+        self.update(extract_id)
+        self.assert_current(extract_id)
+
+        # Back at 14 the key and the newer views go, and the map still works
+        self.set_schema(14)
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%UNIQUE%%'", (self.prefixes[1] + "way_mems",))
+            self.assertEqual(cursor.fetchone()[0], 0)
+            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
+            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
+        self.modify_way(way, [a, c])
+        self.assertIn(("way", way.objId), self.contents())
+        # The footprint goes, and the indexes of the boxes come back
+        self.assertEqual(self.activity_box_indexes(), box_indexes)
+        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
+        self.set_schema(15)
+        self.assertEqual(len(self.member_rows("way_mems")), 2)
+
+    def test_map_query_at_an_atomic_edit(self):
+        # Imported objects: a way into the area from outside, and a relation
+        a, b, far = pgmap.OsmNode(), pgmap.OsmNode(), pgmap.OsmNode()
+        a.objId, b.objId, far.objId = 5000, 5001, 5002
+        a.lon, b.lon, far.lon = 0.1, 0.2, 5
+        way = pgmap.OsmWay()
+        way.objId = 6000
+        for node in (a, b, far):
+            way.refs.append(node.objId)
+        relation = pgmap.OsmRelation()
+        relation.objId = 7000
+        self.set_members(relation, [("way", way, "outer")])
+        self.store_static([a, b, far], [way], [relation])
+
+        # After each edit, the map as it is then, and the atomic edit that made it
+        snapshots = []
+        def edited(result=None):
+            snapshots.append((self.latest_atomic_edit(), self.contents()))
+            return result
+        c = edited(self.create_node(0.3))
+        d = edited(self.create_node(6))
+        a = edited(self.modify_node(a, 7))           # an imported node leaves the area
+        d = edited(self.modify_node(d, 0.4))         # and a new one comes into it
+        way = edited(self.modify_way(way, [b, d]))   # the imported way gains it, losing the others
+        other = edited(self.create_way([c, a]))      # a way from inside to outside
+        relation = edited(self.modify_relation(relation, [("way", other, ""), ("node", far, "")]))
+        edited(self.upload("delete", [way]))
+        edited(self.upload("delete", [b]))
+        c = edited(self.modify_node(c, 0.35))
+        self.assertEqual(len({edit for edit, contents in snapshots}), len(snapshots))
+
+        # The map as it was after each edit is what it was then, whatever came after
+        for edit, then in snapshots:
+            self.assertEqual(self.contents(atomic_edit_id=edit), then, edit)
+        # An edit after the last is the map as it is
+        self.assertEqual(self.contents(atomic_edit_id=snapshots[-1][0] + 100), snapshots[-1][1])
+
+        # Through the API, by bbox, as pgmap gives it
+        edit = snapshots[4][0]
+        then = DbExtractTestCase.contents(self, atomic_edit_id=edit)
+        path = "/api/0.6/map?bbox={}&atomic_edit_id={}".format(",".join(str(v) for v in self.bbox), edit)
+        with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
+            answer = Client().get(path)
+            body = b"".join(answer.streaming_content)
+            self.assertEqual(answer.status_code, 200, body)
+            self.assertEqual(self.decode_contents(body), then)
+            for bad in ("0", "-1", "x", ""):
+                self.assertEqual(Client().get(path.rsplit("=", 1)[0] + "=" + bad).status_code, 400, bad)
+
+        # A time is the latest atomic edit recorded at or before it. The
+        # records are given a minute each, from 2026-01-31T12:00:00Z.
+        start = 1769860800
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET timestamp = %s + 60 * atomic_edit_id").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")), (start,))
+        def edit_at(seconds):
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                return t.GetAtomicEditIdAtTime(seconds)
+            finally:
+                t.Abort()
+        first, last = snapshots[0][0], snapshots[-1][0]
+        self.assertEqual(edit_at(start + 60 * edit), edit)
+        self.assertEqual(edit_at(start + 60 * edit + 59), edit)
+        self.assertEqual(edit_at(start + 60 * first - 1), 0)
+        self.assertEqual(edit_at(start + 60 * last + 3600), last)
+
+        bbox = ",".join(str(v) for v in self.bbox)
+        def at_time(text):
+            with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
+                answer = Client().get("/api/0.6/map?bbox={}&timestamp={}".format(bbox, text))
+                body = b"".join(answer.streaming_content) if answer.streaming else answer.content
+            return answer.status_code, body
+        moment = time.gmtime(start + 60 * edit + 30)
+        for text in (time.strftime("%Y-%m-%dT%H:%M:%SZ", moment), time.strftime("%Y-%m-%dT%H:%M:%S", moment),
+                     # The same moment an hour ahead of UTC
+                     time.strftime("%Y-%m-%dT", moment) + "{:02d}".format(moment.tm_hour + 1) +
+                     time.strftime(":%M:%S%%2B01:00", moment)):
+            status, body = at_time(text)
+            self.assertEqual(status, 200, body)
+            self.assertEqual(self.decode_contents(body), then, text)
+        status, body = at_time(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 60 * first - 1)))
+        self.assertEqual(status, 400)
+        self.assertIn(b"No edit was recorded", body)
+        for bad in ("yesterday", "", "2026-13-45T00:00:00Z", time.strftime("%Y-%m-%dT%H:%M:%SZ", moment) + "&atomic_edit_id=1"):
+            self.assertEqual(at_time(bad)[0], 400, bad)
+
+class MapEditTestCase(MapTestCaseBase):
+    """What editing, the edit activity records and the schema steps do to the
+    map, which is the same however extracts are kept. These run once."""
+
+    def test_compare_extract_errors(self):
+        with self.assertRaisesRegex(RuntimeError, "Extract not found"):
+            self.compare(12345)
+        with self.assertRaises(Exception):
+            self.compare()
+
+    def test_map_query_on_several_connections(self):
+        # Prepared statements belong to one connection. Each server thread has
+        # its own, so a query must work on every connection, old or new.
+        node = self.create_node(0)
+
+        def query(connection):
+            output = io.BytesIO()
+            encoder = pgmap.PyOsmXmlEncode(output, common.xmlAttribs)
+            t = connection.GetTransaction("ACCESS SHARE")
+            try:
+                mgr = t.GetQueryMgr()
+                status = mgr.Start(self.bbox, int(time.time()), encoder)
+                while status == 0:
+                    status = mgr.Continue()
+                del mgr
+                self.assertEqual(status, 1)
+                # The meta lookup also uses a prepared statement.
+                error = pgmap.PgMapError()
+                self.assertEqual(t.GetMetaValue("schema_version", error), str(pgmap.MAP_SCHEMA_VERSION))
+            finally:
+                t.Abort()
+            return set(self.decode_contents(output.getvalue()))
+
+        def connect():
+            return pgmap.PgMap(self.connection_string, self.prefixes[0],
+                               self.prefixes[1], self.prefixes[1], self.prefixes[2])
+
+        expected = {("node", node.objId)}
+        second = connect()
+        for connection in (self.map, second, self.map, second):
+            self.assertEqual(query(connection), expected)
+        # Connections created after earlier ones have closed must work too.
+        del second
+        for _ in range(3):
+            self.assertEqual(query(connect()), expected)
+
+    def test_activity_records_relations_of_related_nodes(self):
+        first = self.create_node(0)
+        second = self.create_node(0.1)
+        third = self.create_node(0.2)
+        holds_second = self.create_relation([("node", second, "")])
+        way = self.create_way([first, second])
+        # Creating the way: its nodes are related, and the relation holding one of them is recorded
+        self.assertEqual(self.activity_records()[-1], ("create", [holds_second.objId]))
+        # A relation that is itself edited, or an affected parent, is recorded as that, not again here
+        holds_way = self.create_relation([("way", way, ""), ("node", third, "")])
+        self.assertEqual(self.activity_records()[-1], ("create", []))
+        first = self.modify_node(first, 0.05)
+        # Moving a node: its way is an affected parent and the way's other node is related
+        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
+        self.modify_way(way, [first, second, third])
+        self.assertEqual(self.activity_records()[-1], ("modify", [holds_second.objId]))
+        self.upload("delete", [holds_second])
+        self.assertEqual(self.activity_records()[-1], ("delete", []))
+        # Each is the relation as it was then: the record keeps its version
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        kept = [r for row in root.findall("editactivity") for r in row.find("relatedparents")]
+        self.assertEqual(set((r.tag, r.get("version"), r.find("member").get("ref")) for r in kept),
+                         {("relation", "1", str(second.objId))})
+
+    def test_table_from_before_the_added_columns_says_what_to_do(self):
+        # A map at schema 14 from before a column was added must be brought up
+        # to date; until then an edit is refused, with the reason, and not half recorded
+        self.create_node(0)
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
+            before = cursor.fetchone()[0]
+            # The footprint, worked out from it, came later still, and goes with it
+            cursor.execute(sql.SQL("ALTER TABLE {} DROP COLUMN relation_reach_bbox CASCADE").format(table))
+        with self.assertRaisesRegex(AssertionError, "ask the admin tool for the latest schema version again"):
+            self.create_node(0.1)
+        from replicate.remoteupdate import RemoteUpdateError
+        with self.assertRaises(RemoteUpdateError):
+            self.fetch(self.REMOTE + "replication/edit_activities")
+        # Asking for schema 14 again puts it right
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(admin.CreateMapTables(0, 0, True, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+        self.create_node(0.2)
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(table))
+            self.assertEqual(cursor.fetchone()[0], before + 1)
+            # with the footprint back for every record
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(table))
+            self.assertEqual(cursor.fetchone()[0], 0)
+            # The column the table began with, which nothing filled in, has gone
+            cursor.execute("SELECT count(*) FROM information_schema.columns WHERE table_name=%s AND column_name='bbox'",
+                           (self.prefixes[1] + "edit_activity",))
+            self.assertEqual(cursor.fetchone()[0], 0)
+
+    def test_activity_records_existing_bboxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        c = self.create_node(0.6, 0.1)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, ""), ("node", c, "")])
+        # Nothing existed before a creation
+        self.assertEqual(self.existing_boxes()[-1], ("create", [], []))
+
+        # A way: the box around its nodes as they were before the edit
+        way = self.modify_way(way, [a, b, c])
+        self.assertEqual(self.existing_boxes()[-1],
+                         ("modify", [("way", way.objId)], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))]))
+        # and after that edit it is the larger one
+        way = self.modify_way(way, [a, b])
+        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.1, 0.6, 0.5))])
+
+        # A node's entry is the position it had
+        a = self.modify_node(a, 0.15)
+        self.assertEqual(self.existing_boxes()[-1],
+                         ("modify", [("node", a.objId)], [("node", a.objId, (0.1, 0.2, 0.1, 0.2))]))
+
+        # A relation, and several objects edited together: one entry each, in the recorded order
+        relation = self.modify_relation(relation, [("way", way, "outer")])
+        action, existing, boxes = self.existing_boxes()[-1]
+        self.assertEqual((action, existing), ("modify", [("relation", relation.objId)]))
+        self.assertEqual([entry[:2] for entry in boxes], existing)
+        self.assertEqual(len(boxes[0][2]), 4)
+        self.upload("delete", [relation])
+        b2 = pgmap.OsmNode(b)
+        b2.lat = 0.9
+        way2 = pgmap.OsmWay(way)
+        self.upload("modify", [b2, way2])
+        action, existing, boxes = self.existing_boxes()[-1]
+        self.assertEqual(sorted(existing), sorted([("node", b.objId), ("way", way.objId)]))
+        self.assertEqual(len(boxes), len(existing))
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in boxes),
+                         {("node", b.objId): (0.3, 0.5, 0.3, 0.5), ("way", way.objId): (0.15, 0.2, 0.3, 0.5)})
+        # Every record has as many entries as existing objects
+        for action, existing, boxes in self.existing_boxes():
+            self.assertEqual(len(boxes), len(existing), action)
+
+        # Stored as geometry: a collection with one member for each existing
+        # object, a point for the node, which the database can search by area
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT GeometryType(existing_bbox), ST_SRID(existing_bbox), "
+                "ST_NumGeometries(existing_bbox), ST_AsText(existing_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
+            kind, srid, count, text = cursor.fetchone()
+            self.assertEqual((kind, srid, count), ("GEOMETRYCOLLECTION", 4326, 2))
+            self.assertIn("POINT(0.3 0.5)", text)
+            self.assertIn("POLYGON((0.15 0.2,0.15 0.5,0.3 0.5,0.3 0.2,0.15 0.2))", text)
+            # A creation, with nothing existing, has an empty collection, not NULL
+            cursor.execute(sql.SQL("SELECT ST_AsText(existing_bbox) FROM {} WHERE action='create' LIMIT 1").format(table))
+            self.assertEqual(cursor.fetchone(), ("GEOMETRYCOLLECTION EMPTY",))
+            # Records whose existing ways or relations reached into an area
+            for area, expected in (((0.25, 0.25, 0.35, 0.35), True), ((5, 5, 6, 6), False)):
+                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE existing_bbox && ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table), area)
+                self.assertEqual(cursor.fetchone()[0] > 0, expected)
+
+        from replicate.views import collection_boxes
+        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION EMPTY"), [])
+        self.assertEqual(collection_boxes("GEOMETRYCOLLECTION(POLYGON EMPTY,POLYGON((1 2,1 4,3 4,3 2,1 2)),"
+                                          "POINT(-5.5 6e0),POLYGON EMPTY)"),
+                         [None, (1.0, 2.0, 3.0, 4.0), (-5.5, 6.0, -5.5, 6.0), None])
+        with self.assertRaises(ValueError):
+            collection_boxes("POINT(1 2)")
+
+    def test_if_unused_keeps_what_a_kept_relation_uses(self):
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        way = self.create_way([a, b])
+        low = self.create_relation([("way", way, "")])
+        middle = self.create_relation([("relation", low, "")])
+        top = self.create_relation([("relation", middle, "")])
+        # Asked to delete the way and the two lower relations, if unused. The
+        # top relation is not being deleted and uses the middle one, so that
+        # is kept; it uses the low one, which is kept; and that uses the way.
+        result = self.upload_result("delete", [pgmap.OsmWay(way), pgmap.OsmRelation(low), pgmap.OsmRelation(middle)],
+                                    ifunused=True)
+        self.assertIs(result, True)
+        def versions():
+            # Asked for by ID: a map query does not follow relations of relations
+            t = self.map.GetTransaction("ACCESS SHARE")
+            try:
+                data = pgmap.OsmData()
+                t.GetObjectsById("way", [way.objId], data)
+                t.GetObjectsById("relation", [low.objId, middle.objId, top.objId], data)
+                found = {("way", data.ways[i].objId): data.ways[i].metaData.version for i in range(data.ways.size())}
+                found.update({("relation", data.relations[i].objId): data.relations[i].metaData.version
+                              for i in range(data.relations.size())})
+                return found
+            finally:
+                t.Abort()
+        self.assertEqual(versions(), {("way", way.objId): 1, ("relation", low.objId): 1,
+                                      ("relation", middle.objId): 1, ("relation", top.objId): 1})
+        # Nothing was left pointing at something that has gone
+        self.assertEqual(self.member_rows("relation_mems_w"), [(low.objId, 1, 0, way.objId)])
+        # With the top one deleted too, all of them go
+        result = self.upload_result("delete", [pgmap.OsmRelation(top), pgmap.OsmRelation(middle),
+                                               pgmap.OsmRelation(low), pgmap.OsmWay(way)], ifunused=True)
+        self.assertIs(result, True)
+        self.assertEqual(versions(), {})
+
+    def test_changeset_box_grows_when_a_relation_is_modified(self):
+        def box(changeset_id):
+            with self.db.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM {} WHERE id=%s").format(
+                    sql.Identifier(self.prefixes[1] + "changesets")), [changeset_id])
+                return cursor.fetchone()
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.4)
+        c = self.create_node(7.0, 8.0)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("node", a, "")])
+        # A second changeset, so that only what the modification adds is in its box
+        first = self.changeset_id
+        error = pgmap.PgMapError()
+        t = self.map.GetTransaction("EXCLUSIVE")
+        changeset = pgmap.PgChangeset()
+        changeset.uid = 1
+        changeset.username = "extract-tester"
+        changeset.is_open = True
+        changeset.open_timestamp = int(time.time())
+        self.changeset_id = t.CreateChangeset(changeset, error)
+        t.Commit()
+        try:
+            self.assertEqual(box(self.changeset_id), (None, None, None, None))
+            # Members added and removed: the way coming in, the node going out
+            relation = self.modify_relation(relation, [("way", way, "")])
+            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 0.3, 0.4))
+            # A member far away stretches it
+            relation = self.modify_relation(relation, [("way", way, ""), ("node", c, "")])
+            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 7.0, 8.0))
+        finally:
+            self.changeset_id = first
+
+    def test_member_tables_hold_live_versions_only(self):
+        a = self.create_node(0.1)
+        b = self.create_node(0.2)
+        c = self.create_node(0.3)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, ""), ("node", a, ""), ("node", c, "")])
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
+        self.assertEqual(self.member_rows("relation_mems_n"),
+                         [(relation.objId, 1, 1, a.objId), (relation.objId, 1, 2, c.objId)])
+        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
+
+        # Moving a node rewrites the way holding it at the same version: its rows stay as they are
+        a = self.modify_node(a, 0.15)
+        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
+        # A new version replaces the rows of the old one
+        way = self.modify_way(way, [b, c, a])
+        self.assertEqual(self.member_rows("way_mems"),
+                         [(way.objId, 2, 0, b.objId), (way.objId, 2, 1, c.objId), (way.objId, 2, 2, a.objId)])
+        relation = self.modify_relation(relation, [("node", b, "")])
+        self.assertEqual(self.member_rows("relation_mems_n"), [(relation.objId, 2, 0, b.objId)])
+        self.assertEqual(self.member_rows("relation_mems_w"), [])
+        # and a deleted object has none, while its history keeps its members
+        self.upload("delete", [relation])
+        self.assertEqual(self.member_rows("relation_mems_n"), [])
+        self.upload("delete", [way])
+        self.assertEqual(self.member_rows("way_mems"), [])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT version, visible, jsonb_array_length(members) FROM {} WHERE id=%s ORDER BY version").format(
+                sql.Identifier(self.prefixes[1] + "oldways")), (way.objId,))
+            self.assertEqual(cursor.fetchall(), [(1, True, 2), (2, True, 3), (3, False, 3)])
+            # The same row cannot be there twice
+            cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            with self.assertRaises(psycopg2.IntegrityError):
+                cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            cursor.execute(sql.SQL("DELETE FROM {} WHERE id=9").format(sql.Identifier(self.prefixes[1] + "way_mems")))
+            # The views join their two halves without comparing rows
+            for kind in ("nodes", "ways", "relations"):
+                cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visible" + kind,))
+                self.assertIn("UNION ALL", cursor.fetchone()[0], kind)
+
+    def test_versions_record_their_atomic_edit(self):
+        a, b = pgmap.OsmNode(), pgmap.OsmNode()
+        a.objId, b.objId = 5000, 5001
+        a.lon, b.lon = 0, 1
+        way = pgmap.OsmWay()
+        way.objId = 6000
+        way.refs.append(5000)
+        way.refs.append(5001)
+        self.store_static([a, b], [way])
+        # The imported map was made by no atomic edit
+        self.assertEqual(self.atomic_edit_ids("node", 5000, self.prefixes[0]), [("live", 1, None)])
+
+        created = self.create_node(9)
+        first = self.latest_atomic_edit()
+        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("live", 1, first)])
+
+        # A node of the imported way is moved: the node's new version is the
+        # edit's; the way, copied into the edits' tables at the version it
+        # had, is not
+        self.modify_node(a, 0.5)
+        moved = self.latest_atomic_edit()
+        self.assertGreater(moved, first)
+        self.assertEqual(self.atomic_edit_ids("node", 5000), [("live", 2, moved)])
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("live", 1, None)])
+        # The imported version is hidden from then on, which the ID taken over
+        # records, as the imported map's own tables are not written to; the
+        # copy hides nothing that has changed
+        self.assertEqual(self.superseded("node", 5000), ([], [moved]))
+        self.assertEqual(self.superseded("way", 6000), ([], [None]))
+        self.assertEqual(self.superseded("node", created.objId), ([], [None]))
+
+        # A new version moves the old one to history with its own
+        created = self.modify_node(created, 9.5)
+        modified = self.latest_atomic_edit()
+        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("old", 1, first), ("live", 2, modified)])
+        self.assertEqual(self.superseded("node", created.objId), ([(1, modified)], [None]))
+        way = self.modify_way(way, [b, a])
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, self.latest_atomic_edit())])
+        self.assertEqual(self.superseded("way", 6000), ([(1, self.latest_atomic_edit())], [None]))
+        # Moving a node rewrites the way holding it at the version it has, which keeps whose it was
+        rewritten = self.latest_atomic_edit()
+        self.modify_node(b, 1.5)
+        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, rewritten)])
+        # and a deletion is a version too
+        self.upload("delete", [created])
+        deleted = self.latest_atomic_edit()
+        self.assertEqual(self.atomic_edit_ids("node", created.objId),
+                         [("old", 1, first), ("old", 2, modified), ("old", 3, deleted)])
+        # The deletion is the current version, of an object that is not there
+        self.assertEqual(self.superseded("node", created.objId), ([(1, modified), (2, deleted), (3, None)], [None]))
+
+        # Each version an edit's activity says it replaced was replaced by that
+        # edit, in history or, for the imported map, in the IDs taken over
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        for row in root.findall("editactivity"):
+            for obj in row.find("existing"):
+                history, taken = self.superseded(obj.tag, int(obj.get("id")))
+                replaced = dict(history).get(int(obj.get("version")))
+                if replaced is None:
+                    replaced = taken[0]
+                self.assertEqual(replaced, int(row.get("atomic_edit_id")), (obj.tag, obj.get("id"), obj.get("version")))
+
+        # Every version an edit's activity says it made carries that edit's ID
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        for row in root.findall("editactivity"):
+            for obj in row.find("updated"):
+                versions = dict((v, edit) for table, v, edit in self.atomic_edit_ids(obj.tag, int(obj.get("id"))))
+                self.assertEqual(versions[int(obj.get("version"))], int(row.get("atomic_edit_id")),
+                                 (obj.tag, obj.get("id"), obj.get("version")))
+
+    def test_edit_activity_extent_and_bbox_filter(self):
+        def latest():
+            root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1"))
+            return int(root.find("editactivity").get("id"))
+        a = self.create_node(0.1, 0.2)
+        createA = latest()
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        createWay = latest()
+        c = self.create_node(5.0, 5.0)
+        createC = latest()
+        relation = self.create_relation([("way", way, ""), ("node", c, "")])
+        createRelation = latest()
+
+        # An area inside the way's box that holds none of its nodes: the way
+        # and the relation reach into it, the nodes on their own do not
+        inside = "0.19,0.3,0.21,0.4"
+        self.assertEqual(self.filtered_ids(inside), [createWay, createRelation])
+        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation])
+        self.assertEqual(self.filtered_ids("0.05,0.15,0.15,0.25"), [createA, createWay, createRelation])
+
+        # Moving a node concerns wherever the way and relation holding it reach,
+        # before or after, though the record's only updated object is the node
+        a = self.modify_node(a, 0.05)
+        moveA = latest()
+        self.assertEqual(self.filtered_ids(inside), [createWay, createRelation, moveA])
+        self.assertEqual(self.filtered_ids("0.04,0.19,0.06,0.21"), [moveA])
+        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation, moveA])
+        # A node leaving an area is found there by where it was
+        c = self.modify_node(c, 8.0)
+        moveC = latest()
+        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation, moveA, moveC])
+        self.assertEqual(self.filtered_ids("7.9,4.9,8.1,5.1"), [moveC])
+        # A deleted relation is found by where it was
+        self.upload("delete", [relation])
+        deleteRelation = latest()
+        self.assertEqual(self.filtered_ids("7.9,4.9,8.1,5.1"), [moveC, deleteRelation])
+        self.assertEqual(self.filtered_ids("50,50,51,51"), [])
+
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        with self.db.cursor() as cursor:
+            # The records are searched through one index, of the ID and the
+            # footprint, in place of one on each geometry column
+            self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
+            # The footprint is the rectangle around all of a record's boxes
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id IN (%s, %s) ORDER BY id").format(table),
+                           (createA, moveA))
+            self.assertEqual([row[0] for row in cursor.fetchall()],
+                             ["POINT(0.1 0.2)", "POLYGON((0.05 0.2,0.05 5,5 5,5 0.2,0.05 0.2))"])
+            # The reach is set only where a relation matters beyond its own box, which is nowhere here
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL").format(table))
+            self.assertEqual(cursor.fetchone()[0], 0)
+            # A record that does not say where its objects are could concern anywhere
+            cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
+            # and has the whole world as its footprint
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(table), (createA,))
+            self.assertEqual(cursor.fetchone()[0], "POLYGON((-180 -90,-180 90,180 90,180 -90,-180 -90))")
+        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
+
+        # On a map that does not store boxes for its ways, a relation's box is
+        # worked out from the nodes of its member ways, so an edit to one still
+        # says where it is and is only sent to the areas it concerns
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
+                sql.Identifier(self.prefixes[1] + "liveways")))
+        other = self.create_relation([("way", way, "")])
+        createOther = latest()
+        self.modify_relation(other, [("way", way, "x")])
+        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
+        self.assertEqual(self.filtered_ids(inside)[-2:], [createOther, latest()])
+
+    def test_the_footprint_index_finds_records_by_id_and_area(self):
+        nodes = [self.create_node(0.1 * i) for i in range(1, 4)]
+        table = self.prefixes[1] + "edit_activity"
+        with self.db.cursor() as cursor:
+            # Without the plan that would read the IDs in order and test every row
+            cursor.execute("SET enable_seqscan = off")
+            cursor.execute("SET enable_indexscan = off")
+            cursor.execute(sql.SQL("EXPLAIN SELECT id FROM {} WHERE id >= 1 AND id <= 100 AND footprint && "
+                "ST_MakeEnvelope(0, 0, 1, 1, 4326)").format(sql.Identifier(table)))
+            plan = "\n".join(row[0] for row in cursor.fetchall())
+            cursor.execute("RESET enable_seqscan")
+            cursor.execute("RESET enable_indexscan")
+        self.assertIn(table.replace("edit_activity", "activity_gix_footprint"), plan)
+        self.assertIn("id >= 1", plan.split("Index Cond:")[1])
+        self.assertIn("footprint &&", plan.split("Index Cond:")[1])
+
+    def test_relation_edit_is_found_through_a_way_sharing_its_member_node(self):
+        # A way from far away into an area, and a relation holding only the
+        # way's far node. An extract of the area has the way, so the far node,
+        # so the relation, though the relation is nowhere near.
+        near = self.create_node(0.5)
+        far = self.create_node(40.0, 10.0)
+        way = self.create_way([near, far])
+        def latest():
+            root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1"))
+            return int(root.find("editactivity").get("id"))
+        area = "0.4,-0.1,0.6,0.1"
+        found = self.filtered_ids(area)
+        relation = self.create_relation([("node", far, "stop")])
+        created = latest()
+        relation = self.modify_relation(relation, [("node", far, "halt")])
+        modified = latest()
+        self.upload("delete", [relation])
+        deleted = latest()
+        self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
+        # The relation's own box is the far node; the way's is what reaches the area
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT ST_XMin(relation_reach_bbox), ST_YMin(relation_reach_bbox), "
+                "ST_XMax(relation_reach_bbox), ST_YMax(relation_reach_bbox), GeometryType(relation_reach_bbox), "
+                "ST_SRID(relation_reach_bbox), ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
+            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326,
+                "GEOMETRYCOLLECTION(POLYGON((40 10,40 10,40 10,40 10,40 10)))"))
+            # and the footprint takes in the reach
+            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(
+                sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
+            self.assertEqual(cursor.fetchone()[0], "POLYGON((0.5 0,0.5 10,40 10,40 0,0.5 0))")
+        # A relation whose member node is in no way matters only where it is
+        lone = self.create_node(60.0, 20.0)
+        self.create_relation([("node", lone, "")])
+        self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
+        self.assertEqual(self.filtered_ids("59,19,61,21"), [latest() - 1, latest()])
+
+    def test_edit_activity_has_changeset_index(self):
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s",
+                           (self.prefixes[1] + "edit_activity",))
+            definitions = [row[0] for row in cursor.fetchall()]
+        self.assertTrue(any(d.rstrip().endswith("(changeset)") for d in definitions), definitions)
+
+    def test_published_objects_are_shared_between_records_and_complete(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        a2 = self.modify_node(a, 0.15)
+        way2 = self.modify_way(way, [b, a2])
+        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
+        rows = root.findall("editactivity")[-5:]
+        def listed(row, section):
+            return [(e.tag, int(e.get("id")), int(e.get("version"))) for e in row.find(section)]
+        self.assertEqual([row.get("action") for row in rows], ["create", "create", "create", "modify", "modify"])
+        self.assertEqual(listed(rows[2], "updated"), [("way", way.objId, 1)])
+        self.assertEqual(sorted(listed(rows[2], "related")), sorted([("node", a.objId, 1), ("node", b.objId, 1)]))
+        # The node move: both versions of the node, the unchanged way above it, its other node
+        self.assertEqual(listed(rows[3], "existing"), [("node", a.objId, 1)])
+        self.assertEqual(listed(rows[3], "updated"), [("node", a.objId, 2)])
+        self.assertEqual(listed(rows[3], "affectedparents"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[3], "related"), [("node", b.objId, 1)])
+        self.assertEqual(listed(rows[4], "existing"), [("way", way.objId, 1)])
+        self.assertEqual(listed(rows[4], "updated"), [("way", way.objId, 2)])
+        self.assertEqual(sorted(listed(rows[4], "related")), sorted([("node", a.objId, 2), ("node", b.objId, 1)]))
+        # The objects are whole: position, tags and members as the map has them
+        moved = rows[3].find("updated")[0]
+        self.assertEqual((float(moved.get("lon")), float(moved.get("lat"))), (0.15, 0.2))
+        self.assertEqual([(tag.get("k"), tag.get("v")) for tag in moved.findall("tag")], [("test", "modified")])
+        self.assertEqual([int(nd.get("ref")) for nd in rows[4].find("updated")[0].findall("nd")],
+                         [b.objId, a.objId])
+        self.assertEqual(rows[3].get("changeset"), str(self.changeset_id))
+        # One record on its own is published the same way
+        single = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activity/" + rows[3].get("id")))
+        self.assertEqual(ET.tostring(single.find("editactivity")), ET.tostring(rows[3]))
+
+    def test_activity_records_updated_and_affected_parent_bboxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        c = self.create_node(0.6, 0.1)
+        # A created node has its position; nothing is a parent of it
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", c.objId, (0.6, 0.1, 0.6, 0.1))])
+        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"), [])
+        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"), [])
+
+        # A created way has the box around its nodes
+        way = self.create_way([a, b])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        relation = self.create_relation([("way", way, ""), ("node", c, "")])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("relation", relation.objId, (0.1, 0.1, 0.6, 0.5))])
+
+        # Moving a node leaves the way and relation holding it at the same
+        # version, but with a different extent: both sides are recorded
+        a = self.modify_node(a, 0.05)
+        self.assertEqual(self.published_boxes("existing_bbox", "existing"), [("node", a.objId, (0.1, 0.2, 0.1, 0.2))])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", a.objId, (0.05, 0.2, 0.05, 0.2))])
+        before = self.published_boxes("affectedparents_before_bbox", "affectedparents")
+        after = self.published_boxes("affectedparents_after_bbox", "affectedparents")
+        self.assertEqual(sorted(entry[:2] for entry in before),
+                         [("relation", relation.objId), ("way", way.objId)])
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in before),
+                         {("way", way.objId): (0.1, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.1, 0.1, 0.6, 0.5)})
+        self.assertEqual(dict((entry[:2], entry[2]) for entry in after),
+                         {("way", way.objId): (0.05, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.05, 0.1, 0.6, 0.5)})
+
+        # A modified way: its new box, with the old one among the existing
+        way = self.modify_way(way, [a, b, c])
+        self.assertEqual(self.published_boxes("existing_bbox", "existing"),
+                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
+                         [("way", way.objId, (0.05, 0.1, 0.6, 0.5))])
+
+        # Stored as geometry the database can search by area, aligned with the lists
+        table = sql.Identifier(self.prefixes[1] + "edit_activity")
+        columns = ("existing_bbox", "updated_bbox", "affectedparents_before_bbox", "affectedparents_after_bbox")
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT column_name, udt_name FROM information_schema.columns WHERE table_name=%s",
+                           (self.prefixes[1] + "edit_activity",))
+            kinds = dict(cursor.fetchall())
+            for column in columns:
+                self.assertEqual(kinds.get(column), "geometry", column)
+            # The columns these replace are gone
+            for column in ("sync_before", "sync_after", "bbox_before", "bbox_after"):
+                self.assertNotIn(column, kinds)
+            cursor.execute(sql.SQL("SELECT GeometryType(updated_bbox), ST_SRID(updated_bbox), ST_AsText(updated_bbox), "
+                "jsonb_array_length(affectedparents), ST_NumGeometries(affectedparents_before_bbox), "
+                "ST_NumGeometries(affectedparents_after_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
+            kind, srid, text, parents, parentsBefore, parentsAfter = cursor.fetchone()
+            self.assertEqual((kind, srid), ("GEOMETRYCOLLECTION", 4326))
+            self.assertEqual(text, "GEOMETRYCOLLECTION(POLYGON((0.05 0.1,0.05 0.5,0.6 0.5,0.6 0.1,0.05 0.1)))")
+            # The relation holding the way is its affected parent
+            self.assertEqual((parents, parentsBefore, parentsAfter), (1, 1, 1))
+            # The node move is found by where the way reached afterwards, not before
+            area = (0.04, 0.3, 0.07, 0.4)
+            for column, expected in (("affectedparents_after_bbox", True), ("affectedparents_before_bbox", False)):
+                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE action='modify' AND nodes=1 AND {} && "
+                    "ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table, sql.Identifier(column)), area)
+                self.assertEqual(cursor.fetchone()[0] > 0, expected, column)
+
+        # A deleted object has no box afterwards, though it had one before
+        self.upload("delete", [relation])
+        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("relation", relation.objId, None)])
+        self.assertEqual(len(self.published_boxes("existing_bbox", "existing")[0][2]), 4)
+
+    def test_updated_and_parent_bboxes_without_stored_boxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        # A map that does not store boxes: a way's is worked out from its nodes
+        clear = sql.SQL("UPDATE {} SET bbox=NULL").format(sql.Identifier(self.prefixes[1] + "liveways"))
+        with self.db.cursor() as cursor:
+            cursor.execute(clear)
+        a = self.modify_node(a, 0.05)
+        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"),
+                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"),
+                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
+
+    def test_existing_bbox_without_stored_boxes(self):
+        a = self.create_node(0.1, 0.2)
+        b = self.create_node(0.3, 0.5)
+        way = self.create_way([a, b])
+        relation = self.create_relation([("way", way, "")])
+        # A map that does not store boxes: a way's is worked out from its nodes, a relation's is not known
+        with self.db.cursor() as cursor:
+            for kind in ("ways", "relations"):
+                cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
+                    sql.Identifier(self.prefixes[1] + "live" + kind)))
+        way = self.modify_way(way, [b, a])
+        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
+                sql.Identifier(self.prefixes[1] + "liverelations")))
+        relation = self.modify_relation(relation, [("way", way, "x")])
+        # ...so the collection is not recorded, which a search takes as anywhere
+        self.assertEqual(self.existing_boxes()[-1][2], None)
 
     def test_store_handles_many_objects_and_repeats_in_one_block(self):
         # More objects than one batch of the store holds, in one upload
@@ -2796,368 +3855,6 @@ class DbExtractTestCase(SimpleTestCase):
             cursor.execute(sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(self.prefixes[1] + "livenodes")))
             self.assertEqual(cursor.fetchone()[0], 0)
 
-    # An extract of this map updated from the edits recorded, not taken afresh
-
-    def update_as_the_server_does(self, extract_id):
-        from replicate import extracts
-        with patch.object(extracts, "get_pgmap", return_value=self.map):
-            return extracts.update_db_extract(extract_id)
-
-    def varied_edits(self, inside):
-        nodes = [self.create_node(0.01 * i) for i in range(1, 6)] + [self.create_node(3), self.create_node(4)]
-        way = self.create_way(nodes[:3])
-        outer = self.create_way(nodes[4:])
-        self.create_relation([("node", nodes[6], ""), ("way", outer, "")])
-        self.create_relation([("way", way, "outer"), ("node", inside, "")])
-        nodes[1] = self.modify_node(nodes[1], 5)
-        way = self.modify_way(way, [nodes[0], nodes[3], nodes[5]])
-        nodes[5] = self.modify_node(nodes[5], 0.7)
-        self.upload("delete", [nodes[2]])
-        return 12
-
-    def test_local_extract_is_updated_from_the_recorded_edits(self):
-        inside = self.create_node(0)
-        extract_id = self.save()
-        self.varied_edits(inside)
-        outcome = self.update_as_the_server_does(extract_id)
-        self.assertRegex(outcome, r"^updated \(\d+ activity rows\)$")
-        self.assert_current(extract_id)
-        self.assertEqual(self.compare(extract_id)[1], [])
-        self.assertEqual(self.update_as_the_server_does(extract_id), "already up to date")
-        # One more edit, far away: nothing to apply, and it has still caught up
-        self.create_node(60)
-        from django.conf import settings
-        filtering = getattr(settings, "EXTRACT_UPDATE_USE_BBOX", True)
-        self.assertEqual(self.update_as_the_server_does(extract_id),
-                         "updated (0 activity rows)" if filtering else "updated (1 activity row)")
-        self.assert_current(extract_id)
-        # An edit moving a node out of the rectangle
-        self.modify_node(inside, 9)
-        self.assertEqual(self.update_as_the_server_does(extract_id), "updated (1 activity row)")
-        self.assert_current(extract_id)
-
-    def test_local_extract_is_taken_afresh_when_records_will_not_do(self):
-        from django.test import override_settings
-        inside = self.create_node(0)
-        table = sql.Identifier(self.prefixes[1] + "extracts")
-        # An extract that selects by stored boxes cannot be kept up from the records
-        boxed = self.save("boxed")
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET use_bbox_in_query=true WHERE id=%s").format(table), [boxed])
-        plain = self.save("plain")
-        legacy = self.save("legacy")
-        off = self.save("off")
-        self.varied_edits(inside)
-        self.assertEqual(self.update_as_the_server_does(boxed), "updated")
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT use_bbox_in_query FROM {} WHERE id=%s").format(table), [boxed])
-            self.assertEqual(cursor.fetchone(), (True,))
-        self.assertEqual(self.checkpoint(boxed), self.checkpoint(self.save("now")))
-        # With the setting off, every extract is taken afresh
-        with override_settings(EXTRACT_UPDATE_FROM_RECORDS=False):
-            self.assertEqual(self.update_as_the_server_does(off), "updated")
-        self.assert_current(off)
-        # Records from before they held all an update needs: afresh, saying why
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET related_parents=NULL").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-        outcome = self.update_as_the_server_does(legacy)
-        self.assertRegex(outcome, r"^updated afresh from the map \(Activity row \d+ was recorded before")
-        self.assert_current(legacy)
-        # and all of them hold the same
-        self.assertEqual(self.contents(off), self.contents(legacy))
-
-    # The stored boxes of ways and relations, kept up as edits arrive
-
-    def stored_and_expected_boxes(self):
-        """The box each visible way and relation has stored, and the one worked
-        out afresh from where its members are now."""
-        prefix = self.prefixes[1]
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT id, ST_X(geom), ST_Y(geom) FROM {}").format(sql.Identifier(prefix + "visiblenodes")))
-            nodes = {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
-            found = {}
-            for kind in ("way", "relation"):
-                cursor.execute(sql.SQL("SELECT id, members, ST_XMin(bbox), ST_YMin(bbox), ST_XMax(bbox), ST_YMax(bbox) FROM {}").format(
-                    sql.Identifier(prefix + "visible" + kind + "s")))
-                found[kind] = {row[0]: (row[1], None if row[2] is None else tuple(row[2:])) for row in cursor.fetchall()}
-        def around(boxes):
-            boxes = [b for b in boxes if b is not None]
-            if not boxes:
-                return None
-            return (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
-        def point(node_id):
-            return None if node_id not in nodes else nodes[node_id] + nodes[node_id]
-        def way_box(way_id):
-            if way_id not in found["way"]:
-                return None
-            return around([point(ref) for ref in found["way"][way_id][0]])
-        def relation_box(relation_id, above=()):
-            if relation_id not in found["relation"] or relation_id in above:
-                return None
-            boxes = []
-            for kind, ref in found["relation"][relation_id][0]:
-                boxes.append(point(ref) if kind == "node" else way_box(ref) if kind == "way"
-                             else relation_box(ref, above + (relation_id,)))
-            return around(boxes)
-        stored = {("way", i): v[1] for i, v in found["way"].items()}
-        stored.update({("relation", i): v[1] for i, v in found["relation"].items()})
-        expected = {("way", i): way_box(i) for i in found["way"]}
-        expected.update({("relation", i): relation_box(i) for i in found["relation"]})
-        return stored, expected
-
-    def assert_boxes_right(self, step):
-        stored, expected = self.stored_and_expected_boxes()
-        self.assertEqual(stored, expected, step)
-
-    def test_boxes_follow_edits(self):
-        a, b, c, d, e, f = [self.create_node(0.1 * i, 0.01 * i) for i in range(1, 7)]
-        way1 = self.create_way([a, b])
-        way2 = self.create_way([c, d])
-        inner = self.create_relation([("way", way1, ""), ("node", e, "")])
-        middle = self.create_relation([("relation", inner, ""), ("way", way2, "")])
-        outer = self.create_relation([("relation", middle, "")])
-        self.assert_boxes_right("created")
-        stored = self.stored_and_expected_boxes()[0]
-        self.assertEqual(stored[("way", way1.objId)], (0.1, 0.01, 0.2, 0.02))
-        self.assertEqual(stored[("relation", outer.objId)], (0.1, 0.01, 0.5, 0.05))
-
-        # A node of a way: the way, and every relation above it, however deep
-        a = self.modify_node(a, -3.0)
-        self.assert_boxes_right("node of a way moved")
-        self.assertEqual(self.stored_and_expected_boxes()[0][("relation", outer.objId)][0], -3.0)
-        # A node that is a relation's own member
-        e = self.modify_node(e, 7.0)
-        self.assert_boxes_right("node member of a relation moved")
-        # Moving back in shrinks them again
-        a = self.modify_node(a, 0.1)
-        e = self.modify_node(e, 0.5)
-        self.assert_boxes_right("nodes moved back")
-        # A way given other nodes
-        way2 = self.modify_way(way2, [c, f])
-        self.assert_boxes_right("way given another node")
-        # Relations given other members
-        inner = self.modify_relation(inner, [("way", way1, "")])
-        self.assert_boxes_right("relation lost a node member")
-        middle = self.modify_relation(middle, [("relation", inner, "")])
-        self.assert_boxes_right("relation lost a way member")
-        middle = self.modify_relation(middle, [("relation", inner, ""), ("node", f, "")])
-        self.assert_boxes_right("relation gained a node member")
-        # Several kinds of object in one upload
-        b2 = pgmap.OsmNode(b)
-        b2.lon = 9.0
-        way1b = pgmap.OsmWay(way1)
-        way1b.refs.clear()
-        for node in (a, b, c):
-            way1b.refs.append(node.objId)
-        self.upload("modify", [b2, way1b])
-        self.assert_boxes_right("node and way modified together")
-        # A relation with nothing in it that has a position
-        empty = self.create_relation([])
-        self.assert_boxes_right("empty relation")
-        self.assertIsNone(self.stored_and_expected_boxes()[0][("relation", empty.objId)])
-        # Deleting from the top down
-        self.upload("delete", [outer])
-        self.assert_boxes_right("outer relation deleted")
-        self.upload("delete", [middle])
-        self.upload("delete", [inner])
-        self.assert_boxes_right("relations deleted")
-
-    def import_to_static(self, data):
-        import os, tempfile
-        folder = tempfile.mkdtemp()
-        path = os.path.join(folder, "static.o5m")
-        try:
-            with open(path, "wb") as handle:
-                data.StreamTo(pgmap.PyO5mEncode(handle))
-            error = pgmap.PgMapError()
-            admin = self.map.GetAdmin("")
-            try:
-                self.assertTrue(admin.ImportMapFile(0, path, error), error.errStr)
-                admin.Commit()
-            finally:
-                del admin
-        finally:
-            os.remove(path)
-            os.rmdir(folder)
-
-    def static_objects(self):
-        """A way and two nested relations to import as the unchanging base of the map."""
-        data = pgmap.OsmData()
-        nodes = []
-        for index in range(4):
-            node = pgmap.OsmNode()
-            node.objId = 1001 + index
-            node.metaData.version = 1
-            node.lon, node.lat = 0.1 * (index + 1), 0.25
-            data.nodes.append(node)
-            nodes.append(node)
-        for way_id, refs in ((2001, (1001, 1002)), (2002, (1003, 1004))):
-            way = pgmap.OsmWay()
-            way.objId = way_id
-            way.metaData.version = 1
-            for ref in refs:
-                way.refs.append(ref)
-            data.ways.append(way)
-        relation = pgmap.OsmRelation()
-        relation.objId = 3001
-        relation.metaData.version = 1
-        relation.AddMember("way", 2001, "")
-        relation.AddMember("way", 2002, "")
-        data.relations.append(relation)
-        above = pgmap.OsmRelation()
-        above.objId = 3002
-        above.metaData.version = 1
-        above.AddMember("relation", 3001, "")
-        data.relations.append(above)
-        return data, nodes
-
-    def update_all_boxes(self):
-        error = pgmap.PgMapError()
-        admin = self.map.GetAdmin("")
-        try:
-            self.assertTrue(admin.UpdateBboxes(0, True, True, error), error.errStr)
-            admin.Commit()
-        finally:
-            del admin
-
-    def test_boxes_follow_edits_to_imported_objects(self):
-        data, nodes = self.static_objects()
-        self.import_to_static(data)
-        self.update_all_boxes()
-        self.assert_boxes_right("imported, boxes worked out")
-        # Moving a node of an imported way: the way and the relations above it
-        # are in the base tables, and have to be taken over to be changed
-        moved = self.modify_node(nodes[0], -2.0)
-        self.assert_boxes_right("imported node moved")
-        stored = self.stored_and_expected_boxes()[0]
-        self.assertEqual(stored[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
-        self.assertEqual(stored[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
-        self.assertEqual(stored[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
-        self.modify_node(moved, 0.1)
-        self.assert_boxes_right("moved back")
-        # The other way, never touched, kept its box in the base tables throughout
-        self.assertEqual(self.stored_and_expected_boxes()[0][("way", 2002)], (0.3, 0.25, 0.4, 0.25))
-
-    def test_relation_box_when_member_boxes_were_never_worked_out(self):
-        data, nodes = self.static_objects()
-        # A relation holding one of the nodes itself, as well as the nested relation
-        direct = pgmap.OsmRelation()
-        direct.objId = 3003
-        direct.metaData.version = 1
-        direct.AddMember("relation", 3001, "")
-        direct.AddMember("node", 1004, "")
-        data.relations.append(direct)
-        self.import_to_static(data)
-        # As a map is whose base tables never had "Update way/relation bboxes" run
-        boxes = lambda: self.stored_and_expected_boxes()[0]
-        self.assertEqual(set(boxes().values()), {None})
-
-        # A node of way 2001 moves. Relation 3001 holds that way and way 2002,
-        # which has no stored box: its extent is taken from its nodes, so the
-        # relation's box is whole, not just the part that was edited
-        moved = self.modify_node(nodes[0], -2.0)
-        self.assertEqual(boxes()[("way", 2001)], (-2.0, 0.25, 0.2, 0.25))
-        self.assertEqual(boxes()[("relation", 3001)], (-2.0, 0.25, 0.4, 0.25))
-        self.assertEqual(boxes()[("relation", 3002)], (-2.0, 0.25, 0.4, 0.25))
-        self.assertEqual(boxes()[("relation", 3003)], (-2.0, 0.25, 0.4, 0.25))
-        self.assertIsNone(boxes()[("way", 2002)])
-
-    def test_relation_box_is_unknown_when_a_member_relation_has_none(self):
-        data, nodes = self.static_objects()
-        direct = pgmap.OsmRelation()
-        direct.objId = 3003
-        direct.metaData.version = 1
-        direct.AddMember("relation", 3001, "")
-        direct.AddMember("node", 1004, "")
-        data.relations.append(direct)
-        self.import_to_static(data)
-        boxes = lambda: self.stored_and_expected_boxes()[0]
-
-        # Node 1004 is a member of relation 3003 and of way 2002. Relation 3003
-        # also holds relation 3001, whose way 2001 is not touched by this edit...
-        self.modify_node(nodes[3], 0.9)
-        self.assertEqual(boxes()[("way", 2002)], (0.3, 0.25, 0.9, 0.25))
-        # ...3001 is above way 2002, so it is worked out, and then 3003 has all it needs
-        self.assertEqual(boxes()[("relation", 3001)], (0.1, 0.25, 0.9, 0.25))
-        self.assertEqual(boxes()[("relation", 3003)], (0.1, 0.25, 0.9, 0.25))
-
-        # A relation whose member relation has no box, and members that might
-        # have an extent, is not given a partial box: its box is not known
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL WHERE id=3001").format(
-                sql.Identifier(self.prefixes[1] + "liverelations")))
-        relation = pgmap.OsmRelation()
-        relation.objId = -1
-        relation.AddMember("relation", 3001, "")
-        relation.AddMember("node", 1001, "")
-        created = self.upload("create", [relation])[2][0]
-        self.assertIsNone(boxes()[("relation", created.objId)])
-        # and the edit's record says so, which a search by area takes as anywhere
-        self.assertIsNone(self.published_boxes("updated_bbox", "updated"))
-        latest = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1")).find("editactivity").get("id")
-        self.assertIn(int(latest), self.filtered_ids("100,50,101,51"))
-        # A member relation with nothing in it has no extent to wait for
-        empty = self.create_relation([])
-        holder = pgmap.OsmRelation()
-        holder.objId = -1
-        holder.AddMember("relation", empty.objId, "")
-        holder.AddMember("node", 1001, "")
-        held = self.upload("create", [holder])[2][0]
-        self.assertEqual(boxes()[("relation", held.objId)], (0.1, 0.25, 0.1, 0.25))
-        # Once every box is worked out, all are right
-        self.update_all_boxes()
-        self.assert_boxes_right("after working out every box")
-
-    def test_upload_fails_if_parent_boxes_cannot_be_updated(self):
-        from unittest.mock import patch
-        import changeset.views
-        a = self.create_node(0.1)
-        b = self.create_node(0.2)
-        way = self.create_way([a, b])
-        failure = pgmap.PgMapError()
-        failure.errStr = "could not copy the parents"
-        moved = pgmap.OsmNode(a)
-        moved.lon = 0.15
-        moved.metaData.changeset = self.changeset_id
-        data = pgmap.OsmData()
-        data.nodes.append(moved)
-        t = self.map.GetTransaction("EXCLUSIVE")
-        try:
-            with patch.object(changeset.views, "track_bboxes_step2", return_value=(False, failure)):
-                result = upload_block("modify", data, self.changeset_id, t, ET.Element("diffResult"), 1,
-                                      "extract-tester", int(time.time()), *[pgmap.mapi64i64() for _ in range(3)])
-        finally:
-            t.Abort()
-        self.assertEqual(result.status_code, 500)
-        self.assertIn(b"could not copy the parents", result.content)
-        # Nothing of the failed upload was kept
-        self.assertEqual(float(self.contents()[("node", a.objId)][0]["lon"]), 0.1)
-        self.assert_boxes_right("after a failed upload")
-
-    # Checks made by an upload
-
-    def upload_result(self, action, objects, ifunused=False):
-        """As upload(), giving back what upload_block answers, committed if it succeeded."""
-        data = pgmap.OsmData()
-        for obj in objects:
-            obj.metaData.changeset = self.changeset_id
-            (data.nodes if isinstance(obj, pgmap.OsmNode) else
-             data.ways if isinstance(obj, pgmap.OsmWay) else data.relations).append(obj)
-        t = self.map.GetTransaction("EXCLUSIVE")
-        try:
-            result = upload_block(action, data, self.changeset_id, t, ET.Element("diffResult"), 1,
-                                  "extract-tester", int(time.time()),
-                                  *[pgmap.mapi64i64() for _ in range(3)], ifunused=ifunused)
-            if result is True:
-                t.Commit()
-            else:
-                t.Abort()
-        except BaseException:
-            t.Abort()
-            raise
-        return result
-
     def test_relation_and_its_member_node_deleted_together(self):
         a = self.create_node(0.1)
         b = self.create_node(0.2)
@@ -3173,75 +3870,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(result.status_code, 412)
         self.assertIn("still used by relation #{}".format(other.objId).encode(), result.content)
         self.assertIn(("node", b.objId), self.contents())
-
-    def test_if_unused_keeps_what_a_kept_relation_uses(self):
-        a = self.create_node(0.1)
-        b = self.create_node(0.2)
-        way = self.create_way([a, b])
-        low = self.create_relation([("way", way, "")])
-        middle = self.create_relation([("relation", low, "")])
-        top = self.create_relation([("relation", middle, "")])
-        # Asked to delete the way and the two lower relations, if unused. The
-        # top relation is not being deleted and uses the middle one, so that
-        # is kept; it uses the low one, which is kept; and that uses the way.
-        result = self.upload_result("delete", [pgmap.OsmWay(way), pgmap.OsmRelation(low), pgmap.OsmRelation(middle)],
-                                    ifunused=True)
-        self.assertIs(result, True)
-        def versions():
-            # Asked for by ID: a map query does not follow relations of relations
-            t = self.map.GetTransaction("ACCESS SHARE")
-            try:
-                data = pgmap.OsmData()
-                t.GetObjectsById("way", [way.objId], data)
-                t.GetObjectsById("relation", [low.objId, middle.objId, top.objId], data)
-                found = {("way", data.ways[i].objId): data.ways[i].metaData.version for i in range(data.ways.size())}
-                found.update({("relation", data.relations[i].objId): data.relations[i].metaData.version
-                              for i in range(data.relations.size())})
-                return found
-            finally:
-                t.Abort()
-        self.assertEqual(versions(), {("way", way.objId): 1, ("relation", low.objId): 1,
-                                      ("relation", middle.objId): 1, ("relation", top.objId): 1})
-        # Nothing was left pointing at something that has gone
-        self.assertEqual(self.member_rows("relation_mems_w"), [(low.objId, 1, 0, way.objId)])
-        # With the top one deleted too, all of them go
-        result = self.upload_result("delete", [pgmap.OsmRelation(top), pgmap.OsmRelation(middle),
-                                               pgmap.OsmRelation(low), pgmap.OsmWay(way)], ifunused=True)
-        self.assertIs(result, True)
-        self.assertEqual(versions(), {})
-
-    def test_changeset_box_grows_when_a_relation_is_modified(self):
-        def box(changeset_id):
-            with self.db.cursor() as cursor:
-                cursor.execute(sql.SQL("SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM {} WHERE id=%s").format(
-                    sql.Identifier(self.prefixes[1] + "changesets")), [changeset_id])
-                return cursor.fetchone()
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.4)
-        c = self.create_node(7.0, 8.0)
-        way = self.create_way([a, b])
-        relation = self.create_relation([("node", a, "")])
-        # A second changeset, so that only what the modification adds is in its box
-        first = self.changeset_id
-        error = pgmap.PgMapError()
-        t = self.map.GetTransaction("EXCLUSIVE")
-        changeset = pgmap.PgChangeset()
-        changeset.uid = 1
-        changeset.username = "extract-tester"
-        changeset.is_open = True
-        changeset.open_timestamp = int(time.time())
-        self.changeset_id = t.CreateChangeset(changeset, error)
-        t.Commit()
-        try:
-            self.assertEqual(box(self.changeset_id), (None, None, None, None))
-            # Members added and removed: the way coming in, the node going out
-            relation = self.modify_relation(relation, [("way", way, "")])
-            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 0.3, 0.4))
-            # A member far away stretches it
-            relation = self.modify_relation(relation, [("way", way, ""), ("node", c, "")])
-            self.assertEqual(box(self.changeset_id), (0.1, 0.2, 7.0, 8.0))
-        finally:
-            self.changeset_id = first
 
     # The indices of the map tables have a version of their own
 
@@ -3278,7 +3906,7 @@ class DbExtractTestCase(SimpleTestCase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
                 sql.Identifier(self.prefixes[1] + "meta")))
-            self.assertEqual(cursor.fetchone(), ("16",))
+            self.assertEqual(cursor.fetchone(), (str(pgmap.MAP_SCHEMA_VERSION),))
 
         a = self.create_node(0.1)
         error = pgmap.PgMapError()
@@ -3347,326 +3975,6 @@ class DbExtractTestCase(SimpleTestCase):
         self.assertEqual(versions(), [str(latest)] * 3)
         self.assertEqual(indexed(), with_indices)
 
-    # Schema version 15: member tables of live versions only, with a key
-
-    def set_schema(self, version):
-        admin = self.map.GetAdmin("")
-        error = pgmap.PgMapError()
-        try:
-            self.assertTrue(admin.CreateMapTables(0, version, False, error), error.errStr)
-            admin.Commit()
-        except BaseException:
-            admin.Abort()
-            raise
-        finally:
-            del admin
-
-    def member_rows(self, suffix, prefix=None):
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT id, version, index, member FROM {} ORDER BY id, version, index, member").format(
-                sql.Identifier((prefix or self.prefixes[1]) + suffix)))
-            return cursor.fetchall()
-
-    def test_member_tables_hold_live_versions_only(self):
-        a = self.create_node(0.1)
-        b = self.create_node(0.2)
-        c = self.create_node(0.3)
-        way = self.create_way([a, b])
-        relation = self.create_relation([("way", way, ""), ("node", a, ""), ("node", c, "")])
-        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
-        self.assertEqual(self.member_rows("relation_mems_n"),
-                         [(relation.objId, 1, 1, a.objId), (relation.objId, 1, 2, c.objId)])
-        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
-
-        # Moving a node rewrites the way holding it at the same version: its rows stay as they are
-        a = self.modify_node(a, 0.15)
-        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 1, 0, a.objId), (way.objId, 1, 1, b.objId)])
-        # A new version replaces the rows of the old one
-        way = self.modify_way(way, [b, c, a])
-        self.assertEqual(self.member_rows("way_mems"),
-                         [(way.objId, 2, 0, b.objId), (way.objId, 2, 1, c.objId), (way.objId, 2, 2, a.objId)])
-        relation = self.modify_relation(relation, [("node", b, "")])
-        self.assertEqual(self.member_rows("relation_mems_n"), [(relation.objId, 2, 0, b.objId)])
-        self.assertEqual(self.member_rows("relation_mems_w"), [])
-        # and a deleted object has none, while its history keeps its members
-        self.upload("delete", [relation])
-        self.assertEqual(self.member_rows("relation_mems_n"), [])
-        self.upload("delete", [way])
-        self.assertEqual(self.member_rows("way_mems"), [])
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT version, visible, jsonb_array_length(members) FROM {} WHERE id=%s ORDER BY version").format(
-                sql.Identifier(self.prefixes[1] + "oldways")), (way.objId,))
-            self.assertEqual(cursor.fetchall(), [(1, True, 2), (2, True, 3), (3, False, 3)])
-            # The same row cannot be there twice
-            cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
-            with self.assertRaises(psycopg2.IntegrityError):
-                cursor.execute(sql.SQL("INSERT INTO {} VALUES (9, 1, 0, 5)").format(sql.Identifier(self.prefixes[1] + "way_mems")))
-            cursor.execute(sql.SQL("DELETE FROM {} WHERE id=9").format(sql.Identifier(self.prefixes[1] + "way_mems")))
-            # The views join their two halves without comparing rows
-            for kind in ("nodes", "ways", "relations"):
-                cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visible" + kind,))
-                self.assertIn("UNION ALL", cursor.fetchone()[0], kind)
-
-    def test_schema_15_rebuilds_member_tables(self):
-        # As a map at version 14 is after some editing: rows of versions that
-        # are no longer live, rows of deleted objects, and rows added twice
-        self.set_schema(14)
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
-            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
-        # Version 14 searches each box column of the edit records through an index of its own
-        box_indexes = sorted("({})".format(column) for column in ("existing_bbox", "updated_bbox",
-            "affectedparents_before_bbox", "affectedparents_after_bbox", "relation_reach_bbox"))
-        self.assertEqual(self.activity_box_indexes(), box_indexes)
-        a = self.create_node(0.1)
-        b = self.create_node(0.2)
-        c = self.create_node(0.3)
-        way = self.create_way([a, b])
-        gone = self.create_way([b, c])
-        inner = self.create_relation([("node", a, "")])
-        relation = self.create_relation([("way", way, ""), ("node", c, ""), ("relation", inner, "")])
-        way = self.modify_way(way, [a, b, c])
-        self.upload("delete", [gone])
-        self.assertEqual(len(self.member_rows("way_mems")), 2 + 3 + 2 + 2)
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("INSERT INTO {0} SELECT * FROM {0}").format(sql.Identifier(self.prefixes[1] + "way_mems")))
-            cursor.execute(sql.SQL("CREATE INDEX {} ON {} (member)").format(
-                sql.Identifier(self.prefixes[1] + "way_mems_mids"), sql.Identifier(self.prefixes[1] + "way_mems")))
-        before = self.contents()
-
-        self.set_schema(15)
-        self.assertEqual(self.member_rows("way_mems"),
-                         [(way.objId, 2, 0, a.objId), (way.objId, 2, 1, b.objId), (way.objId, 2, 2, c.objId)])
-        self.assertEqual(self.member_rows("relation_mems_n"),
-                         sorted([(inner.objId, 1, 0, a.objId), (relation.objId, 1, 1, c.objId)]))
-        self.assertEqual(self.member_rows("relation_mems_w"), [(relation.objId, 1, 0, way.objId)])
-        self.assertEqual(self.member_rows("relation_mems_r"), [(relation.objId, 1, 2, inner.objId)])
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s ORDER BY indexname", (self.prefixes[1] + "way_mems",))
-            definitions = [row[0] for row in cursor.fetchall()]
-            self.assertTrue(any("UNIQUE" in d and "(id, version, index)" in d for d in definitions), definitions)
-            # The index of members it had is put back
-            self.assertTrue(any(d.rstrip().endswith("(member)") for d in definitions), definitions)
-            cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(sql.Identifier(self.prefixes[1] + "meta")))
-            self.assertEqual(cursor.fetchone(), ("15",))
-        # The map reads the same, and goes on working
-        self.assertEqual(self.contents(), before)
-        # Records made at 14 have footprints too, and one index finds them
-        self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE footprint IS NULL").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-            self.assertEqual(cursor.fetchone()[0], 0)
-        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
-        way = self.modify_way(way, [c, a])
-        self.assertEqual(self.member_rows("way_mems"), [(way.objId, 3, 0, c.objId), (way.objId, 3, 1, a.objId)])
-        extract_id = self.save()
-        self.modify_node(a, 0.12)
-        self.update(extract_id)
-        self.assert_current(extract_id)
-
-        # Back at 14 the key and the newer views go, and the map still works
-        self.set_schema(14)
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT count(*) FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%UNIQUE%%'", (self.prefixes[1] + "way_mems",))
-            self.assertEqual(cursor.fetchone()[0], 0)
-            cursor.execute("SELECT pg_get_viewdef(%s::regclass)", (self.prefixes[1] + "visibleways",))
-            self.assertNotIn("UNION ALL", cursor.fetchone()[0])
-        self.modify_way(way, [a, c])
-        self.assertIn(("way", way.objId), self.contents())
-        # The footprint goes, and the indexes of the boxes come back
-        self.assertEqual(self.activity_box_indexes(), box_indexes)
-        self.assertGreater(len(self.filtered_ids("0.05,-0.05,0.15,0.05")), 0)
-        self.set_schema(15)
-        self.assertEqual(len(self.member_rows("way_mems")), 2)
-
-    # Schema version 16: each version records the atomic edit that made it
-
-    def atomic_edit_ids(self, kind, obj_id, prefix=None):
-        """(table, version, atomic_edit_id) of each row of an object, history first."""
-        rows = []
-        with self.db.cursor() as cursor:
-            for table in ("old", "live"):
-                cursor.execute(sql.SQL("SELECT version, atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
-                    sql.Identifier((prefix or self.prefixes[1]) + table + kind + "s")), (obj_id,))
-                rows.extend((table,) + row for row in cursor.fetchall())
-        return rows
-
-    def superseded(self, kind, obj_id):
-        """(version, superseded_atomic_edit_id) of each history row of an object,
-        and what its row in the table of IDs taken over says, if it has one."""
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT version, superseded_atomic_edit_id FROM {} WHERE id=%s ORDER BY version").format(
-                sql.Identifier(self.prefixes[1] + "old" + kind + "s")), (obj_id,))
-            history = cursor.fetchall()
-            cursor.execute(sql.SQL("SELECT superseded_atomic_edit_id FROM {} WHERE id=%s").format(
-                sql.Identifier(self.prefixes[1] + kind + "ids")), (obj_id,))
-            taken = cursor.fetchall()
-        return history, [row[0] for row in taken]
-
-    def latest_atomic_edit(self):
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT max(atomic_edit_id) FROM {}").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")))
-            return cursor.fetchone()[0]
-
-    def test_versions_record_their_atomic_edit(self):
-        a, b = pgmap.OsmNode(), pgmap.OsmNode()
-        a.objId, b.objId = 5000, 5001
-        a.lon, b.lon = 0, 1
-        way = pgmap.OsmWay()
-        way.objId = 6000
-        way.refs.append(5000)
-        way.refs.append(5001)
-        self.store_static([a, b], [way])
-        # The imported map was made by no atomic edit
-        self.assertEqual(self.atomic_edit_ids("node", 5000, self.prefixes[0]), [("live", 1, None)])
-
-        created = self.create_node(9)
-        first = self.latest_atomic_edit()
-        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("live", 1, first)])
-
-        # A node of the imported way is moved: the node's new version is the
-        # edit's; the way, copied into the edits' tables at the version it
-        # had, is not
-        self.modify_node(a, 0.5)
-        moved = self.latest_atomic_edit()
-        self.assertGreater(moved, first)
-        self.assertEqual(self.atomic_edit_ids("node", 5000), [("live", 2, moved)])
-        self.assertEqual(self.atomic_edit_ids("way", 6000), [("live", 1, None)])
-        # The imported version is hidden from then on, which the ID taken over
-        # records, as the imported map's own tables are not written to; the
-        # copy hides nothing that has changed
-        self.assertEqual(self.superseded("node", 5000), ([], [moved]))
-        self.assertEqual(self.superseded("way", 6000), ([], [None]))
-        self.assertEqual(self.superseded("node", created.objId), ([], [None]))
-
-        # A new version moves the old one to history with its own
-        created = self.modify_node(created, 9.5)
-        modified = self.latest_atomic_edit()
-        self.assertEqual(self.atomic_edit_ids("node", created.objId), [("old", 1, first), ("live", 2, modified)])
-        self.assertEqual(self.superseded("node", created.objId), ([(1, modified)], [None]))
-        way = self.modify_way(way, [b, a])
-        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, self.latest_atomic_edit())])
-        self.assertEqual(self.superseded("way", 6000), ([(1, self.latest_atomic_edit())], [None]))
-        # Moving a node rewrites the way holding it at the version it has, which keeps whose it was
-        rewritten = self.latest_atomic_edit()
-        self.modify_node(b, 1.5)
-        self.assertEqual(self.atomic_edit_ids("way", 6000), [("old", 1, None), ("live", 2, rewritten)])
-        # and a deletion is a version too
-        self.upload("delete", [created])
-        deleted = self.latest_atomic_edit()
-        self.assertEqual(self.atomic_edit_ids("node", created.objId),
-                         [("old", 1, first), ("old", 2, modified), ("old", 3, deleted)])
-        # The deletion is the current version, of an object that is not there
-        self.assertEqual(self.superseded("node", created.objId), ([(1, modified), (2, deleted), (3, None)], [None]))
-
-        # Each version an edit's activity says it replaced was replaced by that
-        # edit, in history or, for the imported map, in the IDs taken over
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        for row in root.findall("editactivity"):
-            for obj in row.find("existing"):
-                history, taken = self.superseded(obj.tag, int(obj.get("id")))
-                replaced = dict(history).get(int(obj.get("version")))
-                if replaced is None:
-                    replaced = taken[0]
-                self.assertEqual(replaced, int(row.get("atomic_edit_id")), (obj.tag, obj.get("id"), obj.get("version")))
-
-        # Every version an edit's activity says it made carries that edit's ID
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        for row in root.findall("editactivity"):
-            for obj in row.find("updated"):
-                versions = dict((v, edit) for table, v, edit in self.atomic_edit_ids(obj.tag, int(obj.get("id"))))
-                self.assertEqual(versions[int(obj.get("version"))], int(row.get("atomic_edit_id")),
-                                 (obj.tag, obj.get("id"), obj.get("version")))
-
-    def test_map_query_at_an_atomic_edit(self):
-        # Imported objects: a way into the area from outside, and a relation
-        a, b, far = pgmap.OsmNode(), pgmap.OsmNode(), pgmap.OsmNode()
-        a.objId, b.objId, far.objId = 5000, 5001, 5002
-        a.lon, b.lon, far.lon = 0.1, 0.2, 5
-        way = pgmap.OsmWay()
-        way.objId = 6000
-        for node in (a, b, far):
-            way.refs.append(node.objId)
-        relation = pgmap.OsmRelation()
-        relation.objId = 7000
-        self.set_members(relation, [("way", way, "outer")])
-        self.store_static([a, b, far], [way], [relation])
-
-        # After each edit, the map as it is then, and the atomic edit that made it
-        snapshots = []
-        def edited(result=None):
-            snapshots.append((self.latest_atomic_edit(), self.contents()))
-            return result
-        c = edited(self.create_node(0.3))
-        d = edited(self.create_node(6))
-        a = edited(self.modify_node(a, 7))           # an imported node leaves the area
-        d = edited(self.modify_node(d, 0.4))         # and a new one comes into it
-        way = edited(self.modify_way(way, [b, d]))   # the imported way gains it, losing the others
-        other = edited(self.create_way([c, a]))      # a way from inside to outside
-        relation = edited(self.modify_relation(relation, [("way", other, ""), ("node", far, "")]))
-        edited(self.upload("delete", [way]))
-        edited(self.upload("delete", [b]))
-        c = edited(self.modify_node(c, 0.35))
-        self.assertEqual(len({edit for edit, contents in snapshots}), len(snapshots))
-
-        # The map as it was after each edit is what it was then, whatever came after
-        for edit, then in snapshots:
-            self.assertEqual(self.contents(atomic_edit_id=edit), then, edit)
-        # An edit after the last is the map as it is
-        self.assertEqual(self.contents(atomic_edit_id=snapshots[-1][0] + 100), snapshots[-1][1])
-
-        # Through the API, by bbox, as pgmap gives it
-        edit = snapshots[4][0]
-        then = DbExtractTestCase.contents(self, atomic_edit_id=edit)
-        path = "/api/0.6/map?bbox={}&atomic_edit_id={}".format(",".join(str(v) for v in self.bbox), edit)
-        with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
-            answer = Client().get(path)
-            body = b"".join(answer.streaming_content)
-            self.assertEqual(answer.status_code, 200, body)
-            self.assertEqual(self.decode_contents(body), then)
-            for bad in ("0", "-1", "x", ""):
-                self.assertEqual(Client().get(path.rsplit("=", 1)[0] + "=" + bad).status_code, 400, bad)
-
-        # A time is the latest atomic edit recorded at or before it. The
-        # records are given a minute each, from 2026-01-31T12:00:00Z.
-        start = 1769860800
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET timestamp = %s + 60 * atomic_edit_id").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")), (start,))
-        def edit_at(seconds):
-            t = self.map.GetTransaction("ACCESS SHARE")
-            try:
-                return t.GetAtomicEditIdAtTime(seconds)
-            finally:
-                t.Abort()
-        first, last = snapshots[0][0], snapshots[-1][0]
-        self.assertEqual(edit_at(start + 60 * edit), edit)
-        self.assertEqual(edit_at(start + 60 * edit + 59), edit)
-        self.assertEqual(edit_at(start + 60 * first - 1), 0)
-        self.assertEqual(edit_at(start + 60 * last + 3600), last)
-
-        bbox = ",".join(str(v) for v in self.bbox)
-        def at_time(text):
-            with patch("querymap.views.get_pgmap", return_value=self.map), self.settings(AREA_MAXIMUM=10):
-                answer = Client().get("/api/0.6/map?bbox={}&timestamp={}".format(bbox, text))
-                body = b"".join(answer.streaming_content) if answer.streaming else answer.content
-            return answer.status_code, body
-        moment = time.gmtime(start + 60 * edit + 30)
-        for text in (time.strftime("%Y-%m-%dT%H:%M:%SZ", moment), time.strftime("%Y-%m-%dT%H:%M:%S", moment),
-                     # The same moment an hour ahead of UTC
-                     time.strftime("%Y-%m-%dT", moment) + "{:02d}".format(moment.tm_hour + 1) +
-                     time.strftime(":%M:%S%%2B01:00", moment)):
-            status, body = at_time(text)
-            self.assertEqual(status, 200, body)
-            self.assertEqual(self.decode_contents(body), then, text)
-        status, body = at_time(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(start + 60 * first - 1)))
-        self.assertEqual(status, 400)
-        self.assertIn(b"No edit was recorded", body)
-        for bad in ("yesterday", "", "2026-13-45T00:00:00Z", time.strftime("%Y-%m-%dT%H:%M:%SZ", moment) + "&atomic_edit_id=1"):
-            self.assertEqual(at_time(bad)[0], 400, bad)
-
     def test_schema_16_adds_and_removes_the_atomic_edit_columns(self):
         def columns():
             with self.db.cursor() as cursor:
@@ -3713,298 +4021,44 @@ class DbExtractTestCase(SimpleTestCase):
                 sql.Identifier(self.prefixes[1] + "meta")))
             self.assertEqual(cursor.fetchone(), ("16",))
 
-    # Searching the records by area, and the index for changeset counts
+def run_only_what_a_variant_changes(variant, covered_by=()):
+    """Leaves a variant of DbExtractTestCase only the tests its overrides can
+    change: of those it inherits, the ones that use a helper it overrides,
+    directly or through other helpers, and of course those it defines itself.
+    Every other test would run just as it does in DbExtractTestCase, and is
+    taken out of the variant. A test that comes to use an overridden helper
+    runs in the variant again of itself.
 
-    def filtered_ids(self, bbox):
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1&bbox=" + bbox))
-        return [int(row.get("id")) for row in root.findall("editactivity")]
-
-    def test_edit_activity_extent_and_bbox_filter(self):
-        def latest():
-            root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1"))
-            return int(root.find("editactivity").get("id"))
-        a = self.create_node(0.1, 0.2)
-        createA = latest()
-        b = self.create_node(0.3, 0.5)
-        way = self.create_way([a, b])
-        createWay = latest()
-        c = self.create_node(5.0, 5.0)
-        createC = latest()
-        relation = self.create_relation([("way", way, ""), ("node", c, "")])
-        createRelation = latest()
-
-        # An area inside the way's box that holds none of its nodes: the way
-        # and the relation reach into it, the nodes on their own do not
-        inside = "0.19,0.3,0.21,0.4"
-        self.assertEqual(self.filtered_ids(inside), [createWay, createRelation])
-        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation])
-        self.assertEqual(self.filtered_ids("0.05,0.15,0.15,0.25"), [createA, createWay, createRelation])
-
-        # Moving a node concerns wherever the way and relation holding it reach,
-        # before or after, though the record's only updated object is the node
-        a = self.modify_node(a, 0.05)
-        moveA = latest()
-        self.assertEqual(self.filtered_ids(inside), [createWay, createRelation, moveA])
-        self.assertEqual(self.filtered_ids("0.04,0.19,0.06,0.21"), [moveA])
-        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation, moveA])
-        # A node leaving an area is found there by where it was
-        c = self.modify_node(c, 8.0)
-        moveC = latest()
-        self.assertEqual(self.filtered_ids("4.9,4.9,5.1,5.1"), [createC, createRelation, moveA, moveC])
-        self.assertEqual(self.filtered_ids("7.9,4.9,8.1,5.1"), [moveC])
-        # A deleted relation is found by where it was
-        self.upload("delete", [relation])
-        deleteRelation = latest()
-        self.assertEqual(self.filtered_ids("7.9,4.9,8.1,5.1"), [moveC, deleteRelation])
-        self.assertEqual(self.filtered_ids("50,50,51,51"), [])
-
-        table = sql.Identifier(self.prefixes[1] + "edit_activity")
-        with self.db.cursor() as cursor:
-            # The records are searched through one index, of the ID and the
-            # footprint, in place of one on each geometry column
-            self.assertEqual(self.activity_box_indexes(), ["(id, footprint)"])
-            # The footprint is the rectangle around all of a record's boxes
-            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id IN (%s, %s) ORDER BY id").format(table),
-                           (createA, moveA))
-            self.assertEqual([row[0] for row in cursor.fetchall()],
-                             ["POINT(0.1 0.2)", "POLYGON((0.05 0.2,0.05 5,5 5,5 0.2,0.05 0.2))"])
-            # The reach is set only where a relation matters beyond its own box, which is nowhere here
-            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE relation_reach_bbox IS NOT NULL").format(table))
-            self.assertEqual(cursor.fetchone()[0], 0)
-            # A record that does not say where its objects are could concern anywhere
-            cursor.execute(sql.SQL("UPDATE {} SET updated_bbox=NULL WHERE id=%s").format(table), (createA,))
-            # and has the whole world as its footprint
-            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(table), (createA,))
-            self.assertEqual(cursor.fetchone()[0], "POLYGON((-180 -90,-180 90,180 90,180 -90,-180 -90))")
-        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
-
-        # On a map that does not store boxes for its ways, a relation's box is
-        # worked out from the nodes of its member ways, so an edit to one still
-        # says where it is and is only sent to the areas it concerns
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
-                sql.Identifier(self.prefixes[1] + "liveways")))
-        other = self.create_relation([("way", way, "")])
-        createOther = latest()
-        self.modify_relation(other, [("way", way, "x")])
-        self.assertEqual(self.filtered_ids("50,50,51,51"), [createA])
-        self.assertEqual(self.filtered_ids(inside)[-2:], [createOther, latest()])
-
-    def activity_box_indexes(self):
-        """The columns of the GiST indexes of edit_activity."""
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s AND indexdef LIKE '%%USING gist%%'",
-                           (self.prefixes[1] + "edit_activity",))
-            return sorted(row[0].split("USING gist ", 1)[1].strip() for row in cursor.fetchall())
-
-    def test_the_footprint_index_finds_records_by_id_and_area(self):
-        nodes = [self.create_node(0.1 * i) for i in range(1, 4)]
-        table = self.prefixes[1] + "edit_activity"
-        with self.db.cursor() as cursor:
-            # Without the plan that would read the IDs in order and test every row
-            cursor.execute("SET enable_seqscan = off")
-            cursor.execute("SET enable_indexscan = off")
-            cursor.execute(sql.SQL("EXPLAIN SELECT id FROM {} WHERE id >= 1 AND id <= 100 AND footprint && "
-                "ST_MakeEnvelope(0, 0, 1, 1, 4326)").format(sql.Identifier(table)))
-            plan = "\n".join(row[0] for row in cursor.fetchall())
-            cursor.execute("RESET enable_seqscan")
-            cursor.execute("RESET enable_indexscan")
-        self.assertIn(table.replace("edit_activity", "activity_gix_footprint"), plan)
-        self.assertIn("id >= 1", plan.split("Index Cond:")[1])
-        self.assertIn("footprint &&", plan.split("Index Cond:")[1])
-
-    def test_relation_edit_is_found_through_a_way_sharing_its_member_node(self):
-        # A way from far away into an area, and a relation holding only the
-        # way's far node. An extract of the area has the way, so the far node,
-        # so the relation, though the relation is nowhere near.
-        near = self.create_node(0.5)
-        far = self.create_node(40.0, 10.0)
-        way = self.create_way([near, far])
-        def latest():
-            root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?limit=1"))
-            return int(root.find("editactivity").get("id"))
-        area = "0.4,-0.1,0.6,0.1"
-        found = self.filtered_ids(area)
-        relation = self.create_relation([("node", far, "stop")])
-        created = latest()
-        relation = self.modify_relation(relation, [("node", far, "halt")])
-        modified = latest()
-        self.upload("delete", [relation])
-        deleted = latest()
-        self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
-        # The relation's own box is the far node; the way's is what reaches the area
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("SELECT ST_XMin(relation_reach_bbox), ST_YMin(relation_reach_bbox), "
-                "ST_XMax(relation_reach_bbox), ST_YMax(relation_reach_bbox), GeometryType(relation_reach_bbox), "
-                "ST_SRID(relation_reach_bbox), ST_AsText(existing_bbox) FROM {} WHERE id=%s").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
-            self.assertEqual(cursor.fetchone(), (0.5, 0.0, 40.0, 10.0, "POLYGON", 4326,
-                "GEOMETRYCOLLECTION(POLYGON((40 10,40 10,40 10,40 10,40 10)))"))
-            # and the footprint takes in the reach
-            cursor.execute(sql.SQL("SELECT ST_AsText(footprint) FROM {} WHERE id=%s").format(
-                sql.Identifier(self.prefixes[1] + "edit_activity")), (modified,))
-            self.assertEqual(cursor.fetchone()[0], "POLYGON((0.5 0,0.5 10,40 10,40 0,0.5 0))")
-        # A relation whose member node is in no way matters only where it is
-        lone = self.create_node(60.0, 20.0)
-        self.create_relation([("node", lone, "")])
-        self.assertEqual(self.filtered_ids(area), found + [created, modified, deleted])
-        self.assertEqual(self.filtered_ids("59,19,61,21"), [latest() - 1, latest()])
-
-    def test_edit_activity_has_changeset_index(self):
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT indexdef FROM pg_indexes WHERE tablename=%s",
-                           (self.prefixes[1] + "edit_activity",))
-            definitions = [row[0] for row in cursor.fetchall()]
-        self.assertTrue(any(d.rstrip().endswith("(changeset)") for d in definitions), definitions)
-
-    def test_published_objects_are_shared_between_records_and_complete(self):
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        way = self.create_way([a, b])
-        a2 = self.modify_node(a, 0.15)
-        way2 = self.modify_way(way, [b, a2])
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        rows = root.findall("editactivity")[-5:]
-        def listed(row, section):
-            return [(e.tag, int(e.get("id")), int(e.get("version"))) for e in row.find(section)]
-        self.assertEqual([row.get("action") for row in rows], ["create", "create", "create", "modify", "modify"])
-        self.assertEqual(listed(rows[2], "updated"), [("way", way.objId, 1)])
-        self.assertEqual(sorted(listed(rows[2], "related")), sorted([("node", a.objId, 1), ("node", b.objId, 1)]))
-        # The node move: both versions of the node, the unchanged way above it, its other node
-        self.assertEqual(listed(rows[3], "existing"), [("node", a.objId, 1)])
-        self.assertEqual(listed(rows[3], "updated"), [("node", a.objId, 2)])
-        self.assertEqual(listed(rows[3], "affectedparents"), [("way", way.objId, 1)])
-        self.assertEqual(listed(rows[3], "related"), [("node", b.objId, 1)])
-        self.assertEqual(listed(rows[4], "existing"), [("way", way.objId, 1)])
-        self.assertEqual(listed(rows[4], "updated"), [("way", way.objId, 2)])
-        self.assertEqual(sorted(listed(rows[4], "related")), sorted([("node", a.objId, 2), ("node", b.objId, 1)]))
-        # The objects are whole: position, tags and members as the map has them
-        moved = rows[3].find("updated")[0]
-        self.assertEqual((float(moved.get("lon")), float(moved.get("lat"))), (0.15, 0.2))
-        self.assertEqual([(tag.get("k"), tag.get("v")) for tag in moved.findall("tag")], [("test", "modified")])
-        self.assertEqual([int(nd.get("ref")) for nd in rows[4].find("updated")[0].findall("nd")],
-                         [b.objId, a.objId])
-        self.assertEqual(rows[3].get("changeset"), str(self.changeset_id))
-        # One record on its own is published the same way
-        single = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activity/" + rows[3].get("id")))
-        self.assertEqual(ET.tostring(single.find("editactivity")), ET.tostring(rows[3]))
-
-    # The boxes of the updated objects and of the affected parents
-
-    def published_boxes(self, section, objects):
-        """The entries of one box section of the latest published record, having
-        checked there is one for each object of the list it goes with, in order."""
-        root = ET.fromstring(self.fetch(self.REMOTE + "replication/edit_activities?first_id=1"))
-        row = root.findall("editactivity")[-1]
-        listed = [(e.tag, int(e.get("id"))) for e in row.find(objects)]
-        holder = row.find(section)
-        if holder.get("null") == "true":
-            return None
-        boxes = [(b.get("type"), int(b.get("id")), None if b.get("null") == "true" else
-                  tuple(float(b.get(k)) for k in ("minlon", "minlat", "maxlon", "maxlat")))
-                 for b in holder.findall("bbox")]
-        self.assertEqual([entry[:2] for entry in boxes], listed, section)
-        return boxes
-
-    def test_activity_records_updated_and_affected_parent_bboxes(self):
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        c = self.create_node(0.6, 0.1)
-        # A created node has its position; nothing is a parent of it
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", c.objId, (0.6, 0.1, 0.6, 0.1))])
-        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"), [])
-        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"), [])
-
-        # A created way has the box around its nodes
-        way = self.create_way([a, b])
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
-                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
-        relation = self.create_relation([("way", way, ""), ("node", c, "")])
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
-                         [("relation", relation.objId, (0.1, 0.1, 0.6, 0.5))])
-
-        # Moving a node leaves the way and relation holding it at the same
-        # version, but with a different extent: both sides are recorded
-        a = self.modify_node(a, 0.05)
-        self.assertEqual(self.published_boxes("existing_bbox", "existing"), [("node", a.objId, (0.1, 0.2, 0.1, 0.2))])
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("node", a.objId, (0.05, 0.2, 0.05, 0.2))])
-        before = self.published_boxes("affectedparents_before_bbox", "affectedparents")
-        after = self.published_boxes("affectedparents_after_bbox", "affectedparents")
-        self.assertEqual(sorted(entry[:2] for entry in before),
-                         [("relation", relation.objId), ("way", way.objId)])
-        self.assertEqual(dict((entry[:2], entry[2]) for entry in before),
-                         {("way", way.objId): (0.1, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.1, 0.1, 0.6, 0.5)})
-        self.assertEqual(dict((entry[:2], entry[2]) for entry in after),
-                         {("way", way.objId): (0.05, 0.2, 0.3, 0.5), ("relation", relation.objId): (0.05, 0.1, 0.6, 0.5)})
-
-        # A modified way: its new box, with the old one among the existing
-        way = self.modify_way(way, [a, b, c])
-        self.assertEqual(self.published_boxes("existing_bbox", "existing"),
-                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"),
-                         [("way", way.objId, (0.05, 0.1, 0.6, 0.5))])
-
-        # Stored as geometry the database can search by area, aligned with the lists
-        table = sql.Identifier(self.prefixes[1] + "edit_activity")
-        columns = ("existing_bbox", "updated_bbox", "affectedparents_before_bbox", "affectedparents_after_bbox")
-        with self.db.cursor() as cursor:
-            cursor.execute("SELECT column_name, udt_name FROM information_schema.columns WHERE table_name=%s",
-                           (self.prefixes[1] + "edit_activity",))
-            kinds = dict(cursor.fetchall())
-            for column in columns:
-                self.assertEqual(kinds.get(column), "geometry", column)
-            # The columns these replace are gone
-            for column in ("sync_before", "sync_after", "bbox_before", "bbox_after"):
-                self.assertNotIn(column, kinds)
-            cursor.execute(sql.SQL("SELECT GeometryType(updated_bbox), ST_SRID(updated_bbox), ST_AsText(updated_bbox), "
-                "jsonb_array_length(affectedparents), ST_NumGeometries(affectedparents_before_bbox), "
-                "ST_NumGeometries(affectedparents_after_bbox) FROM {} ORDER BY id DESC LIMIT 1").format(table))
-            kind, srid, text, parents, parentsBefore, parentsAfter = cursor.fetchone()
-            self.assertEqual((kind, srid), ("GEOMETRYCOLLECTION", 4326))
-            self.assertEqual(text, "GEOMETRYCOLLECTION(POLYGON((0.05 0.1,0.05 0.5,0.6 0.5,0.6 0.1,0.05 0.1)))")
-            # The relation holding the way is its affected parent
-            self.assertEqual((parents, parentsBefore, parentsAfter), (1, 1, 1))
-            # The node move is found by where the way reached afterwards, not before
-            area = (0.04, 0.3, 0.07, 0.4)
-            for column, expected in (("affectedparents_after_bbox", True), ("affectedparents_before_bbox", False)):
-                cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE action='modify' AND nodes=1 AND {} && "
-                    "ST_MakeEnvelope(%s,%s,%s,%s,4326)").format(table, sql.Identifier(column)), area)
-                self.assertEqual(cursor.fetchone()[0] > 0, expected, column)
-
-        # A deleted object has no box afterwards, though it had one before
-        self.upload("delete", [relation])
-        self.assertEqual(self.published_boxes("updated_bbox", "updated"), [("relation", relation.objId, None)])
-        self.assertEqual(len(self.published_boxes("existing_bbox", "existing")[0][2]), 4)
-
-    def test_updated_and_parent_bboxes_without_stored_boxes(self):
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        way = self.create_way([a, b])
-        # A map that does not store boxes: a way's is worked out from its nodes
-        clear = sql.SQL("UPDATE {} SET bbox=NULL").format(sql.Identifier(self.prefixes[1] + "liveways"))
-        with self.db.cursor() as cursor:
-            cursor.execute(clear)
-        a = self.modify_node(a, 0.05)
-        self.assertEqual(self.published_boxes("affectedparents_before_bbox", "affectedparents"),
-                         [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
-        self.assertEqual(self.published_boxes("affectedparents_after_bbox", "affectedparents"),
-                         [("way", way.objId, (0.05, 0.2, 0.3, 0.5))])
-
-    def test_existing_bbox_without_stored_boxes(self):
-        a = self.create_node(0.1, 0.2)
-        b = self.create_node(0.3, 0.5)
-        way = self.create_way([a, b])
-        relation = self.create_relation([("way", way, "")])
-        # A map that does not store boxes: a way's is worked out from its nodes, a relation's is not known
-        with self.db.cursor() as cursor:
-            for kind in ("ways", "relations"):
-                cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
-                    sql.Identifier(self.prefixes[1] + "live" + kind)))
-        way = self.modify_way(way, [b, a])
-        self.assertEqual(self.existing_boxes()[-1][2], [("way", way.objId, (0.1, 0.2, 0.3, 0.5))])
-        with self.db.cursor() as cursor:
-            cursor.execute(sql.SQL("UPDATE {} SET bbox=NULL").format(
-                sql.Identifier(self.prefixes[1] + "liverelations")))
-        relation = self.modify_relation(relation, [("way", way, "x")])
-        # ...so the collection is not recorded, which a search takes as anywhere
-        self.assertEqual(self.existing_boxes()[-1][2], None)
+    covered_by names variants this one combines, such as polygon boundaries
+    and updating from another server: a test that uses only what one of them
+    overrides already runs there, and is taken out here too."""
+    base = DbExtractTestCase
+    helpers = {name: inspect.getsource(member) for name, member in vars(MapTestCaseBase).items()
+               if inspect.isfunction(member)}
+    def overrides(klass):
+        return {name for k in klass.__mro__ if k not in base.__mro__
+                for name, member in vars(k).items() if inspect.isfunction(member) and name in helpers}
+    overridden = overrides(variant)
+    covered = [overrides(other) for other in covered_by]
+    uses = lambda source: set(re.findall(r"\bself\.(\w+)", source))
+    reaches = {}
+    def reach(source, seen=frozenset()):
+        """The overridden helpers that code uses, directly or through others."""
+        found = set()
+        for name in uses(source) & set(helpers):
+            if name in overridden:
+                found.add(name)
+            if name not in seen:
+                if name not in reaches:
+                    reaches[name] = reach(helpers[name], seen | {name})
+                found |= reaches[name]
+        return found
+    own = [klass for klass in variant.__mro__ if klass not in base.__mro__]
+    for name, test in vars(base).items():
+        if not name.startswith("test_") or any(name in vars(klass) and vars(klass)[name] is not None
+                                               for klass in own):
+            continue
+        used = reach(inspect.getsource(test))
+        changed = bool(used) and not any(used <= other for other in covered)
+        # None is not a test; a variant below one that took a test out can put it back
+        setattr(variant, name, test if changed else None)

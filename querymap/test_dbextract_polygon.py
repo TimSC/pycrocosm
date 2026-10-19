@@ -511,8 +511,8 @@ class MultiPolygonExtractTestCase(MultiPolygonBoundary, local.DbExtractTestCase)
         self.assertEqual(self.column_type(), "geometry(Polygon,4326)")
         with self.assertRaises(Exception):
             self.save()
-        # Setting the version it already has, or a later one, brings it up to date
-        self.set_schema(16)
+        # Setting the version it already has brings it up to date
+        self.set_schema(pgmap.MAP_SCHEMA_VERSION)
         self.assertEqual(self.column_type(), "geometry(Geometry,4326)")
         self.create_node(0.95, 0.95)
         extract_id = self.save()
@@ -520,6 +520,16 @@ class MultiPolygonExtractTestCase(MultiPolygonBoundary, local.DbExtractTestCase)
 
 class MultiPolygonRemoteUpdateTestCase(MultiPolygonBoundary, remote.RemoteUpdateTestCase):
     """Every update over the web API again, the boundary in two pieces."""
+
+# Only the tests that save, query or export with a boundary, or bring an
+# extract up to date from another server, run again here
+# (with both, only those that use both: the rest run in one or the other)
+local.run_only_what_a_variant_changes(PolygonExtractTestCase)
+local.run_only_what_a_variant_changes(MultiPolygonExtractTestCase)
+local.run_only_what_a_variant_changes(PolygonRemoteUpdateTestCase,
+    covered_by=(PolygonExtractTestCase, remote.RemoteUpdateTestCase))
+local.run_only_what_a_variant_changes(MultiPolygonRemoteUpdateTestCase,
+    covered_by=(MultiPolygonExtractTestCase, remote.RemoteUpdateTestCase))
 
 # Not run again from this module: these are run where they are defined
 del local, remote
