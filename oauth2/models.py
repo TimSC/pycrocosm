@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 
 from django.contrib.auth.models import User
 from django.contrib.auth.hashers import check_password, identify_hasher, make_password
@@ -34,6 +34,19 @@ class Oauth2Application(models.Model):
 
 	disabled = models.BooleanField()
 
+	# The application used for an OAuth2 request that names none, as JOSM's do
+	# for a server it has no client ID for. At most one is: saving one as the
+	# default makes it the only one.
+	is_default = models.BooleanField(default=False,
+		help_text="Use this application for OAuth2 requests that give no client ID, as JOSM's do "
+			"for a server it has no client ID for. Only one application can be the default.")
+
+	def save(self, *args, **kwargs):
+		with transaction.atomic():
+			if self.is_default:
+				Oauth2Application.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+			super().save(*args, **kwargs)
+
 	def set_client_secret(self, raw_secret):
 		self.client_secret = make_password(raw_secret)
 
@@ -48,6 +61,10 @@ class Oauth2Application(models.Model):
 		indexes = [
 			models.Index(fields=['user'], name='oauth2_app_client_id_idx'),
 			models.Index(fields=['user'], name='oauth2_app_user_idx'),
+		]
+		constraints = [
+			models.UniqueConstraint(fields=['is_default'], condition=models.Q(is_default=True),
+				name='oauth2_app_one_default'),
 		]
 
 class Oauth2Authorization(models.Model):
@@ -91,6 +108,11 @@ class Oauth2AuthorizationCode(models.Model):
 	parent_app = models.ForeignKey(Oauth2Application, on_delete=models.CASCADE)
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
 	redirect_uri = models.TextField()
+	scope = models.TextField(default="") # The scopes the user agreed to, separated by spaces
+	# PKCE (RFC 7636): the challenge the application gave when asking, which
+	# the verifier it gives for the token must match; empty without
+	code_challenge = models.CharField(max_length=128, default="", blank=True)
+	code_challenge_method = models.CharField(max_length=8, default="", blank=True)
 
 	class Meta:
 		indexes = [

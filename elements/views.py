@@ -4,6 +4,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import api_view, permission_classes, parser_classes
+from oauth2.scopes import scopes_required
 
 import xml.etree.ElementTree as ET
 from defusedxml.ElementTree import parse
@@ -88,7 +89,7 @@ def upload_single_object(action, request, obj, objType, t, created=None):
 
 @csrf_exempt
 @api_view(['GET', 'PUT', 'DELETE'])
-@permission_classes((IsAuthenticatedOrReadOnly, ))
+@permission_classes((IsAuthenticatedOrReadOnly, scopes_required(write="write_api")))
 @parser_classes((OsmDataXmlParser,))
 def element(request, objType, objId):
 
@@ -146,14 +147,14 @@ def create_object(request, objType):
 # Deprecated by the API in favour of POST /api/0.6/[nodes|ways|relations]
 @csrf_exempt
 @api_view(['PUT'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 @parser_classes((OsmDataXmlParser,))
 def create(request, objType):
 	return create_object(request, objType)
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 @parser_classes((OsmDataXmlParser,))
 def create_plural(request, objType):
 	"""POST /api/0.6/[nodes|ways|relations]"""

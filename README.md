@@ -116,6 +116,19 @@ The admin panel is at `/admin/`: http://127.0.0.1:8000/admin/ on a local install
 
 Staff accounts can look at the extracts and map parameters; changing them needs a superuser or the matching permission. After upgrading, run `manage.py migrate` so that new admin pages and their permissions are registered.
 
+OAuth2
+------
+
+Applications are registered at `/oauth2/applications`, each with its redirect URIs and the permissions (scopes) it may ask users for, of which at least one is chosen. An application sends the user to `/oauth2/authorize?client_id=…&redirect_uri=…&response_type=code&scope=…&state=…`, where, once signed in, they are shown what it asks to do and allow or deny it. Allowing sends them back to the redirect URI with `code` and `state` (for `urn:ietf:wg:oauth:2.0:oob`, the code is shown to copy); denying, or a scope the application may not ask for, sends back an OAuth2 `error`. A client or redirect URI that is not registered is refused, never redirected to. The application exchanges the code at `/oauth2/token` for a bearer token, accepted only over HTTPS, with the scopes the user agreed to. Without a `scope` parameter an application asks for `read_prefs write_api`.
+
+The scopes are OpenStreetMap's. `write_api` is needed to change changesets and the map, `read_prefs` to read the user's details and preferences, and `write_prefs` to change preferences; reading the map needs none. A token's scopes are checked against its authorization and application on every request, so disabling either, or taking a permission from the application, applies at once. Signing in to the website, or HTTP Basic, is not limited by scopes.
+
+Public applications, such as desktop editors, use PKCE (`code_challenge` with `code_challenge_method=S256`) in place of a client secret: a code asked for that way is exchanged with its `code_verifier`, and the secret may be left out. Clients find the endpoints at `/.well-known/oauth-authorization-server` (RFC 8414), and `/api/authorize` and `/api/token` answer too, where JOSM looks without it.
+
+**JOSM.** For a server it has no client ID for, JOSM sends none. Register an application for it, with the redirect URI `http://127.0.0.1:8111/oauth_authorization` and the permissions it asks for (`read_prefs`, `write_prefs`, `write_api`, `read_gpx`, `write_gpx`, `write_notes`), and in the admin panel (OAuth2 applications) tick its "Is default": requests without a client ID use the default application, of which there is at most one, and JOSM's fully automatic authorisation works with nothing set in JOSM. Without a default, enter the client ID in JOSM's OAuth 2.0 settings instead. JOSM finds the endpoints by discovery only on the standard ports (it leaves the port out); otherwise it uses those next to the API, given as the server URL, such as `http://localhost:8000/api`. Over plain HTTP, tokens are accepted only with `DEBUG` on.
+
+Users see the applications they have authorised, and what each may do, at `/oauth2/authorized_applications` (linked from the front page). Revoking one disables every authorization they gave it, so its tokens stop working at once, and uses up any code it has not yet exchanged.
+
 Map call formats
 ----------------
 

@@ -1,0 +1,15 @@
+<html>
+<head><title>{% if code %}Authorization code{% else %}Not authorized{% endif %}</title></head>
+<body>
+
+{% if code %}
+<h3>{{app.name}} is allowed to use your account</h3>
+<p>Give the application this code. It can be used once, and soon expires.</p>
+<p style="overflow-wrap: break-word; word-wrap: break-word;"><code id="code">{{code}}</code></p>
+{% else %}
+<h3>Not authorized</h3>
+<p>{{description}} <small>({{error}})</small></p>
+{% endif %}
+
+</body>
+</html>

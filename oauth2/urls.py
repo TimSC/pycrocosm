@@ -5,6 +5,8 @@ from . import views
 
 app_name = 'oauth2'
 urlpatterns = [
+    # Before the patterns below, which match any path containing theirs
+    path('authorized_applications', views.authorized_applications, name='authorized_applications'),
     url(r'authorize', views.authorize, name='authorize'),
     url(r'token', views.token, name='token'),
     url(r'applications', views.applications, name='applications'),

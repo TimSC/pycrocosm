@@ -5,6 +5,7 @@ from django.contrib.auth.decorators import login_required
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view, permission_classes, parser_classes
+from oauth2.scopes import scopes_required
 from rest_framework.permissions import IsAuthenticated
 from .models import UserData, UserPreference
 
@@ -26,7 +27,7 @@ class PlainTextParser(BaseParser):
 # Create your views here.
 
 @api_view(['GET'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(read="read_prefs")))
 def details(request):
 
 	userRecord = request.user
@@ -216,7 +217,7 @@ def users(request):
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(read="read_prefs", write="write_prefs")))
 @parser_classes((DefusedXmlParser,))
 def preferences(request):
 
@@ -258,7 +259,7 @@ def preferences(request):
 
 @csrf_exempt
 @api_view(['PUT'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(read="read_prefs", write="write_prefs")))
 @parser_classes((PlainTextParser,))
 def preferences_put(request, key):
 	if(len(key) > 255):

@@ -15,29 +15,26 @@
 </table>
 
 <h3>Register an application</h3>
+
+{% for error in errors %}
+<p style="color: #b00;">{{error}}</p>
+{% endfor %}
+
 <form method="POST">
-Name <input type="text" name="name"/><br/>
+Name <input type="text" name="name" value="{{name}}"/><br/>
 Redirect URIs <textarea name="redirects" rows="4" cols="50">urn:ietf:wg:oauth:2.0:oob</textarea><br/>
 
-<!--
-Confidential application? <input type="checkbox"/><br/>
-Permissions<br/>
-<input type="checkbox"/> Read user preferences<br/>
-<input type="checkbox"/> Modify user preferences<br/>
-<input type="checkbox"/> Create diary entries, comments and make friends<br/>
-<input type="checkbox"/> Modify the map<br/>
-<input type="checkbox"/> Read private GPS traces<br/>
-<input type="checkbox"/> Upload GPS traces<br/>
-<input type="checkbox"/> Modify notes<br/>
-<input type="checkbox"/> Redact map data<br/>
-<input type="checkbox"/> Read, update status and delete user messages<br/>
-<input type="checkbox"/> Send private messages to other users<br/>
-<input type="checkbox"/> Sign-in using OpenStreetMap<br/>
--->
+<p>Permissions the application may ask users for. It asks for some or all of them when a user
+authorises it, and the user is shown what they are.</p>
+{% for scope, description, checked in scopes %}
+<label><input type="checkbox" name="permission_{{scope}}" value="1"{% if checked %} checked{% endif %}/> {{description}} <small>({{scope}})</small></label><br/>
+{% endfor %}
+
 {% csrf_token %}
-<input type="submit"/>
+<p><input type="submit" value="Register"/></p>
 </form>
 
+<p><a href="{% url 'oauth2:authorized_applications' %}">Applications you have authorised</a></p>
 <p><a href="{% url 'frontpage:index' %}">Front page</a></p>
 
 </body>

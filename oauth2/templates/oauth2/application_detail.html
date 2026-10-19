@@ -6,6 +6,7 @@
 <table border="2" margin="2">
 <tr><td>Name</td><td>{{app.name}}</td></tr>
 <tr><td>Client ID</td><td>{{app.client_id}}</td></tr>
+<tr><td>May ask for</td><td>{% for description in permissions %}{{description}}<br/>{% empty %}Nothing{% endfor %}</td></tr>
 
 </table>
 

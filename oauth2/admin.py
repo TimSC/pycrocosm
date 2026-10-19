@@ -3,7 +3,8 @@ from .models import Oauth2Application, Oauth2Authorization
 
 # Register your models here.
 class Oauth2ApplicationAdmin(admin.ModelAdmin):
-	pass
+	list_display = ('name', 'client_id', 'user', 'is_default', 'disabled')
+	list_filter = ('is_default', 'disabled')
 
 class Oauth2AuthorizationAdmin(admin.ModelAdmin):
 	pass

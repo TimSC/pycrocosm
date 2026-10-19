@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 from rest_framework.decorators import api_view, permission_classes, parser_classes
+from oauth2.scopes import scopes_required
 
 import xml.etree.ElementTree as ET
 import re
@@ -770,7 +771,7 @@ def upload_block(action, block, changesetId, t, responseRoot,
 
 @csrf_exempt
 @api_view(['PUT'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 @parser_classes((DefusedXmlParser, ))
 def create(request):
 
@@ -805,7 +806,7 @@ def create(request):
 
 @csrf_exempt
 @api_view(['GET', 'PUT'])
-@permission_classes((IsAuthenticatedOrReadOnly, ))
+@permission_classes((IsAuthenticatedOrReadOnly, scopes_required(write="write_api")))
 @parser_classes((DefusedXmlParser, ))
 def changeset(request, changesetId):
 	include_discussion = request.GET.get('include_discussion', 'false') == "true"
@@ -869,7 +870,7 @@ def changeset(request, changesetId):
 
 @csrf_exempt
 @api_view(['PUT'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 def close(request, changesetId):
 	t = get_pgmap().GetTransaction("EXCLUSIVE")
 
@@ -927,7 +928,7 @@ def download(request, changesetId):
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 @parser_classes((DefusedXmlParser, ))
 def expand_bbox(request, changesetId):
 
@@ -1059,7 +1060,7 @@ def list_changesets(request):
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 @parser_classes((OsmChangeXmlParser, ))
 def upload(request, changesetId):
 
@@ -1127,18 +1128,18 @@ def upload(request, changesetId):
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 def comment(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 def subscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')
 
 @csrf_exempt
 @api_view(['POST'])
-@permission_classes((IsAuthenticated, ))
+@permission_classes((IsAuthenticated, scopes_required(write="write_api")))
 def unsubscribe(request, changesetId):
 	return HttpResponse("", content_type='text/xml')

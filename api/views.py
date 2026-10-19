@@ -8,6 +8,7 @@ from django.conf import settings
 from pycrocosm import common
 from changeset.views import get_changeset_query_limits
 from rest_framework.decorators import api_view, permission_classes
+from oauth2.scopes import SCOPES, TokenScopes
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly
 
 # Create your views here.
@@ -104,8 +105,16 @@ def capabilities(request):
 @api_view(['GET'])
 @permission_classes((IsAuthenticatedOrReadOnly, ))
 def permissions(request):
+	"""The permissions the request's credentials have, named as on
+	openstreetmap.org: allow_ and the scope. An OAuth2 token has those of its
+	scopes; signing in or HTTP Basic, all of them; no credentials, none."""
+	if isinstance(request.auth, TokenScopes):
+		granted = ["allow_" + scope for scope in request.auth]
+	elif request.user.is_authenticated:
+		granted = ["allow_" + scope for scope in SCOPES]
+	else:
+		granted = []
 	if common.wants_json(request):
-		granted = list(request.auth) if request.auth is not None else []
 		return common.json_response({"permissions": granted}, legal=False)
 
 	root = ET.Element('osm')
@@ -115,10 +124,9 @@ def permissions(request):
 
 	permissions = ET.SubElement(root, "permissions")
 
-	if request.auth is not None:
-		for perm in request.auth:
-			pe = ET.SubElement(permissions, "permission")
-			pe.attrib["name"] = perm
+	for perm in granted:
+		pe = ET.SubElement(permissions, "permission")
+		pe.attrib["name"] = perm
 
 	sio = io.BytesIO()
 	doc.write(sio, "UTF-8")

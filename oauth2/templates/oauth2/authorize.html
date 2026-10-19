@@ -1,0 +1,38 @@
+<html>
+<head><title>Allow {{app.name}}?</title></head>
+<body>
+
+<h3>Allow {{app.name}} to use your account?</h3>
+
+<p>You are signed in as <b>{{user.username}}</b>. The application <b>{{app.name}}</b>,
+registered by {{app.user.username}}, asks to:</p>
+
+<ul>
+{% for name, description in scopes %}
+<li>{{description}} <small>({{name}})</small></li>
+{% endfor %}
+</ul>
+
+{% if out_of_band %}
+<p>If you allow it, you will be shown a code to give to the application.</p>
+{% else %}
+<p>If you allow it, you will be sent back to <code>{{redirect_uri}}</code>.</p>
+{% endif %}
+
+<p>You can stop it at any time by disabling its authorization.</p>
+
+<form method="POST">
+{% csrf_token %}
+<input type="hidden" name="client_id" value="{{client_id}}"/>
+<input type="hidden" name="redirect_uri" value="{{redirect_uri}}"/>
+<input type="hidden" name="response_type" value="code"/>
+<input type="hidden" name="scope" value="{{scope}}"/>
+{% if state != None %}<input type="hidden" name="state" value="{{state}}"/>{% endif %}
+{% if code_challenge %}<input type="hidden" name="code_challenge" value="{{code_challenge}}"/>
+<input type="hidden" name="code_challenge_method" value="{{code_challenge_method}}"/>{% endif %}
+<button type="submit" name="decision" value="approve">Allow</button>
+<button type="submit" name="decision" value="deny">Deny</button>
+</form>
+
+</body>
+</html>

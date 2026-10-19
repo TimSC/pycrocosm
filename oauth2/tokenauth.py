@@ -3,6 +3,7 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from django.conf import settings
 from .models import Oauth2Application, Oauth2Authorization
+from .scopes import granted_scopes
 
 def oauth2_signing_secret():
 	return getattr(settings, 'OAUTH2_JWT_SECRET', settings.SECRET_KEY)
@@ -47,5 +48,6 @@ class TokenAuthentication(BaseAuthentication):
 		if appRecord.disabled:
 			raise AuthenticationFailed()			
 
-		scope = ['read_prefs', 'write_api']
-		return (authRecord.user, scope)
+		# What the authorization and its application allow now, not what the
+		# token said when it was issued
+		return (authRecord.user, granted_scopes(authRecord))

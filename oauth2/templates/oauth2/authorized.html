@@ -1,0 +1,29 @@
+<html>
+<head><title>Authorised applications</title></head>
+<body>
+
+<h3>Applications you have authorised</h3>
+
+{% if authorized %}
+<p>These applications may use your account, as listed. Revoking one stops it at once; it would have to ask you again.</p>
+<table border="2" margin="2">
+<tr><th>Application</th><th>Registered by</th><th>May</th><th>Authorised</th><th></th></tr>
+{% for entry in authorized %}
+<tr>
+<td>{{entry.app.name}}</td>
+<td>{{entry.app.user.username}}</td>
+<td>{% for description in entry.scopes %}{{description}}<br/>{% empty %}Nothing now{% endfor %}</td>
+<td>{{entry.first}}{% if entry.last != entry.first %}<br/>last {{entry.last}}{% endif %}</td>
+<td><form method="POST">{% csrf_token %}<input type="hidden" name="client_id" value="{{entry.app.client_id}}"/>
+<input type="submit" value="Revoke"/></form></td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p>You have not authorised any applications.</p>
+{% endif %}
+
+<p><a href="{% url 'oauth2:applications' %}">Your applications</a> | <a href="{% url 'frontpage:index' %}">Front page</a></p>
+
+</body>
+</html>

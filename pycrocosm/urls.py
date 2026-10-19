@@ -14,7 +14,7 @@ Including another URLconf
 	2. Add a URL to urlpatterns:  url(r'^blog/', include('blog.urls'))
 """
 
-from django.urls import include, re_path as url
+from django.urls import include, path, re_path as url
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from objectinfo import views as objectinfo_views
@@ -22,11 +22,18 @@ from pycrocosm.ratelimit import rate_limit
 from pycrocosm import formats
 from users import views as users_views
 from overpass import views as overpass_views
+from oauth2 import views as oauth2_views
 
 login_view = rate_limit("login", "LOGIN_RATE_LIMIT_REQUESTS", "LOGIN_RATE_LIMIT_WINDOW_SECONDS")(
 	auth_views.LoginView.as_view())
 
 urlpatterns = [
+	# OAuth2 as clients find it: by RFC 8414 discovery, and where JOSM looks
+	# without it, next to the API (before the API's own patterns below)
+	path('.well-known/oauth-authorization-server', oauth2_views.authorization_server_metadata,
+		name='oauth_authorization_server'),
+	path('api/authorize', oauth2_views.authorize),
+	path('api/token', oauth2_views.token),
 	# A .json or .xml suffix on an API path selects the response format. A user
 	# preference key is free text and may itself end that way, so it is left alone.
 	url(r'^(?P<apipath>api/(?!0\.6/user/preferences/).*)\.(?P<fmt>json|xml)$', formats.with_format),
