@@ -1,7 +1,14 @@
-django==6.1.1
-djangorestframework==3.18.1
+# The web application and its API
+django==6.1.2
+djangorestframework==3.18.3
+# Reads uploaded and fetched XML without its entity tricks
 defusedxml==0.7.1
+# PostgreSQL, for Django and the edit notification server's LISTEN
 psycopg2-binary==2.9.13
+# The production application server (see PRODUCTION.md)
 gunicorn==26.2.0
+# The time zone database, where the system has none (Windows); the Docker
+# image has the system's, and the site runs in UTC
 tzdata
-msgpack==1.1.0
+# The edit notification protocol, and edit activity as msgpack
+msgpack==1.2.3
