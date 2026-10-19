@@ -22,6 +22,39 @@ from changeset.views import upload_block
 from pycrocosm import common
 from pycrocosm.mapdb import make_connection_string
 
+def pbf_optional_features(data):
+    """The optional features a PBF file's header declares, read from its first
+    block, which pycrocosm writes zlib-compressed."""
+    import zlib
+    def fields(buffer):
+        position = 0
+        while position < len(buffer):
+            key, position = varint(buffer, position)
+            if key & 7 == 2:
+                size, position = varint(buffer, position)
+                yield key >> 3, buffer[position:position + size]
+                position += size
+            elif key & 7 == 0:
+                value, position = varint(buffer, position)
+                yield key >> 3, value
+            else:
+                raise ValueError("Unexpected protobuf wire type")
+    def varint(buffer, position):
+        value, shift = 0, 0
+        while True:
+            byte = buffer[position]
+            position += 1
+            value |= (byte & 0x7f) << shift
+            shift += 7
+            if byte < 0x80:
+                return value, position
+    size = int.from_bytes(data[:4], "big")
+    header = dict(fields(data[4:4 + size]))
+    assert header[1] == b"OSMHeader"
+    blob = dict(fields(data[4 + size:4 + size + header[3]]))
+    block = zlib.decompress(blob[3])
+    return [value.decode() for number, value in fields(block) if number == 5]
+
 class MapTestCaseBase(SimpleTestCase):
 
 
@@ -2158,6 +2191,11 @@ class DbExtractTestCase(MapTestCaseBase):
                 found += [("relation", r.objId, r.metaData.version) for r in decoded.relations]
                 self.assertEqual(sorted(found), expected)
                 self.assertEqual(len(decoded.bounds), 1)
+                if extension == "pbf":
+                    # Exported a kind at a time, in ID order, and saying so
+                    self.assertEqual(pbf_optional_features(data), ["Sort.Type_then_ID"])
+                    kinds = {"node": 0, "way": 1, "relation": 2}
+                    self.assertEqual(found, sorted(found, key=lambda o: (kinds[o[0]], o[1])))
                 # o5m carries what keeping it up to date needs; PBF has nowhere to put it
                 self.assertEqual(dict(decoded.attributes), {} if extension == "pbf" else
                                  self.update_info(extract_id, "http://testserver/"))
@@ -4020,6 +4058,58 @@ class MapEditTestCase(MapTestCaseBase):
             cursor.execute(sql.SQL("SELECT value FROM {} WHERE key='schema_version'").format(
                 sql.Identifier(self.prefixes[1] + "meta")))
             self.assertEqual(cursor.fetchone(), ("16",))
+
+    def test_pbf_files_say_they_are_sorted(self):
+        import os, tempfile, shutil
+        # Objects in both layers, with an imported one taken over by an edit
+        a = pgmap.OsmNode()
+        a.objId, a.lon = 5000, 0.5
+        self.store_static([a])
+        nodes = [self.create_node(0.1 * i) for i in range(1, 4)]
+        self.create_way(nodes)
+        self.modify_node(a, 0.6)
+        extract_id = self.save()
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, True)
+        def objects(path):
+            data = pgmap.OsmData()
+            with open(path, "rb") as handle:
+                raw = handle.read()
+            pgmap.LoadFromPbfBytes(raw, data)
+            return raw, ([("node", n.objId) for n in data.nodes] + [("way", w.objId) for w in data.ways] +
+                         [("relation", r.objId) for r in data.relations])
+        # This scratch map's own dump, which is small: no test dumps a real map
+        t = self.map.GetTransaction("ACCESS SHARE")
+        try:
+            t.DumpToFile(os.path.join(folder, "dump.pbf"), True)
+            t.ExportExtractToFile(extract_id, "", os.path.join(folder, "extract.pbf"), True)
+        finally:
+            t.Abort()
+        kinds = {"node": 0, "way": 1, "relation": 2}
+        for name in ("dump.pbf", "extract.pbf"):
+            raw, found = objects(os.path.join(folder, name))
+            self.assertEqual(pbf_optional_features(raw), ["Sort.Type_then_ID"], name)
+            self.assertEqual(found, sorted(found, key=lambda o: (kinds[o[0]], o[1])), name)
+            self.assertIn(("node", 5000), found)
+
+        # Declaring it, the encoder refuses anything out of that order
+        encoder = pgmap.PyPbfEncode(io.BytesIO())
+        encoder.sortedTypeThenId = True
+        node, way = pgmap.OsmNode(), pgmap.OsmWay()
+        node.objId, way.objId = 2, 1
+        encoder.StoreNode(node)
+        encoder.StoreWay(way)
+        for late in (pgmap.OsmNode(), pgmap.OsmWay()):
+            late.objId = 1
+            with self.assertRaisesRegex(RuntimeError, "out of type then ID order"):
+                (encoder.StoreNode if isinstance(late, pgmap.OsmNode) else encoder.StoreWay)(late)
+        # Without it, anything goes, and nothing is declared
+        out = io.BytesIO()
+        encoder = pgmap.PyPbfEncode(out)
+        encoder.StoreWay(way)
+        encoder.StoreNode(node)
+        encoder.Finish()
+        self.assertEqual(pbf_optional_features(out.getvalue()), [])
 
 def run_only_what_a_variant_changes(variant, covered_by=()):
     """Leaves a variant of DbExtractTestCase only the tests its overrides can
