@@ -4,6 +4,6 @@ from . import views
 
 app_name = 'multifetch'
 urlpatterns = [
-    url(r'', views.collection, name='multifetch'),
+    url(r'^$', views.collection, name='multifetch'),
 ]
 

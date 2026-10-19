@@ -5,14 +5,11 @@ from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnl
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 from django.urls import reverse
-from django.contrib.auth.models import User
 from django.contrib.auth.decorators import login_required
 from django.utils.crypto import get_random_string
 from django.utils import timezone
-import jwt
 import datetime
 import time
-import uuid
 import base64
 import hashlib
 import re
@@ -20,11 +17,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from django.utils.crypto import constant_time_compare
 
 from .models import Oauth2Application, Oauth2Authorization, Oauth2AuthorizationCode
+from .secrets import hash_secret, new_secret
 from .scopes import DEFAULT_SCOPES, SCOPE_DESCRIPTIONS, SCOPES, granted_scopes, parse_scope
 from pycrocosm.ratelimit import rate_limit
-
-def oauth2_signing_secret():
-	return getattr(settings, 'OAUTH2_JWT_SECRET', settings.SECRET_KEY)
 
 def oauth2_auth_code_seconds():
 	return getattr(settings, 'OAUTH2_AUTH_CODE_SECONDS', 300)
@@ -133,9 +128,9 @@ def authorize(request):
 
 	now = timezone.now()
 	expires_at = now + datetime.timedelta(seconds=oauth2_auth_code_seconds())
-	jti = uuid.uuid4().hex
+	code, code_hash = new_secret()
 	Oauth2AuthorizationCode.objects.create(
-		jti=jti,
+		code_hash=code_hash,
 		parent_app=app,
 		user=request.user,
 		redirect_uri=redirect_uri,
@@ -143,17 +138,6 @@ def authorize(request):
 		code_challenge=challenge,
 		code_challenge_method=method,
 		expires_at=expires_at)
-
-	code = jwt.encode({"type": "app", 
-		"jti": jti,
-		"user_id": request.user.id, 
-		"client_id": app.client_id, 
-		"redirect_uri": redirect_uri,
-		"scope": " ".join(scopes),
-		"iat": now,
-		"exp": expires_at,
-		'created_at': now.isoformat()}, 
-		oauth2_signing_secret(), algorithm="HS256")
 
 	if redirect_uri == OUT_OF_BAND:
 		return render(request, 'oauth2/authorize_result.html', {'app': app, 'code': code})
@@ -164,24 +148,15 @@ def create_authorization(user, app, scopes=DEFAULT_SCOPES):
 	(those the application may have), and an access token for it."""
 	scopes = [scope for scope in SCOPES if scope in scopes]
 	scope = " ".join(scopes)
-	now = timezone.now()
 	lifetime = oauth2_access_token_seconds()
+	token, token_hash = new_secret()
 
-	auth = Oauth2Authorization.objects.create(parent_app = app,
+	Oauth2Authorization.objects.create(parent_app = app,
 		user = user,
 		disabled = False,
+		token_hash = token_hash,
+		expires_at = timezone.now() + datetime.timedelta(seconds=lifetime) if lifetime > 0 else None,
 		**{"permission_" + name: name in scopes for name in SCOPES})
-
-	claims = {"type": "token", 
-		"auth_id": auth.id, 
-		"user_id": user.id, 
-		"client_id": app.client_id, 
-		'scope': scope,
-		"iat": now,
-		'created_at': now.isoformat()}
-	if lifetime > 0:
-		claims["exp"] = now + datetime.timedelta(seconds=lifetime)
-	token = jwt.encode(claims, oauth2_signing_secret(), algorithm="HS256")
 
 	return token, scope
 
@@ -201,19 +176,9 @@ def token(request):
 	if redirect_uri is None:
 		return HttpResponseBadRequest("redirect_uri incorrect")
 
-	try:
-		decoded = jwt.decode(request.POST.get('code'), oauth2_signing_secret(), algorithms=["HS256"])
-	except jwt.exceptions.PyJWTError as err:
-		return HttpResponseBadRequest("Code incorrect")
-
-	if decoded['type'] != "app":
-		return HttpResponseBadRequest("Code incorrect")	
-	if decoded['client_id'] != app.client_id:
-		return HttpResponseBadRequest("Code does not match client_id")
-	if decoded.get('redirect_uri') != redirect_uri:
-		return HttpResponseBadRequest("redirect_uri incorrect")
-
-	codeRecord = Oauth2AuthorizationCode.objects.filter(jti=decoded.get('jti'), parent_app=app).first()
+	# Found by its hash, and only among this application's codes
+	codeRecord = Oauth2AuthorizationCode.objects.filter(code_hash=hash_secret(request.POST.get('code', '')),
+		parent_app=app).first()
 	if codeRecord is None:
 		return HttpResponseBadRequest("Code incorrect")
 	if codeRecord.consumed_at is not None:
@@ -235,9 +200,7 @@ def token(request):
 		if not app.check_client_secret(secret):
 			return HttpResponseBadRequest("client_secret incorrect")
 
-	user = User.objects.filter(id=decoded['user_id']).first()
-	if user is None:
-		return HttpResponseNotFound("No such user")
+	user = codeRecord.user
 
 	codeRecord.consumed_at = timezone.now()
 	codeRecord.save()

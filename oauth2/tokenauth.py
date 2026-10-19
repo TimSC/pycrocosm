@@ -1,19 +1,21 @@
-import jwt
+from django.conf import settings
+from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
-from django.conf import settings
-from .models import Oauth2Application, Oauth2Authorization
-from .scopes import granted_scopes
 
-def oauth2_signing_secret():
-	return getattr(settings, 'OAUTH2_JWT_SECRET', settings.SECRET_KEY)
+from .models import Oauth2Authorization
+from .scopes import granted_scopes
+from .secrets import hash_secret
 
 class TokenAuthentication(BaseAuthentication):
+	"""An OAuth2 bearer token: a random string whose hash an authorization
+	keeps (see secrets.py). It is refused once the authorization or its
+	application is disabled, or it has expired."""
 
 	keyword = 'Authorization'
 
 	def authenticate(self, request):
-		
+
 		# Only allow oauth2 on secure connections (or if debug is enabled)
 		if not request.is_secure() and not settings.DEBUG:
 			return None
@@ -28,26 +30,12 @@ class TokenAuthentication(BaseAuthentication):
 		if authHeaderSp[0] != 'Bearer':
 			return None
 
-		try:
-			decoded = jwt.decode(authHeaderSp[1], oauth2_signing_secret(), algorithms=["HS256"])
-		except jwt.exceptions.PyJWTError as err:
+		authRecord = Oauth2Authorization.objects.select_related("parent_app", "user").filter(
+			token_hash=hash_secret(authHeaderSp[1].strip())).first()
+		if authRecord is None or authRecord.disabled or authRecord.parent_app.disabled:
+			raise AuthenticationFailed()
+		if authRecord.expires_at is not None and authRecord.expires_at <= timezone.now():
 			raise AuthenticationFailed()
 
-		if decoded['type'] != 'token':
-			raise AuthenticationFailed()
-
-		authRecord = Oauth2Authorization.objects.filter(id=decoded['auth_id']).first()
-		if authRecord is None:
-			raise AuthenticationFailed()
-		if authRecord.disabled:
-			raise AuthenticationFailed()
-
-		appRecord = authRecord.parent_app
-		if appRecord is None:
-			raise AuthenticationFailed()
-		if appRecord.disabled:
-			raise AuthenticationFailed()			
-
-		# What the authorization and its application allow now, not what the
-		# token said when it was issued
+		# What the authorization and its application allow now
 		return (authRecord.user, granted_scopes(authRecord))

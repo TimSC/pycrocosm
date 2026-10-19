@@ -23,8 +23,7 @@ These go in `.env`, beside `docker-compose.yml` (`env.template` is a starting po
 | Variable | Production value | Why |
 |---|---|---|
 | `DEBUG` | `0` | It defaults to on, which shows error details, including settings, to anyone. |
-| `SECRET_KEY` | A long random string, kept private | Signs sessions and, unless `OAUTH2_JWT_SECRET` is set, OAuth2 tokens. Without it a key published in the source is used, and with `DEBUG` off the site refuses to start (system check `pycrocosm.E001`, which gunicorn runs too). Make one with `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`. |
-| `OAUTH2_JWT_SECRET` | Optional; another random string | Lets the token key be changed without logging everyone out of the website. |
+| `SECRET_KEY` | A long random string, kept private | Signs sessions and password reset links. Without it a key published in the source is used, and with `DEBUG` off the site refuses to start (system check `pycrocosm.E001`, which gunicorn runs too). Make one with `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`. |
 | `DJANGO_ALLOWED_HOSTS` | `maps.example.org` | The names the site answers to; others are refused. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://maps.example.org` | Needed for logging in and the admin forms behind an HTTPS proxy. |
 | `DJANGO_BEHIND_HTTPS_PROXY` | `1` | Believe the proxy's `X-Forwarded-Proto`. Set only when every request comes through the proxy. |
@@ -33,7 +32,7 @@ These go in `.env`, beside `docker-compose.yml` (`env.template` is a starting po
 | `OAUTH2_ACCESS_TOKEN_SECONDS` | `0` (the default) | How long an OAuth2 token lasts. `0` is until it is revoked, as on openstreetmap.org: editors such as JOSM keep their token and cannot refresh it, so a limited lifetime makes them ask the user to authorise again each time it runs out. |
 | `LOGIN_RATE_LIMIT_*`, `OAUTH2_RATE_LIMIT_*`, `OVERPASS_RATE_LIMIT_*` | Defaults are reasonable | Requests per client address in each window; zero turns a limit off. See [Known issues](#known-issues). |
 
-Settings that are not read from the environment are set in `pycrocosm/settings.py` (copied from `settings.py.template`). Worth reviewing:
+Settings that are not read from the environment have their defaults in `pycrocosm/settings_base.py`, and are changed in `pycrocosm/settings.py` (copied from `settings.py.template`), which imports them: leave `settings_base.py` as it is, so that later versions' new settings reach the server. Worth reviewing:
 
 * `OVERPASS_TIMEOUT_MAXIMUM` (180 seconds), `OVERPASS_ELEMENTS_MAXIMUM` and `OVERPASS_AREA_MAXIMUM` bound what one Overpass query can cost. `AREA_MAXIMUM` (0.25 square degrees) does the same for the map call.
 * `TIMEOUT_SECONDS` (300) is the timeout the API advertises to editors. Keep the application server's and the proxy's timeouts at least this long.
@@ -44,7 +43,7 @@ Settings that are not read from the environment are set in `pycrocosm/settings.p
 Settings file changes
 ---------------------
 
-Some production needs are not covered by the template yet. Add these to `pycrocosm/settings.py`.
+Some production needs are not covered by the defaults yet. Add these to `pycrocosm/settings.py`, below its import of `settings_base`.
 
 ### Static files
 

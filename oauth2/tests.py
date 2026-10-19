@@ -559,9 +559,9 @@ class TokenLifetimeAndRoutesTestCase(TestCase):
 		return json.loads(Client().post(reverse("oauth2:token"), {"client_id": "editor", "client_secret": "shh",
 			"code": code}).content)
 
-	def claims(self, token):
-		import jwt
-		return jwt.decode(token, options={"verify_signature": False})
+	def authorization(self, token):
+		from .secrets import hash_secret
+		return Oauth2Authorization.objects.get(token_hash=hash_secret(token))
 
 	def test_tokens_last_until_revoked_by_default(self):
 		from django.conf import settings
@@ -572,13 +572,37 @@ class TokenLifetimeAndRoutesTestCase(TestCase):
 			self.assertEqual(oauth2_access_token_seconds(), 0)
 		with self.settings(OAUTH2_ACCESS_TOKEN_SECONDS=0):
 			answer = self.exchange()
-		self.assertNotIn("exp", self.claims(answer["access_token"]))
+		self.assertIsNone(self.authorization(answer["access_token"]).expires_at)
 		self.assertNotIn("expires_in", answer)
 		with self.settings(OAUTH2_ACCESS_TOKEN_SECONDS=600):
 			answer = self.exchange()
 		self.assertEqual(answer["expires_in"], 600)
-		claims = self.claims(answer["access_token"])
-		self.assertEqual(claims["exp"] - claims["iat"], 600)
+		left = self.authorization(answer["access_token"]).expires_at - timezone.now()
+		self.assertTrue(590 < left.total_seconds() <= 600, left)
+		# and once expired it is refused
+		details = lambda: Client().get("/api/0.6/user/details", secure=True,
+			HTTP_AUTHORIZATION="Bearer " + answer["access_token"]).status_code
+		self.assertEqual(details(), 200)
+		Oauth2Authorization.objects.filter(token_hash=self.authorization(answer["access_token"]).token_hash).update(
+			expires_at=timezone.now() - datetime.timedelta(seconds=1))
+		self.assertIn(details(), (401, 403))
+
+	def test_only_hashes_are_kept(self):
+		from .secrets import hash_secret
+		answer = self.exchange()
+		token = answer["access_token"]
+		self.assertGreaterEqual(len(token), 43)
+		auth = self.authorization(token)
+		self.assertEqual(auth.token_hash, hash_secret(token))
+		self.assertNotIn(token, str(Oauth2Authorization.objects.values().get(id=auth.id)))
+		code = approve(self.client, {"client_id": "editor"})
+		record = Oauth2AuthorizationCode.objects.get(consumed_at=None)
+		self.assertEqual(record.code_hash, hash_secret(code))
+		# A made-up token or code is no use
+		self.assertIn(Client().get("/api/0.6/user/details", secure=True, HTTP_AUTHORIZATION="Bearer " + token + "x"
+			).status_code, (401, 403))
+		self.assertEqual(Client().post(reverse("oauth2:token"), {"client_id": "editor", "client_secret": "shh",
+			"code": code + "x"}).status_code, 400)
 
 	def test_routes_are_exact(self):
 		from django.urls import resolve, Resolver404

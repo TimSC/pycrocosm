@@ -51,7 +51,7 @@ If you use a firewall such as ufw, also allow port 5432 from Docker:
 
 ### Configuration
 
-The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue(name, default)`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else. Any of pgmap's settings can also be given in the environment, as its name in capitals after `PGMAP_` (`PGMAP_DBHOST` for `dbhost`, `PGMAP_DBPASS` for `dbpass`), which replaces what the file says and works without a file at all; pgmap's command line tools read these too.
+The map database's name, login and table prefixes are set once, in `pgmap/config.cfg`, where pgmap's command line tools read them. `MAP_DATABASE` in `pycrocosm/settings_base.py` fetches them from that file through the pgmap module (`pgmap.GetConfigValue(name, default)`), so they are not repeated there. Set `PGMAP_CONFIG` in the environment to use a file somewhere else. Any of pgmap's settings can also be given in the environment, as its name in capitals after `PGMAP_` (`PGMAP_DBHOST` for `dbhost`, `PGMAP_DBPASS` for `dbpass`), which replaces what the file says and works without a file at all; pgmap's command line tools read these too.
 
 The Django settings database takes nothing from `config.cfg`: it is set by the `DJANGO_DB_*` environment variables. Those and the other settings are read from `.env`, whose values also take precedence over `config.cfg` for the map database. Create it from the template and edit it:
 
@@ -59,7 +59,13 @@ The Django settings database takes nothing from `config.cfg`: it is set by the `
 
     nano .env
 
-Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. Every database setting in `pycrocosm/settings.py` can be replaced this way: the name, user, password, host and port of the settings database (`DJANGO_DB_*`), and the same for the map database plus its table prefixes (`DJANGO_MAP_DB_*`, which fall back to the `DJANGO_DB_*` values for user, password, host and port). `env.template` lists them all; anything left unset keeps the value in `settings.py`. If you want to access the site from other computers, add their names for it to `DJANGO_ALLOWED_HOSTS`, a comma separated list. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
+Every setting has its default in `pycrocosm/settings_base.py`. Create this server's own settings file, which imports those and is where anything not read from the environment is changed:
+
+    cp pycrocosm/settings.py.template pycrocosm/settings.py
+
+Settings added to pycrocosm later reach it without anything to copy.
+
+Set `DJANGO_DB_HOST=host.docker.internal` and the database user and password. Every database setting in `pycrocosm/settings.py` can be replaced this way: the name, user, password, host and port of the settings database (`DJANGO_DB_*`), and the same for the map database plus its table prefixes (`DJANGO_MAP_DB_*`, which fall back to the `DJANGO_DB_*` values for user, password, host and port). `env.template` lists them all; anything left unset keeps its default from `settings_base.py`. If you want to access the site from other computers, add their names for it to `DJANGO_ALLOWED_HOSTS`, a comma separated list. In production, set `DEBUG=0` and generate a new `SECRET_KEY`.
 
 ### Build and run
 

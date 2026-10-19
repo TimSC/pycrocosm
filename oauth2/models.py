@@ -90,6 +90,11 @@ class Oauth2Authorization(models.Model):
 
 	disabled = models.BooleanField()
 
+	# The SHA-256 (in hex) of the authorization's access token, which is itself
+	# kept nowhere, and when it stops working (None for when revoked)
+	token_hash = models.CharField(max_length=64, unique=True, null=True, blank=True)
+	expires_at = models.DateTimeField(null=True, blank=True)
+
 	class Meta:
 		indexes = [
 			models.Index(fields=['parent_app'], name='oauth2_auth_parent_app_idx'),
@@ -104,7 +109,7 @@ class Oauth2AuthorizationCode(models.Model):
 	expires_at = models.DateTimeField()
 	consumed_at = models.DateTimeField(null=True, blank=True)
 
-	jti = models.CharField(max_length=64, unique=True)
+	code_hash = models.CharField(max_length=64, unique=True) # The SHA-256 (in hex) of the code given out
 	parent_app = models.ForeignKey(Oauth2Application, on_delete=models.CASCADE)
 	user = models.ForeignKey(User, on_delete=models.CASCADE)
 	redirect_uri = models.TextField()
@@ -116,7 +121,6 @@ class Oauth2AuthorizationCode(models.Model):
 
 	class Meta:
 		indexes = [
-			models.Index(fields=['jti'], name='oauth2_code_jti_idx'),
 			models.Index(fields=['parent_app'], name='oauth2_code_parent_app_idx'),
 			models.Index(fields=['user'], name='oauth2_code_user_idx'),
 		]

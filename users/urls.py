@@ -5,8 +5,8 @@ from . import views
 app_name = 'users'
 urlpatterns = [
 	url(r'^(?P<uid>[0-9]+)$', views.user, name='user'),
-	url(r'details', views.details, name='details'),
-	url(r'preferences/(.*)', views.preferences_put, name='preferences_put'),
-	url(r'preferences', views.preferences, name='preferences'),
-	url(r'gpx_files', views.not_implemented),
+	url(r'^details$', views.details, name='details'),
+	url(r'^preferences/(.+)$', views.preferences_put, name='preferences_put'),
+	url(r'^preferences$', views.preferences, name='preferences'),
+	url(r'^gpx_files$', views.not_implemented),
 ]

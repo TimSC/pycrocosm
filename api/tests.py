@@ -361,15 +361,12 @@ class SecretKeyCheckTestCase(SimpleTestCase):
 	def test_published_keys_are_refused_without_debug(self):
 		from pycrocosm.checks import PUBLISHED_SECRET_KEYS, check_secret_keys
 		published = next(iter(PUBLISHED_SECRET_KEYS))
-		mine = "a-long-random-key-of-the-sites-own-0123456789abcdef"
-		with self.settings(DEBUG=False, SECRET_KEY=published, OAUTH2_JWT_SECRET=published):
-			self.assertEqual([e.id for e in check_secret_keys()], ["pycrocosm.E001", "pycrocosm.E001"])
-		with self.settings(DEBUG=False, SECRET_KEY=mine, OAUTH2_JWT_SECRET=published):
-			self.assertIn("OAUTH2_JWT_SECRET", check_secret_keys()[0].msg)
-		with self.settings(DEBUG=False, SECRET_KEY=mine, OAUTH2_JWT_SECRET=mine):
+		with self.settings(DEBUG=False, SECRET_KEY=published):
+			self.assertEqual([e.id for e in check_secret_keys()], ["pycrocosm.E001"])
+		with self.settings(DEBUG=False, SECRET_KEY="a-long-random-key-of-the-sites-own-0123456789abcdef"):
 			self.assertEqual(check_secret_keys(), [])
 		# Development may use it
-		with self.settings(DEBUG=True, SECRET_KEY=published, OAUTH2_JWT_SECRET=published):
+		with self.settings(DEBUG=True, SECRET_KEY=published):
 			self.assertEqual(check_secret_keys(), [])
 
 	def test_the_wsgi_application_will_not_start(self):
@@ -381,7 +378,35 @@ class SecretKeyCheckTestCase(SimpleTestCase):
 			with self.assertRaisesRegex(ImproperlyConfigured, "SECRET_KEY is the key published"):
 				importlib.import_module("pycrocosm.wsgi")
 		sys.modules.pop("pycrocosm.wsgi", None)
-		with self.settings(DEBUG=False, SECRET_KEY="a-long-random-key-of-the-sites-own-0123456789abcdef",
-				OAUTH2_JWT_SECRET="another-long-random-key-0123456789abcdef"):
+		with self.settings(DEBUG=False, SECRET_KEY="a-long-random-key-of-the-sites-own-0123456789abcdef"):
 			importlib.import_module("pycrocosm.wsgi")
 
+class RoutesTestCase(SimpleTestCase):
+	"""Every route matches its own path only, not any path containing it, which
+	would let a path such as /anythingadmin/ past a proxy's rules for /admin/."""
+
+	def test_near_misses_are_not_found(self):
+		from django.urls import resolve, Resolver404
+		for path in ("/xyzapi/0.6/capabilities", "/fooadmin/", "/anythingreplication/now", "/fooextra/most_active",
+				"/api/0.6/user/xdetailsy", "/api/0.6/user/detailsX", "/api/0.6/notesXYZ", "/api/0.6/node/1/waysX",
+				"/api/0.6/node/1x", "/api/0.6/nodesX/", "/xoverpass/xapi/node", "/historyX", "/xaccounts/login/",
+				"/api/0.6/capabilitiesX", "/api/0.6/node/create/x"):
+			with self.subTest(path=path):
+				with self.assertRaises(Resolver404):
+					resolve(path)
+
+	def test_routes_still_found(self):
+		from django.urls import resolve
+		# By route name, or for the unnamed stubs, by what the matched pattern holds
+		for path, name in (("/api/0.6/capabilities", "capabilities2"), ("/api/0.6/node/1", "element"),
+				("/api/0.6/node/1/ways", "ways_for_node"), ("/api/0.6/node/1/2", "object_version"),
+				("/api/0.6/nodes", "multifetch"), ("/api/0.6/user/details", "details"),
+				("/api/0.6/user/preferences", "preferences"), ("/api/0.6/user/preferences/colour", "preferences_put"),
+				("/api/0.6/notes", "notes"), ("/api/0.6/notes/12/comment", "notes"), ("/api/0.6/gpx/create", "gpx"),
+				("/api/0.6/changeset/5/upload", "upload"), ("/api/0.6/changesets", "list"), ("/api/0.6/map", "querymap"),
+				("/history", "history"), ("/changeset/5", "changeset"), ("/overpass/xapi/node[amenity=pub]", "xapi1"),
+				("/admin/", "index"), ("/replication/now", "timenow"), ("/", "index")):
+			with self.subTest(path=path):
+				found = resolve(path)
+				self.assertTrue(found.url_name == name or (found.url_name is None and name in found.route),
+					(found.url_name, found.route))
