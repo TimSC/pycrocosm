@@ -4110,6 +4110,113 @@ class MapEditTestCase(MapTestCaseBase):
         encoder.Finish()
         self.assertEqual(pbf_optional_features(out.getvalue()), [])
 
+    def shapes(self, kind):
+        """The shape of each visible way or relation, as WKT, by ID."""
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT id, ST_AsText(shape) FROM {} ORDER BY id").format(
+                sql.Identifier(self.prefixes[1] + "visible_" + kind + "_shapes")))
+            return dict(cursor.fetchall())
+
+    def admin_do(self, work):
+        admin = self.map.GetAdmin("")
+        error = pgmap.PgMapError()
+        try:
+            self.assertTrue(work(admin, error), error.errStr)
+            admin.Commit()
+        except BaseException:
+            admin.Abort()
+            raise
+        finally:
+            del admin
+
+    def test_way_and_relation_shapes(self):
+        # Imported: a closed way round a square, a line across it, a node and
+        # a way with a node that is not there
+        corners = []
+        for index, (lon, lat) in enumerate(((0.1, 0.1), (0.2, 0.1), (0.2, 0.2), (0.1, 0.2), (0.5, 0.5))):
+            node = pgmap.OsmNode()
+            node.objId, node.lon, node.lat = 5000 + index, lon, lat
+            corners.append(node)
+        square, line, broken = pgmap.OsmWay(), pgmap.OsmWay(), pgmap.OsmWay()
+        square.objId, line.objId, broken.objId = 6000, 6001, 6002
+        for ref in (5000, 5001, 5002, 5003, 5000):
+            square.refs.append(ref)
+        for ref in (5000, 5002):
+            line.refs.append(ref)
+        for ref in (5000, 9999):
+            broken.refs.append(ref)
+        area, route = pgmap.OsmRelation(), pgmap.OsmRelation()
+        area.objId, route.objId = 7000, 7001
+        self.set_members(area, [("way", square, "outer")])
+        area.tags["type"] = "multipolygon"
+        self.set_members(route, [("way", line, ""), ("node", corners[4], "stop")])
+        route.tags["type"] = "route"
+        self.store_static(corners, [square, line, broken], [area, route])
+
+        # Tables of their own on every table set, filled in with the boxes
+        self.admin_do(lambda admin, error: admin.SetObjectShapes(True, 0, error))
+        self.admin_do(lambda admin, error: admin.UpdateBboxes(0, True, True, error))
+        self.assertEqual(self.shapes("way"), {
+            6000: "LINESTRING(0.1 0.1,0.2 0.1,0.2 0.2,0.1 0.2,0.1 0.1)",
+            6001: "LINESTRING(0.1 0.1,0.2 0.2)",
+            6002: None})
+        self.assertEqual(self.shapes("relation"), {
+            7000: "MULTIPOLYGON(((0.1 0.1,0.1 0.2,0.2 0.2,0.2 0.1,0.1 0.1)))",
+            7001: "GEOMETRYCOLLECTION(LINESTRING(0.1 0.1,0.2 0.2),POINT(0.5 0.5))"})
+        with self.db.cursor() as cursor:
+            for prefix in self.prefixes:
+                cursor.execute("SELECT table_name, format_type(atttypid, atttypmod) FROM information_schema.columns c "
+                               "JOIN pg_attribute a ON a.attrelid = (quote_ident(c.table_name))::regclass AND a.attname = c.column_name "
+                               "WHERE c.table_name IN (%s, %s) AND c.column_name = 'shape' ORDER BY 1",
+                               (prefix + "relation_shapes", prefix + "way_shapes"))
+                self.assertEqual(cursor.fetchall(), [(prefix + "relation_shapes", "geometry(Geometry,4326)"),
+                                                     (prefix + "way_shapes", "geometry(LineString,4326)")])
+            # The live tables are as they were
+            cursor.execute("SELECT count(*) FROM information_schema.columns WHERE column_name = 'shape' "
+                           "AND table_name LIKE %s", (self.prefixes[0][:-len("static_")] + "%live%",))
+            self.assertEqual(cursor.fetchone()[0], 0)
+
+        # Moving a corner (its longitude) moves it in every shape holding it, through the ways to the relations
+        self.modify_node(corners[0], 0.05)
+        ways, relations = self.shapes("way"), self.shapes("relation")
+        self.assertEqual(ways[6000], "LINESTRING(0.05 0.1,0.2 0.1,0.2 0.2,0.1 0.2,0.05 0.1)")
+        self.assertEqual(ways[6001], "LINESTRING(0.05 0.1,0.2 0.2)")
+        self.assertEqual(relations[7000], "MULTIPOLYGON(((0.05 0.1,0.1 0.2,0.2 0.2,0.2 0.1,0.05 0.1)))")
+        self.assertEqual(relations[7001], "GEOMETRYCOLLECTION(LINESTRING(0.05 0.1,0.2 0.2),POINT(0.5 0.5))")
+        # New ways and relations have theirs at once
+        a, b = self.create_node(0.3, 0.3), self.create_node(0.4, 0.3)
+        new = self.create_way([a, b])
+        self.assertEqual(self.shapes("way")[new.objId], "LINESTRING(0.3 0.3,0.4 0.3)")
+        holder = self.create_relation([("way", new, ""), ("node", a, "")])
+        self.assertEqual(self.shapes("relation")[holder.objId], "GEOMETRYCOLLECTION(LINESTRING(0.3 0.3,0.4 0.3),POINT(0.3 0.3))")
+        # A multipolygon whose ways enclose nothing has no shape
+        open_area = self.modify_relation(holder, [("way", new, "outer")])
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("UPDATE {} SET tags = tags || '{{\"type\": \"multipolygon\"}}' WHERE id = %s").format(
+                sql.Identifier(self.prefixes[1] + "liverelations")), (open_area.objId,))
+        self.admin_do(lambda admin, error: admin.UpdateBboxes(0, False, True, error))
+        self.assertIsNone(self.shapes("relation")[open_area.objId])
+        # A deleted way loses its shape, as the imported one it replaced is hidden
+        self.upload("delete", [route])
+        self.upload("delete", [self.modify_way(line, [corners[0], corners[2]])])
+        self.assertNotIn(6001, self.shapes("way"))
+        self.assertNotIn(7001, self.shapes("relation"))
+        with self.db.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT count(*) FROM {} WHERE id = 6001").format(
+                sql.Identifier(self.prefixes[1] + "way_shapes")))
+            self.assertEqual(cursor.fetchone()[0], 0)
+        # The map query sends the objects as ever
+        self.assertIn(("way", 6000), self.contents())
+
+        # Dropped, from every table set, and the map goes on working
+        self.admin_do(lambda admin, error: admin.SetObjectShapes(False, 0, error))
+        with self.db.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM information_schema.tables WHERE table_name LIKE %s",
+                           (self.prefixes[0][:-len("static_")] + "%shapes",))
+            self.assertEqual(cursor.fetchone()[0], 0)
+        self.modify_node(corners[1], 0.25)
+        self.assertIn(("way", 6000), self.contents())
+
 def run_only_what_a_variant_changes(variant, covered_by=()):
     """Leaves a variant of DbExtractTestCase only the tests its overrides can
     change: of those it inherits, the ones that use a helper it overrides,
