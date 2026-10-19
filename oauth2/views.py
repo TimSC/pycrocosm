@@ -30,7 +30,11 @@ def oauth2_auth_code_seconds():
 	return getattr(settings, 'OAUTH2_AUTH_CODE_SECONDS', 300)
 
 def oauth2_access_token_seconds():
-	return getattr(settings, 'OAUTH2_ACCESS_TOKEN_SECONDS', 3600)
+	"""How long an access token lasts; 0, the default, for as long as its
+	authorization does, which the user, the application's owner or an
+	administrator ends, as on openstreetmap.org. Editors such as JOSM keep a
+	token and do not refresh it."""
+	return getattr(settings, 'OAUTH2_ACCESS_TOKEN_SECONDS', 0)
 
 def get_redirect_uris(app):
 	return [uri for uri in app.redirect_uris.split() if len(uri) > 0]
@@ -161,22 +165,23 @@ def create_authorization(user, app, scopes=DEFAULT_SCOPES):
 	scopes = [scope for scope in SCOPES if scope in scopes]
 	scope = " ".join(scopes)
 	now = timezone.now()
-	expires_at = now + datetime.timedelta(seconds=oauth2_access_token_seconds())
+	lifetime = oauth2_access_token_seconds()
 
 	auth = Oauth2Authorization.objects.create(parent_app = app,
 		user = user,
 		disabled = False,
 		**{"permission_" + name: name in scopes for name in SCOPES})
 
-	token = jwt.encode({"type": "token", 
+	claims = {"type": "token", 
 		"auth_id": auth.id, 
 		"user_id": user.id, 
 		"client_id": app.client_id, 
 		'scope': scope,
 		"iat": now,
-		"exp": expires_at,
-		'created_at': now.isoformat()}, 
-		oauth2_signing_secret(), algorithm="HS256")
+		'created_at': now.isoformat()}
+	if lifetime > 0:
+		claims["exp"] = now + datetime.timedelta(seconds=lifetime)
+	token = jwt.encode(claims, oauth2_signing_secret(), algorithm="HS256")
 
 	return token, scope
 
@@ -245,6 +250,8 @@ def token(request):
 		'token_type': 'Bearer', 
 		'scope': scope,
 		'created_at': int(time.time())}
+	if oauth2_access_token_seconds() > 0:
+		out['expires_in'] = oauth2_access_token_seconds()
 
 	return JsonResponse(out)
 

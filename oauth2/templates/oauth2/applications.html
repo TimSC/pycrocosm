@@ -10,7 +10,7 @@
 <table border="2" margin="2">
 <tr><th>Name</th><th>Client ID</th></tr>
 {% for app in apps %}
-<tr><td><a href="/oauth2/application/{{app.client_id}}">{{app.name}}</a></td><td>{{app.client_id}}</td></tr>
+<tr><td><a href="{% url 'oauth2:applications_detail' app.client_id %}">{{app.name}}</a></td><td>{{app.client_id}}</td></tr>
 {% endfor %}
 </table>
 

@@ -13,6 +13,7 @@ Checklist
 5. Tune PostgreSQL, build the indices, and decide on `useBboxInQuery` ([PostgreSQL for fast queries](#postgresql-for-fast-queries)).
 6. Schedule the regular jobs and backups ([Regular jobs and backups](#regular-jobs-and-backups)).
 7. Read [Known issues](#known-issues): rate limits need a code change to work behind a proxy.
+8. Let editors sign in: register JOSM as an OAuth2 application ([JOSM and other editors](#josm-and-other-editors)).
 
 Application settings
 --------------------
@@ -22,13 +23,14 @@ These go in `.env`, beside `docker-compose.yml` (`env.template` is a starting po
 | Variable | Production value | Why |
 |---|---|---|
 | `DEBUG` | `0` | It defaults to on, which shows error details, including settings, to anyone. |
-| `SECRET_KEY` | A long random string, kept private | Signs sessions and, unless `OAUTH2_JWT_SECRET` is set, OAuth2 tokens. Without it a key published in the source is used. Make one with `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`. |
+| `SECRET_KEY` | A long random string, kept private | Signs sessions and, unless `OAUTH2_JWT_SECRET` is set, OAuth2 tokens. Without it a key published in the source is used, and with `DEBUG` off the site refuses to start (system check `pycrocosm.E001`, which gunicorn runs too). Make one with `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`. |
 | `OAUTH2_JWT_SECRET` | Optional; another random string | Lets the token key be changed without logging everyone out of the website. |
 | `DJANGO_ALLOWED_HOSTS` | `maps.example.org` | The names the site answers to; others are refused. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://maps.example.org` | Needed for logging in and the admin forms behind an HTTPS proxy. |
 | `DJANGO_BEHIND_HTTPS_PROXY` | `1` | Believe the proxy's `X-Forwarded-Proto`. Set only when every request comes through the proxy. |
 | `DJANGO_PUBLIC_URL` | `https://maps.example.org/` | The address extract files and planet dumps give as the server to keep them up to date from (`update_url`). pgmap's own tools read `PGMAP_PUBLIC_URL`; set both, or set `public_url` in `pgmap/config.cfg`, which the web server reads too. |
 | `DJANGO_DB_*`, `DJANGO_MAP_DB_*`, `PGMAP_*` | The database connections | `DJANGO_DB_*` is the settings database; the map database comes from `pgmap/config.cfg`, overridden by `PGMAP_*` (pgmap's tools read these too) and, for the web server only, `DJANGO_MAP_DB_*`. Use a password that is not `password`. |
+| `OAUTH2_ACCESS_TOKEN_SECONDS` | `0` (the default) | How long an OAuth2 token lasts. `0` is until it is revoked, as on openstreetmap.org: editors such as JOSM keep their token and cannot refresh it, so a limited lifetime makes them ask the user to authorise again each time it runs out. |
 | `LOGIN_RATE_LIMIT_*`, `OAUTH2_RATE_LIMIT_*`, `OVERPASS_RATE_LIMIT_*` | Defaults are reasonable | Requests per client address in each window; zero turns a limit off. See [Known issues](#known-issues). |
 
 Settings that are not read from the environment are set in `pycrocosm/settings.py` (copied from `settings.py.template`). Worth reviewing:
@@ -244,6 +246,27 @@ Edit notifications
 ------------------
 
 If you run the edit notification server ([notify/README.md](notify/README.md)), open its port (7500 by default) only to the clients that need it: the connection is not encrypted and clients are not identified. It needs a direct connection to PostgreSQL, not one through PgBouncer in transaction mode, and counts against `max_connections` like one more application thread. Its per-connection limits (`--max-per-address`, `--requests-per-second` and others) have defaults that suit most servers.
+
+JOSM and other editors
+----------------------
+
+Editors sign in with OAuth2, as with openstreetmap.org. Each needs an application registered on this server; JOSM additionally uses the server's default application, so that its fully automatic authorisation works with nothing set in JOSM.
+
+**Registering JOSM.** With `manage.py migrate` run (the OAuth2 tables need it), sign in to the site as the account that will own the application, and open `/oauth2/applications`:
+
+* **Name**: JOSM. Users see it on the page asking them to allow access.
+* **Redirect URIs**: `http://127.0.0.1:8111/oauth_authorization`. This is JOSM's own callback: JOSM listens on port 8111 of the user's computer for the browser to come back to it with the code. It is the same for every JOSM user, and plain HTTP to `127.0.0.1` is right here: it never leaves their machine. Add `urn:ietf:wg:oauth:2.0:oob` on another line if the code is also to be copied by hand.
+* **Permissions**: those JOSM asks for: read and change user preferences (`read_prefs`, `write_prefs`), change the map (`write_api`), read and upload GPS traces (`read_gpx`, `write_gpx`) and change notes (`write_notes`). An application may be asked only for what it is registered with, so leaving one out makes JOSM's request fail with `invalid_scope`.
+
+Keep a note of the client ID; JOSM does not use a client secret (it uses PKCE instead).
+
+**Making it the default.** JOSM sends no client ID to a server it does not know. In the admin panel (`/admin/`, OAuth2 applications), open the JOSM application and tick **Is default**; requests without a client ID then use it. Only one application can be the default. Without one, each user enters the client ID in JOSM instead (Preferences, OSM server, untick the default OAuth parameters).
+
+**Users** then set JOSM's OSM server URL to `https://maps.example.org/api` and choose fully automatic authorisation: their browser shows this server's page asking them to allow JOSM, and JOSM receives a token, which lasts until they revoke it at `/oauth2/authorized_applications` (see `OAUTH2_ACCESS_TOKEN_SECONDS`). JOSM finds the endpoints from `/.well-known/oauth-authorization-server` on the standard HTTPS port, and otherwise at `/api/authorize` and `/api/token`, next to the API, which this server also answers.
+
+Tokens are accepted only over HTTPS (or with `DEBUG` on), so this needs the [reverse proxy](#reverse-proxy) with `DJANGO_BEHIND_HTTPS_PROXY=1`, for Django to know requests came by HTTPS.
+
+Other editors are registered the same way, with the redirect URI and permissions they document; those that keep a client secret are given the one shown when the application is registered.
 
 Regular jobs and backups
 ------------------------

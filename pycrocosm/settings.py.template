@@ -27,7 +27,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = os.environ.get('SECRET_KEY') or 'juc)pa31j2p$3t^7u4(f#&1%lf+@09sk8wx%%tg&iazlefvqqh'
 OAUTH2_JWT_SECRET = os.environ.get('OAUTH2_JWT_SECRET', SECRET_KEY)
 OAUTH2_AUTH_CODE_SECONDS = int(os.environ.get('OAUTH2_AUTH_CODE_SECONDS', 300))
-OAUTH2_ACCESS_TOKEN_SECONDS = int(os.environ.get('OAUTH2_ACCESS_TOKEN_SECONDS', 3600))
+# How long an OAuth2 access token lasts, in seconds: 0 (the default) for as
+# long as its authorization, until revoked, as on openstreetmap.org. Editors
+# such as JOSM keep their token and cannot refresh it.
+OAUTH2_ACCESS_TOKEN_SECONDS = int(os.environ.get('OAUTH2_ACCESS_TOKEN_SECONDS', 0))
 LOGIN_RATE_LIMIT_REQUESTS = int(os.environ.get('LOGIN_RATE_LIMIT_REQUESTS', 10))
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get('LOGIN_RATE_LIMIT_WINDOW_SECONDS', 60))
 OAUTH2_RATE_LIMIT_REQUESTS = int(os.environ.get('OAUTH2_RATE_LIMIT_REQUESTS', 30))

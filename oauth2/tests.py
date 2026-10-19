@@ -542,3 +542,58 @@ class JosmTestCase(TestCase):
 		self.assertEqual(metadata["code_challenge_methods_supported"], ["S256"])
 		self.assertIn("write_api", metadata["scopes_supported"])
 
+class TokenLifetimeAndRoutesTestCase(TestCase):
+
+	def setUp(self):
+		cache.clear()
+		self.user = User.objects.create_user("mapper", "mapper@example.com", "glass onion")
+		self.app = Oauth2Application.objects.create(name="Editor", user=self.user, client_id="editor", client_secret="",
+			redirect_uris="urn:ietf:wg:oauth:2.0:oob", confidential=False, disabled=False,
+			**{"permission_" + scope: True for scope in SCOPES})
+		self.app.set_client_secret("shh")
+		self.app.save()
+		self.client.login(username="mapper", password="glass onion")
+
+	def exchange(self):
+		code = approve(self.client, {"client_id": "editor"})
+		return json.loads(Client().post(reverse("oauth2:token"), {"client_id": "editor", "client_secret": "shh",
+			"code": code}).content)
+
+	def claims(self, token):
+		import jwt
+		return jwt.decode(token, options={"verify_signature": False})
+
+	def test_tokens_last_until_revoked_by_default(self):
+		from django.conf import settings
+		from .views import oauth2_access_token_seconds
+		# Without the setting, tokens do not expire
+		with self.settings():
+			del settings.OAUTH2_ACCESS_TOKEN_SECONDS
+			self.assertEqual(oauth2_access_token_seconds(), 0)
+		with self.settings(OAUTH2_ACCESS_TOKEN_SECONDS=0):
+			answer = self.exchange()
+		self.assertNotIn("exp", self.claims(answer["access_token"]))
+		self.assertNotIn("expires_in", answer)
+		with self.settings(OAUTH2_ACCESS_TOKEN_SECONDS=600):
+			answer = self.exchange()
+		self.assertEqual(answer["expires_in"], 600)
+		claims = self.claims(answer["access_token"])
+		self.assertEqual(claims["exp"] - claims["iat"], 600)
+
+	def test_routes_are_exact(self):
+		from django.urls import resolve, Resolver404
+		from . import views
+		for path, view in (("/oauth2/authorize", views.authorize), ("/oauth2/token", views.token),
+				("/oauth2/applications", views.applications), ("/oauth2/authorized_applications", views.authorized_applications),
+				("/oauth2/application/abc", views.application_detail)):
+			self.assertIs(resolve(path).func, view, path)
+		for path in ("/oauth2/authorize/", "/oauth2/authorizeX", "/oauth2/tokens", "/oauth2/applicationsX",
+				"/xoauth2/token", "/oauth2/application/abc/x"):
+			with self.subTest(path=path):
+				with self.assertRaises(Resolver404):
+					found = resolve(path)
+					# Anything else these may reach is not one of OAuth2's views
+					if found.func.__module__.startswith("oauth2"):
+						raise AssertionError("{} reached {}".format(path, found.func.__name__))
+					raise Resolver404()
+

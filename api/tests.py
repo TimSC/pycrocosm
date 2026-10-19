@@ -2,7 +2,7 @@ import json
 import xml.etree.ElementTree as ET
 
 from django.conf import settings
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.test import Client
 
 # Create your tests here.
@@ -354,3 +354,34 @@ class MapCallArgumentsTestCase(TestCase):
 	def test_historic_map_has_gone(self):
 		response = Client().get("/api/0.6/historic_map?bbox=0,0,1,1&datetime=2020-01-01T00:00:00Z")
 		self.assertEqual(response.status_code, 404)
+
+class SecretKeyCheckTestCase(SimpleTestCase):
+	"""A live site will not start with the secret key published with the source."""
+
+	def test_published_keys_are_refused_without_debug(self):
+		from pycrocosm.checks import PUBLISHED_SECRET_KEYS, check_secret_keys
+		published = next(iter(PUBLISHED_SECRET_KEYS))
+		mine = "a-long-random-key-of-the-sites-own-0123456789abcdef"
+		with self.settings(DEBUG=False, SECRET_KEY=published, OAUTH2_JWT_SECRET=published):
+			self.assertEqual([e.id for e in check_secret_keys()], ["pycrocosm.E001", "pycrocosm.E001"])
+		with self.settings(DEBUG=False, SECRET_KEY=mine, OAUTH2_JWT_SECRET=published):
+			self.assertIn("OAUTH2_JWT_SECRET", check_secret_keys()[0].msg)
+		with self.settings(DEBUG=False, SECRET_KEY=mine, OAUTH2_JWT_SECRET=mine):
+			self.assertEqual(check_secret_keys(), [])
+		# Development may use it
+		with self.settings(DEBUG=True, SECRET_KEY=published, OAUTH2_JWT_SECRET=published):
+			self.assertEqual(check_secret_keys(), [])
+
+	def test_the_wsgi_application_will_not_start(self):
+		import importlib, sys
+		from django.core.exceptions import ImproperlyConfigured
+		from pycrocosm.checks import PUBLISHED_SECRET_KEYS
+		sys.modules.pop("pycrocosm.wsgi", None)
+		with self.settings(DEBUG=False, SECRET_KEY=next(iter(PUBLISHED_SECRET_KEYS))):
+			with self.assertRaisesRegex(ImproperlyConfigured, "SECRET_KEY is the key published"):
+				importlib.import_module("pycrocosm.wsgi")
+		sys.modules.pop("pycrocosm.wsgi", None)
+		with self.settings(DEBUG=False, SECRET_KEY="a-long-random-key-of-the-sites-own-0123456789abcdef",
+				OAUTH2_JWT_SECRET="another-long-random-key-0123456789abcdef"):
+			importlib.import_module("pycrocosm.wsgi")
+

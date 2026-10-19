@@ -28,7 +28,7 @@
 {% csrf_token %}
 </form>
 
-<p><a href="/oauth2/applications">Applications</a></p>
+<p><a href="{% url 'oauth2:applications' %}">Applications</a></p>
 
 </body>
 </html>
