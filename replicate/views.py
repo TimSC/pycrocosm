@@ -796,6 +796,39 @@ def latest_edit_ids(request):
 	ET.ElementTree(root).write(sio, "UTF-8", xml_declaration=True)
 	return HttpResponse(sio.getvalue(), content_type='text/xml')
 
+@api_view(['GET'])
+def changed_since(request):
+	"""Whether an area has been edited since an atomic edit: for a map renderer,
+	say, that keeps the newest atomic edit of what it drew, to know whether to
+	draw it again. bbox is the area (min lon, min lat, max lon, max lat) and
+	since the atomic edit (0: since the map was imported). The answer also
+	gives the map's latest IDs, as edit_ids does, from the same moment."""
+	try:
+		bbox = activity_bbox_filter(request.GET)
+		if bbox is None:
+			raise ValueError('bbox is needed')
+		since = request.GET.get('since', '')
+		if not since or not since.isascii() or not since.isdecimal() or int(since) > 9223372036854775807:
+			raise ValueError('since must be a whole number, 0 or more')
+		since = int(since)
+	except ValueError as err:
+		return HttpResponseBadRequest(str(err), content_type="text/plain")
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		changed = t.ChangedSince(pgmap.vectord(bbox), since)
+		latest = t.GetLatestEditIds()
+	finally:
+		common.abort_transaction(t)
+	root = ET.Element('changed')
+	root.attrib['bbox'] = ",".join(repr(v) for v in bbox)
+	root.attrib['since'] = str(since)
+	root.attrib['changed'] = 'true' if changed else 'false'
+	root.attrib['edit_activity_id'] = str(latest[0])
+	root.attrib['atomic_edit_id'] = str(latest[1])
+	sio = io.BytesIO()
+	ET.ElementTree(root).write(sio, "UTF-8", xml_declaration=True)
+	return HttpResponse(sio.getvalue(), content_type='text/xml')
+
 def activity_id_filters(params):
 	keys = ('id', 'first_id', 'last_id', 'atomic_edit_id')
 	values = {}

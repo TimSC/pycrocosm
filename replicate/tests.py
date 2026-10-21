@@ -547,3 +547,170 @@ class ActivityIdFilterTestCase(SimpleTestCase):
 		]:
 			with self.subTest(params=params), self.assertRaises(ValueError):
 				rv.activity_id_filters(params)
+
+class ChangedSinceTestCase(TestCase):
+	"""Whether an area has been edited since an atomic edit (replication/changed),
+	from the edit IDs of the objects themselves. Edits are made as uploads make
+	them, which number them and record their activity."""
+
+	def setUp(self):
+		from changeset.tests import CreateTestChangeset
+		self.user = User.objects.create_user("cartographer", "cartographer@example.com", "password")
+		self.reset()
+		self.changeset = CreateTestChangeset(self.user).objId
+
+	def tearDown(self):
+		self.reset()
+
+	def reset(self):
+		errStr = pgmap.PgMapError()
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
+		self.assertTrue(t.ResetActiveTables(errStr), errStr.errStr)
+		t.Commit()
+
+	def upload(self, action, *objects):
+		"""Uploads objects (nodes, ways and relations) as one block; returns the
+		IDs given to new ones, by type."""
+		import xml.etree.ElementTree as ET
+		from changeset.views import upload_block
+		data = pgmap.OsmData()
+		for obj in objects:
+			obj.metaData.changeset = self.changeset
+			{pgmap.OsmNode: data.nodes, pgmap.OsmWay: data.ways, pgmap.OsmRelation: data.relations}[type(obj)].append(obj)
+		created = {"node": pgmap.mapi64i64(), "way": pgmap.mapi64i64(), "relation": pgmap.mapi64i64()}
+		t = get_pgmap().GetTransaction("EXCLUSIVE")
+		try:
+			result = upload_block(action, data, self.changeset, t, ET.Element("diffResult"), self.user.id,
+				self.user.username, int(time.time()), created["node"], created["way"], created["relation"])
+			self.assertIs(result, True, getattr(result, "content", result))
+			t.Commit()
+		except BaseException:
+			t.Abort()
+			raise
+		return created
+
+	def node(self, lon, lat, objId=-1, version=1):
+		node = pgmap.OsmNode()
+		node.objId, node.metaData.version = objId, version
+		node.lat, node.lon = lat, lon
+		return node
+
+	def new_node(self, lon, lat):
+		return self.upload("create", self.node(lon, lat))["node"][-1]
+
+	def way(self, refs, objId=-1, version=1, tags=None):
+		way = pgmap.OsmWay()
+		way.objId, way.metaData.version = objId, version
+		for ref in refs:
+			way.refs.append(ref)
+		for k, v in (tags or {}).items():
+			way.tags[k] = v
+		return way
+
+	def relation(self, members, objId=-1, version=1, tags=None):
+		relation = pgmap.OsmRelation()
+		relation.objId, relation.metaData.version = objId, version
+		for member in members:
+			relation.AddMember(*member)
+		for k, v in (tags or {}).items():
+			relation.tags[k] = v
+		return relation
+
+	def latest(self):
+		"""The map's latest atomic edit."""
+		t = get_pgmap().GetTransaction("ACCESS SHARE")
+		try:
+			return t.GetLatestEditIds()[1]
+		finally:
+			t.Abort()
+
+	def changed(self, bbox, since):
+		import xml.etree.ElementTree as ET
+		response = Client().get("/replication/changed?bbox={},{},{},{}&since={}".format(*bbox, since))
+		self.assertEqual(response.status_code, 200, response.content)
+		self.assertEqual(response["Content-Type"], "text/xml")
+		root = ET.fromstring(response.content)
+		self.assertEqual(root.tag, "changed")
+		self.assertEqual(int(root.get("since")), since)
+		self.assertEqual(int(root.get("atomic_edit_id")), self.latest())
+		return root.get("changed") == "true"
+
+	@staticmethod
+	def around(lon, lat, d=0.001):
+		return [lon - d, lat - d, lon + d, lat + d]
+
+	def test_a_new_node(self):
+		before = self.latest()
+		self.new_node(-70.3, 43.0)
+		self.assertGreater(self.latest(), before)
+		here = self.around(-70.3, 43.0)
+		self.assertTrue(self.changed(here, before))
+		# Not since the edit that made it, nor anywhere else
+		self.assertFalse(self.changed(here, self.latest()))
+		self.assertFalse(self.changed(self.around(-70.0, 43.0), before))
+
+	def test_a_changed_way(self):
+		a, b = self.new_node(-70.3, 43.0), self.new_node(-70.299, 43.0)
+		way = self.upload("create", self.way([a, b]))["way"][-1]
+		before = self.latest()
+		self.upload("modify", self.way([a, b], way, 1, {"highway": "track"}))
+		self.assertTrue(self.changed(self.around(-70.2995, 43.0), before))
+		self.assertFalse(self.changed(self.around(-70.2995, 43.0), self.latest()))
+
+	def test_a_node_moved_away(self):
+		node = self.new_node(-70.3, 43.0)
+		before = self.latest()
+		self.upload("modify", self.node(-70.1, 43.1, node, 1))
+		# Where it was, which only its old version says, and where it is
+		self.assertTrue(self.changed(self.around(-70.3, 43.0), before))
+		self.assertTrue(self.changed(self.around(-70.1, 43.1), before))
+
+	def test_a_deleted_node(self):
+		node = self.new_node(-70.3, 43.0)
+		before = self.latest()
+		self.upload("delete", self.node(-70.3, 43.0, node, 1))
+		self.assertTrue(self.changed(self.around(-70.3, 43.0), before))
+
+	def test_a_deleted_way(self):
+		# Its nodes stay, untouched: only the old way says where it was
+		a, b = self.new_node(-70.3, 43.0), self.new_node(-70.299, 43.0)
+		way = self.upload("create", self.way([a, b]))["way"][-1]
+		before = self.latest()
+		self.upload("delete", self.way([a, b], way, 1))
+		self.assertTrue(self.changed(self.around(-70.2995, 43.0), before))
+
+	def test_a_changed_relation(self):
+		node = self.new_node(-70.3, 43.0)
+		relation = self.upload("create", self.relation([("node", node, "label")]))["relation"][-1]
+		before = self.latest()
+		self.upload("modify", self.relation([("node", node, "label")], relation, 1, {"type": "site"}))
+		self.assertTrue(self.changed(self.around(-70.3, 43.0), before))
+
+	def test_a_node_of_the_imported_map_taken_over(self):
+		# The edit goes to the active tables; the imported map keeps the old version
+		roi = [-1.0684204, 50.8038735, -1.0510826, 50.812877]
+		data = qmt.DecodeOsmdataResponse(Client().get(reverse('querymap:querymap') +
+			"?bbox={},{},{},{}".format(*roi)).streaming_content)
+		members = {data.ways[i].refs[j] for i in range(data.ways.size()) for j in range(data.ways[i].refs.size())}
+		free = [data.nodes[i] for i in range(data.nodes.size()) if data.nodes[i].objId not in members]
+		if not free:
+			self.skipTest("No node of the imported map, in no way, in the test area")
+		node = free[0]
+		before = self.latest()
+		self.upload("modify", self.node(node.lon + 0.2, node.lat + 0.1, node.objId, node.metaData.version))
+		self.assertTrue(self.changed(self.around(node.lon, node.lat), before))
+
+	def test_a_way_changed_only_by_a_node_outside_is_not_seen(self):
+		# A known gap: the way crossing the area is copied by the edit, with
+		# no edit ID of its own, and the node that moved was never in the area
+		a, b = self.new_node(-70.31, 43.0), self.new_node(-70.29, 43.0)
+		self.upload("create", self.way([a, b]))
+		before = self.latest()
+		self.upload("modify", self.node(-70.29, 43.002, b, 1))
+		self.assertFalse(self.changed(self.around(-70.3, 43.0), before))
+
+	def test_bad_requests(self):
+		for query in ("since=0", "bbox=1,2,3&since=0", "bbox=3,2,1,4&since=0", "bbox=-1,50,0,51",
+				"bbox=-1,50,0,51&since=-1", "bbox=-1,50,0,51&since=x"):
+			response = Client().get("/replication/changed?" + query)
+			self.assertEqual(response.status_code, 400, query)
