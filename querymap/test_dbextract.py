@@ -4153,9 +4153,12 @@ class MapEditTestCase(MapTestCaseBase):
         route.tags["type"] = "route"
         self.store_static(corners, [square, line, broken], [area, route])
 
-        # Tables of their own on every table set, filled in with the boxes
+        # Tables of their own on every table set, empty until filled in, which
+        # working out the boxes doesn't do
         self.admin_do(lambda admin, error: admin.SetObjectShapes(True, 0, error))
         self.admin_do(lambda admin, error: admin.UpdateBboxes(0, True, True, error))
+        self.assertEqual(self.shapes("way"), {})
+        self.admin_do(lambda admin, error: admin.UpdateObjectShapes(0, True, True, False, error))
         self.assertEqual(self.shapes("way"), {
             6000: "LINESTRING(0.1 0.1,0.2 0.1,0.2 0.2,0.1 0.2,0.1 0.1)",
             6001: "LINESTRING(0.1 0.1,0.2 0.2)",
@@ -4194,7 +4197,7 @@ class MapEditTestCase(MapTestCaseBase):
         with self.db.cursor() as cursor:
             cursor.execute(sql.SQL("UPDATE {} SET tags = tags || '{{\"type\": \"multipolygon\"}}' WHERE id = %s").format(
                 sql.Identifier(self.prefixes[1] + "liverelations")), (open_area.objId,))
-        self.admin_do(lambda admin, error: admin.UpdateBboxes(0, False, True, error))
+        self.admin_do(lambda admin, error: admin.UpdateObjectShapes(0, False, True, False, error))
         self.assertIsNone(self.shapes("relation")[open_area.objId])
         # A deleted way loses its shape, as the imported one it replaced is hidden
         self.upload("delete", [route])
@@ -4208,8 +4211,16 @@ class MapEditTestCase(MapTestCaseBase):
         # The map query sends the objects as ever
         self.assertIn(("way", 6000), self.contents())
 
-        # Dropped, from every table set, and the map goes on working
+        # Dropped, from every table set, and the map goes on working; with
+        # none, there is nothing to fill in
         self.admin_do(lambda admin, error: admin.SetObjectShapes(False, 0, error))
+        admin, error = self.map.GetAdmin(""), pgmap.PgMapError()
+        try:
+            self.assertFalse(admin.UpdateObjectShapes(0, True, True, False, error))
+            self.assertIn("no shape tables", error.errStr)
+        finally:
+            admin.Abort()
+            del admin
         with self.db.cursor() as cursor:
             cursor.execute("SELECT count(*) FROM information_schema.tables WHERE table_name LIKE %s",
                            (self.prefixes[0][:-len("static_")] + "%shapes",))
