@@ -2,7 +2,7 @@
 
 # pycrocosm
 
-OSM Map server API 0.6 implemented using Django and Python 3. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database.
+OSM Map server API 0.6 implemented using Django and Python 3. It depends on submodule https://github.com/TimSC/pgmap to handle the PostGIS database. What it offers beyond the standard API is described in [API.md](API.md).
 
 Installation
 ------------

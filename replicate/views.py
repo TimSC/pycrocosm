@@ -313,6 +313,29 @@ def catalog3(request, timebase, cat1, cat2):
 
 	return HttpResponse(out)
 
+def read_replicate_diff(startTimestamp, endTimestamp):
+	"""A diff of a time range, as osmChange XML.
+
+	An upload holds the map's EXCLUSIVE lock from before it takes its timestamp
+	until it commits, so its edits can be timed within the range while not yet
+	visible, and a diff read then would miss them for good. Taking the lock and
+	letting go of it at once waits for any such upload; one starting later has a
+	later timestamp. The diff itself needs no more than ACCESS SHARE, which
+	leaves edits free to go on however long it takes to read.
+	"""
+	common.abort_transaction(get_pgmap().GetTransaction("EXCLUSIVE"))
+
+	t = get_pgmap().GetTransaction("ACCESS SHARE")
+	try:
+		osmc = pgmap.OsmChange()
+		t.GetReplicateDiff(startTimestamp, endTimestamp, osmc)
+
+		sio = io.BytesIO()
+		pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio), False)
+		return sio.getvalue()
+	finally:
+		common.abort_transaction(t)
+
 def getoscdiff(timebase, cat1, cat2, cat3):
 
 	timenow = int(time.time())
@@ -333,13 +356,7 @@ def getoscdiff(timebase, cat1, cat2, cat3):
 	if elapsedInPage < 0:
 		return HttpResponseNotFound("Page does not exist")
 
-	t = get_pgmap().GetTransaction("EXCLUSIVE")
-	osmc = pgmap.OsmChange()
-	t.GetReplicateDiff(pageStartTimestamp-pageStep3, pageStartTimestamp, osmc)
-
-	sio = io.BytesIO()
-	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio), False)
-	return sio.getvalue()
+	return read_replicate_diff(pageStartTimestamp-pageStep3, pageStartTimestamp)
 
 def diff(request, timebase, cat1, cat2, cat3):
 	data = getoscdiff(timebase, cat1, cat2, cat3)
@@ -410,6 +427,22 @@ def TimestampToPath(ts, timebase):
 
 	return (cat1, cat2, cat3)
 
+def parse_diff_time(text):
+	"""A date, or a date and time, as a datetime in UTC (taken as UTC unless it
+	gives an offset), or None if it can't be read."""
+	try:
+		moment = parse_datetime(text)
+		if moment is None:
+			day = parse_date(text)
+			if day is None:
+				return None
+			moment = datetime.datetime(day.year, day.month, day.day)
+	except ValueError:
+		return None
+	if moment.tzinfo is None:
+		return moment.replace(tzinfo=datetime.timezone.utc)
+	return moment.astimezone(datetime.timezone.utc)
+
 def customdiff(request):
 	#This is a non-standard (pycrocosm specific) API call to get diffs of custom time ranges.
 	now = datetime.datetime.now(datetime.timezone.utc)
@@ -420,25 +453,15 @@ def customdiff(request):
 
 	if startTsArg is None:
 		return HttpResponseBadRequest("start argument not set")
-	startTs=parse_datetime(startTsArg)
+	startTs = parse_diff_time(startTsArg)
 	if startTs is None:
-		startTs=parse_date(startTsArg)
-		startTs=datetime.datetime(startTs.year, startTs.month, startTs.day)
+		return HttpResponseBadRequest("start argument not understood (should be ISO 8601 date or datetime)")
 
 	if endTsArg is None:
 		return HttpResponseBadRequest("end argument not set")
-	endTs=parse_datetime(endTsArg)
-	if endTs is None:
-		endTs=parse_date(endTsArg)
-		endTs=datetime.datetime(endTs.year, endTs.month, endTs.day)
-
-	if startTs is None:
-		return HttpResponseBadRequest("start argument not understood (should be ISO 8601 date or datetime)")
+	endTs = parse_diff_time(endTsArg)
 	if endTs is None:
 		return HttpResponseBadRequest("end argument not understood (should be ISO 8601 date or datetime)")
-
-	startTs = startTs.replace(tzinfo=datetime.timezone.utc)
-	endTs = endTs.replace(tzinfo=datetime.timezone.utc)
 
 	if endTs < startTs:
 		return HttpResponseBadRequest("end cannot be before start")
@@ -447,18 +470,13 @@ def customdiff(request):
 	if (endTs - startTs).total_seconds() > settings.REPLICATE_DIFF_MAXIMUM_SECONDS:
 		return HttpResponseBadRequest("requested diff range is too large")
 
-	t = get_pgmap().GetTransaction("EXCLUSIVE")
-	osmc = pgmap.OsmChange()
-	t.GetReplicateDiff(utc_epoch(startTs), utc_epoch(endTs), osmc)
-
-	sio = io.BytesIO()
-	pgmap.SaveToOsmChangeXml(osmc, pgmap.CPyOutbuf(sio), False)
+	data = read_replicate_diff(utc_epoch(startTs), utc_epoch(endTs))
 
 	if compress == 'no':
-		return HttpResponse(sio.getvalue(), content_type='text/xml')
+		return HttpResponse(data, content_type='text/xml')
 	if compress == 'gz':
 		comp = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, zlib.MAX_WBITS | 16)
-		gzip_data = comp.compress(sio.getvalue()) + comp.flush()
+		gzip_data = comp.compress(data) + comp.flush()
 		return HttpResponse(gzip_data, content_type='application/x-gzip')
 
 	return HttpResponseBadRequest("compression argument not understood")

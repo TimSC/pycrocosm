@@ -714,3 +714,61 @@ class ChangedSinceTestCase(TestCase):
 				"bbox=-1,50,0,51&since=-1", "bbox=-1,50,0,51&since=x"):
 			response = Client().get("/replication/changed?" + query)
 			self.assertEqual(response.status_code, 400, query)
+
+class CustomDiffRequestTestCase(SimpleTestCase):
+	"""What replication/diff makes of its arguments, and how it reads the map."""
+
+	def diff(self, start, end):
+		from unittest.mock import patch
+		with patch.object(rv, "read_replicate_diff", return_value=b"<osmChange/>") as read:
+			response = Client().get("/replication/diff", {"start": start, "end": end})
+		return response, read
+
+	def test_unreadable_times_are_bad_requests(self):
+		good = "2026-01-31T00:00:00Z"
+		for bad in ("yesterday", "", "2026-13-01", "2026-02-31", "2026-01-31T25:00:00", "2026-01-31T12:00:00 01:00"):
+			with self.subTest(bad=bad):
+				for start, end in ((bad, good), (good, bad)):
+					response, read = self.diff(start, end)
+					self.assertEqual(response.status_code, 400)
+					read.assert_not_called()
+
+	def test_times_are_utc_unless_they_give_an_offset(self):
+		midday = int(datetime.datetime(2026, 1, 31, 12, tzinfo=datetime.timezone.utc).timestamp())
+		midnight = int(datetime.datetime(2026, 1, 31, tzinfo=datetime.timezone.utc).timestamp())
+		for start, end, expected in (
+				("2026-01-31T12:00:00", "2026-01-31T13:00:00", (midday, midday + 3600)),
+				("2026-01-31T12:00:00Z", "2026-01-31T13:00:00Z", (midday, midday + 3600)),
+				("2026-01-31T12:00:00+01:00", "2026-01-31T12:00:00", (midday - 3600, midday)),
+				("2026-01-31T12:00:00-01:00", "2026-01-31T14:00:00", (midday + 3600, midday + 7200)),
+				("2026-01-31", "2026-01-31T01:00:00", (midnight, midnight + 3600))):
+			with self.subTest(start=start, end=end):
+				response, read = self.diff(start, end)
+				self.assertEqual(response.status_code, 200)
+				read.assert_called_once_with(*expected)
+
+	def test_limits_are_applied_after_converting_offsets(self):
+		# Twelve hours apart as written, a day and more once converted
+		response, read = self.diff("2026-01-31T12:00:00+13:00", "2026-02-01T00:00:00-13:00")
+		self.assertEqual(response.status_code, 400)
+		read.assert_not_called()
+		# The same clock time, but the end comes first once converted
+		response, read = self.diff("2026-01-31T12:00:00-01:00", "2026-01-31T12:00:00+01:00")
+		self.assertEqual(response.status_code, 400)
+		read.assert_not_called()
+
+	def test_waits_for_uploads_then_reads_without_holding_their_lock(self):
+		from unittest.mock import MagicMock, patch
+		events = []
+		def transaction(mode):
+			events.append(("open", mode))
+			t = MagicMock()
+			t.Abort.side_effect = lambda: events.append(("abort", mode))
+			t.GetReplicateDiff.side_effect = lambda start, end, out: events.append(("read", mode, start, end))
+			return t
+		with patch.object(rv, "get_pgmap") as get_pgmap:
+			get_pgmap.return_value.GetTransaction.side_effect = transaction
+			data = rv.read_replicate_diff(100, 200)
+		self.assertEqual(events, [("open", "EXCLUSIVE"), ("abort", "EXCLUSIVE"), ("open", "ACCESS SHARE"),
+			("read", "ACCESS SHARE", 100, 200), ("abort", "ACCESS SHARE")])
+		self.assertIn(b"osmChange", data)
